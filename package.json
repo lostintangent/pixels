@@ -35,7 +35,8 @@
     "test": "bun test",
     "perf": "bun src/shared/perf/run.ts",
     "perf:browser": "bun src/shared/perf/browser/run.ts",
-    "perf:app": "bun src/shared/perf/browser/run-app.ts"
+    "perf:app": "bun src/shared/perf/browser/run-app.ts",
+    "perf:export": "bun src/features/files/perf/run.ts"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0"

@@ -6,9 +6,10 @@ import type { ExportPerfApi, ExportPerfResult } from './exportFixture';
  * PNG export, end to end, in a real (headed) browser: click, off-main-thread encode via the
  * shared PNG Worker, `Blob`. All at 1024² blocky pixel-art, the actual gate from the spec: under
  * 60 ms, no main-thread task over 50 ms.
- *  - Cold: the very first export this page ever runs (worker module fetch and instantiation
- *    included), gated the same as a warm run — that's a real user's first export, not overhead to
- *    hide.
+ *  - Cold: the median of 7 first-ever exports, each in its own fresh `browser.newContext()` (its
+ *    own HTTP cache, its own Worker), gated on the median with min/max printed — a single cold
+ *    sample is one scheduler hiccup away from a false failure, and the fix is more samples, not a
+ *    looser budget.
  *  - Warm: 3 discarded warmups, then the p95 of 30 samples, gated on p95 — the steady-state case,
  *    matching the core suite's warmed-p95 convention.
  * 4096² (the largest a document can be) is diagnostic only, not gated on total time or on the
@@ -49,6 +50,12 @@ function percentile95(samples: readonly number[]): number {
   return sorted[Math.min(sorted.length - 1, Math.ceil(0.95 * sorted.length) - 1)]!;
 }
 
+/** Median of a set of samples. `samples` need not be pre-sorted. */
+function median(samples: readonly number[]): number {
+  const sorted = [...samples].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)]!;
+}
+
 /** The Long Tasks API only ever reports tasks over 50 ms — it has nothing to say about tasks
  *  shorter than that, so a run with no entries means "no main-thread task over 50 ms", not
  *  "the max main-thread task was 0 ms". Prints the real max only when there's a real max to show. */
@@ -75,6 +82,48 @@ const server = Bun.serve({
 });
 const browser = await chromium.launch({ headless: !headed });
 try {
+  console.log(
+    `Pixels export perf: Chromium ${browser.version()}, ${headed ? 'headed' : 'headless'}, ${process.platform}/${process.arch}`,
+  );
+
+  let failed = false;
+
+  // Cold: each sample is the very first export a fresh page ever runs — its own context means
+  // its own HTTP cache and its own PNG Worker, so module fetch and instantiation cost is included
+  // every time, exactly like a real user's first export. Gated on the median of 7 rather than one
+  // sample, since a single cold run is vulnerable to an unrelated scheduler hiccup.
+  const coldSamples: ExportPerfResult[] = [];
+  for (let i = 0; i < 7; i++) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    try {
+      const page = await context.newPage();
+      const errors: Error[] = [];
+      page.on('pageerror', (error) => errors.push(error));
+      await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
+      await page.waitForFunction(() => Boolean(window.__pixelsExportPerf));
+      if (headed) await page.bringToFront();
+      coldSamples.push(await runExport(page, 1024));
+      if (errors.length) throw errors[0];
+    } finally {
+      await context.close();
+    }
+  }
+  {
+    const coldMs = coldSamples.map((result) => result.ms);
+    const coldMedian = median(coldMs);
+    const { maxMs, label } = longTaskSummary(coldSamples);
+    const passed = coldMedian < 60 && maxMs <= 50;
+    if (!passed) failed = true;
+    console.log(
+      `${passed ? 'PASS' : 'FAIL'} PNG export 1024×1024 (cold, median of 7, fresh context each): ${coldMedian.toFixed(3)} ms median (min ${Math.min(...coldMs).toFixed(3)}, max ${Math.max(...coldMs).toFixed(3)}), ${(coldSamples[0]!.byteLength / 1024).toFixed(1)} KiB, ${label}, target median < 60 ms`,
+    );
+  }
+
+  // Warm and the 4096² diagnostic share one long-lived context: they're deliberately measuring
+  // the steady state of an already-warm page, not a fresh one.
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     reducedMotion: 'reduce',
@@ -85,27 +134,6 @@ try {
   await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
   await page.waitForFunction(() => Boolean(window.__pixelsExportPerf));
   if (headed) await page.bringToFront();
-
-  console.log(
-    `Pixels export perf: Chromium ${browser.version()}, ${headed ? 'headed' : 'headless'}, ${process.platform}/${process.arch}`,
-  );
-
-  let failed = false;
-
-  // Cold: the very first export this page ever runs — this call is what creates the shared PNG
-  // Worker, so its cost (module fetch, instantiation) is included on purpose. A real user's first
-  // export pays this too, so it's gated exactly like the warm case rather than reported as a
-  // separate, budget-free curiosity.
-  const cold = await runExport(page, 1024);
-  if (errors.length) throw errors[0];
-  {
-    const { maxMs, label } = longTaskSummary([cold]);
-    const passed = cold.ms < 60 && maxMs <= 50;
-    if (!passed) failed = true;
-    console.log(
-      `${passed ? 'PASS' : 'FAIL'} PNG export 1024×1024 (cold, worker boot included): ${cold.ms.toFixed(3)} ms, ${(cold.byteLength / 1024).toFixed(1)} KiB, ${label}, target < 60 ms`,
-    );
-  }
 
   // Warm: 3 discarded warmups, then p95 of 30 samples — the core suite's own warmed-p95 shape,
   // applied here to a click-to-Blob operation instead of a hot loop.
@@ -130,14 +158,15 @@ try {
   for (let i = 0; i < 5; i++) bigSamples.push(await runExport(page, 4096));
   if (errors.length) throw errors[0];
   {
-    const bigMs = bigSamples.map((result) => result.ms).sort((a, b) => a - b);
-    const median = bigMs[Math.floor(bigMs.length / 2)]!;
+    const bigMs = bigSamples.map((result) => result.ms);
+    const bigMedian = median(bigMs);
     const { label } = longTaskSummary(bigSamples);
     console.log(
-      `INFO PNG export 4096×4096 (median of 5, diagnostic): ${median.toFixed(3)} ms (min ${bigMs[0]!.toFixed(3)}, max ${bigMs[bigMs.length - 1]!.toFixed(3)}), ${(bigSamples[0]!.byteLength / 1024).toFixed(1)} KiB, ${label} — no time budget`,
+      `INFO PNG export 4096×4096 (median of 5, diagnostic): ${bigMedian.toFixed(3)} ms (min ${Math.min(...bigMs).toFixed(3)}, max ${Math.max(...bigMs).toFixed(3)}), ${(bigSamples[0]!.byteLength / 1024).toFixed(1)} KiB, ${label} — no time budget`,
     );
   }
 
+  await context.close();
   if (failed) process.exitCode = 1;
 } finally {
   await browser.close();
