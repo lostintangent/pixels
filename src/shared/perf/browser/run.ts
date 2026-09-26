@@ -54,7 +54,8 @@ async function traceScenario(
     (isMaze) => window.__pixelsPerf!.reset(isMaze ? 'maze' : 'blank'),
     scenario === 'maze',
   );
-  return captureTrace(context, page, async () => {
+  return captureTrace(context, page, async (markFirstInput) => {
+    await markFirstInput();
     await page.evaluate((kind) => {
       const api = window.__pixelsPerf!;
       return kind === 'stroke'

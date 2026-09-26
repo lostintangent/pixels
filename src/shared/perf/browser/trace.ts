@@ -16,6 +16,7 @@ export interface TraceEvent {
       has_high_latency: boolean;
     };
     args?: { interval_us?: number };
+    sync_id?: string;
   };
 }
 
@@ -31,6 +32,11 @@ export interface TraceSummary {
   droppedFrames: number;
   highLatencyFrames: number;
   consecutiveDrops: boolean;
+  presentationStates: Record<string, number>;
+  stageP95Ms: Record<string, number>;
+  missedFrameRuns: Array<{ state: string; start: number; end: number }>;
+  preInputEligibleFrames: number;
+  preInputMisses: Array<{ state: string; beforeInputMs: number }>;
 }
 
 function p95(sorted: number[]): number {
@@ -53,6 +59,10 @@ function unionDuration(intervals: Array<{ start: number; end: number }>): number
 }
 
 export function summarizeTrace(events: TraceEvent[]): TraceSummary {
+  const firstInputTs =
+    events.find(
+      (event) => event.name === 'clock_sync' && event.args?.sync_id === 'pixels-first-input',
+    )?.ts ?? -Infinity;
   const threads = new Map<string, string>();
   for (const event of events) {
     if (event.name === 'thread_name' && event.args?.name)
@@ -86,7 +96,23 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
   let highLatencyFrames = 0;
   let consecutiveDrops = false;
   let previousDropped = false;
-  for (const [, report] of orderedReports) {
+  const presentationStates: Record<string, number> = {};
+  const missedFrameRuns: TraceSummary['missedFrameRuns'] = [];
+  let preInputEligibleFrames = 0;
+  const preInputMisses: TraceSummary['preInputMisses'] = [];
+  for (const [key, report] of orderedReports) {
+    if (reportTimes.get(key)! <= firstInputTs) {
+      if (report.state !== 'STATE_NO_UPDATE_DESIRED') {
+        preInputEligibleFrames++;
+        if (report.state !== 'STATE_PRESENTED_ALL' || report.has_high_latency)
+          preInputMisses.push({
+            state: report.has_high_latency ? `${report.state}/HIGH` : report.state,
+            beforeInputMs: (firstInputTs - reportTimes.get(key)!) / 1000,
+          });
+      }
+      continue;
+    }
+    presentationStates[report.state] = (presentationStates[report.state] ?? 0) + 1;
     if (report.state === 'STATE_NO_UPDATE_DESIRED') {
       previousDropped = false;
       continue;
@@ -96,6 +122,12 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
     if (dropped) droppedFrames++;
     if (report.has_high_latency) highLatencyFrames++;
     if (report.state === 'STATE_PRESENTED_ALL' && !report.has_high_latency) onTimeFrames++;
+    else {
+      const state = report.has_high_latency ? `${report.state}/HIGH` : report.state;
+      const last = missedFrameRuns.at(-1);
+      if (last?.state === state && last.end === eligibleFrames - 1) last.end = eligibleFrames;
+      else missedFrameRuns.push({ state, start: eligibleFrames, end: eligibleFrames });
+    }
     if (dropped && previousDropped) consecutiveDrops = true;
     previousDropped = dropped;
   }
@@ -106,6 +138,7 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
       (event) =>
         event.name === 'ProxyMain::BeginMainFrame' &&
         event.ph === 'X' &&
+        event.ts > firstInputTs &&
         `${event.pid}:${event.tid}` === mainThread,
     )
     .map((event) => event.ts)
@@ -124,6 +157,7 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
   }
   const mainTimes: number[] = [];
   const pipelineTimes: number[] = [];
+  const stageTimes = new Map<string, number[]>();
   for (let i = 0; i < frames.length - 1; i++) {
     const start = frames[i]!;
     const end = frames[i + 1]!;
@@ -146,16 +180,35 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
       intervals.set(key, list);
     }
     let pipeline = 0;
+    const stageDurations = new Map<string, number>();
     for (const [key, list] of intervals) {
       const duration = unionDuration(list);
       if (key === mainThread) mainTimes.push(duration / 1000);
       pipeline += duration;
+      const stage = threads.get(key)!;
+      stageDurations.set(stage, (stageDurations.get(stage) ?? 0) + duration / 1000);
+    }
+    for (const stage of [
+      'CrRendererMain',
+      'Compositor',
+      'ThreadPoolForegroundWorker',
+      'VizCompositorThread',
+      'CrGpuMain',
+    ]) {
+      const times = stageTimes.get(stage) ?? [];
+      times.push(stageDurations.get(stage) ?? 0);
+      stageTimes.set(stage, times);
     }
     if (mainTimes.length < i + 1) mainTimes.push(0);
     pipelineTimes.push(pipeline / 1000);
   }
   mainTimes.sort((a, b) => a - b);
   pipelineTimes.sort((a, b) => a - b);
+  const stageP95Ms: Record<string, number> = {};
+  for (const [stage, times] of stageTimes) {
+    times.sort((a, b) => a - b);
+    stageP95Ms[stage] = p95(times);
+  }
   return {
     frameCount: mainTimes.length,
     mainP95Ms: p95(mainTimes),
@@ -168,5 +221,10 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
     droppedFrames,
     highLatencyFrames,
     consecutiveDrops,
+    presentationStates,
+    stageP95Ms,
+    missedFrameRuns,
+    preInputEligibleFrames,
+    preInputMisses,
   };
 }

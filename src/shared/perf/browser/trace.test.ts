@@ -26,6 +26,7 @@ test('Chrome trace summary clips tasks to frame windows and includes compositor 
       ['STATE_DROPPED', false],
       ['STATE_DROPPED', false],
       ['STATE_PRESENTED_ALL', true],
+      ['STATE_PRESENTED_PARTIAL', false],
       ['STATE_NO_UPDATE_DESIRED', false],
     ].map(([state, hasHighLatency], index) => ({
       ...event('PipelineReporter', 'b', 1, 11, index * 10_000),
@@ -57,11 +58,56 @@ test('Chrome trace summary clips tasks to frame windows and includes compositor 
   expect(summary.frameCount).toBe(3);
   expect(summary.mainP95Ms).toBe(2.5);
   expect(summary.pipelineP95Ms).toBe(4.5);
+  expect(summary.stageP95Ms.CrRendererMain).toBe(2.5);
+  expect(summary.stageP95Ms.ThreadPoolForegroundWorker).toBe(3);
+  expect(summary.stageP95Ms.CrGpuMain).toBe(1);
   expect(summary.maxMainTaskMs).toBe(60);
   expect(summary.refreshHz).toBeCloseTo(60, 1);
-  expect(summary.eligibleFrames).toBe(4);
+  expect(summary.eligibleFrames).toBe(5);
   expect(summary.onTimeFrames).toBe(1);
   expect(summary.droppedFrames).toBe(2);
   expect(summary.highLatencyFrames).toBe(1);
+  expect(summary.presentationStates.STATE_PRESENTED_PARTIAL).toBe(1);
+  expect(summary.missedFrameRuns).toEqual([
+    { state: 'STATE_DROPPED', start: 2, end: 3 },
+    { state: 'STATE_PRESENTED_ALL/HIGH', start: 4, end: 4 },
+    { state: 'STATE_PRESENTED_PARTIAL', start: 5, end: 5 },
+  ]);
   expect(summary.consecutiveDrops).toBe(true);
+});
+
+test('presentation eligibility begins strictly after the first input marker', () => {
+  const events: TraceEvent[] = [
+    { ...event('thread_name', 'M', 1, 10, 0), args: { name: 'CrRendererMain' } },
+    { ...event('Scheduler::BeginFrame', 'X', 1, 11, 0), args: { args: { interval_us: 16_666 } } },
+    { ...event('clock_sync', 'c', 2, 12, 15_000), args: { sync_id: 'pixels-first-input' } },
+    ...[0, 15_000, 20_000, 30_000, 40_000].map((ts, frame_sequence) => ({
+      ...event('PipelineReporter', 'b', 1, 11, ts),
+      args: {
+        frame_reporter: {
+          frame_source: 1,
+          frame_sequence,
+          layer_tree_host_id: 1,
+          state:
+            frame_sequence === 2 || frame_sequence === 4 ? 'STATE_PRESENTED_ALL' : 'STATE_DROPPED',
+          has_high_latency: false,
+        },
+      },
+    })),
+    ...[0, 10_000, 20_000, 30_000, 40_000, 50_000].map((ts) =>
+      event('ProxyMain::BeginMainFrame', 'X', 1, 10, ts, 100),
+    ),
+  ];
+  const summary = summarizeTrace(events);
+  expect(summary.preInputEligibleFrames).toBe(2);
+  expect(summary.preInputMisses).toEqual([
+    { state: 'STATE_DROPPED', beforeInputMs: 15 },
+    { state: 'STATE_DROPPED', beforeInputMs: 0 },
+  ]);
+  expect(summary.eligibleFrames).toBe(3);
+  expect(summary.onTimeFrames).toBe(2);
+  expect(summary.droppedFrames).toBe(1);
+  expect(summary.missedFrameRuns).toEqual([{ state: 'STATE_DROPPED', start: 2, end: 2 }]);
+  expect(summary.consecutiveDrops).toBe(false);
+  expect(summary.frameCount).toBe(3);
 });

@@ -112,11 +112,13 @@ async function drawStroke(
   page: Page,
   profile: Profile,
   path: Awaited<ReturnType<typeof strokePath>>,
+  markFirstInput?: () => Promise<void>,
 ): Promise<void> {
   const { first, point } = path;
   if (profile.name === 'phone') {
     const session = await context.newCDPSession(page);
     try {
+      await markFirstInput?.();
       await session.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
         touchPoints: [{ id: 1, ...first }],
@@ -133,6 +135,7 @@ async function drawStroke(
       await session.detach();
     }
   } else {
+    await markFirstInput?.();
     await page.mouse.move(first.x, first.y);
     await page.mouse.down();
     for (let sample = 1; sample < 120; sample++) {
@@ -145,13 +148,19 @@ async function drawStroke(
   await afterPaint(page);
 }
 
-async function panZoom(context: BrowserContext, page: Page, profile: Profile): Promise<void> {
+async function panZoom(
+  context: BrowserContext,
+  page: Page,
+  profile: Profile,
+  markFirstInput: () => Promise<void>,
+): Promise<void> {
   const box = await canvasBox(page);
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   if (profile.name === 'phone') {
     const session = await context.newCDPSession(page);
     try {
+      await markFirstInput();
       await session.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
         touchPoints: [
@@ -177,6 +186,7 @@ async function panZoom(context: BrowserContext, page: Page, profile: Profile): P
       await session.detach();
     }
   } else {
+    await markFirstInput();
     await page.mouse.move(x, y);
     await page.mouse.down({ button: 'middle' });
     for (let frame = 1; frame <= 90; frame++) {
@@ -206,6 +216,10 @@ function summarizeBlocks(
   const onTime = blocks.reduce((sum, block) => sum + block.onTimeFrames, 0);
   const dropped = blocks.reduce((sum, block) => sum + block.droppedFrames, 0);
   const highLatency = blocks.reduce((sum, block) => sum + block.highLatencyFrames, 0);
+  const states = new Map<string, number>();
+  for (const block of blocks)
+    for (const [name, count] of Object.entries(block.presentationStates))
+      states.set(name, (states.get(name) ?? 0) + count);
   const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
   const onTimePercent = (onTime / eligible) * 100;
   const refreshHz = median(blocks.map((block) => block.refreshHz));
@@ -216,7 +230,7 @@ function summarizeBlocks(
       onTimePercent >= 99 &&
       !consecutiveDrops &&
       eligible >= 90,
-    details: `main p95 ${mainP95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms (diagnostic), max main task ${maxMainTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target main < ${target} ms and on-time ≥ 99%`,
+    details: `main p95 ${mainP95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms (diagnostic), max main task ${maxMainTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}, states ${JSON.stringify(Object.fromEntries(states))}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target main < ${target} ms and on-time ≥ 99%`,
   };
 }
 
@@ -246,13 +260,23 @@ export async function runEditorInput(
           for (let block = 0; block < 3; block++) {
             if (scenario === 'stroke') {
               const path = await strokePath(page, profile);
-              blocks.push(
-                await captureTrace(context, page, () => drawStroke(context, page, profile, path)),
+              const summary = await captureTrace(context, page, (markFirstInput) =>
+                drawStroke(context, page, profile, path, markFirstInput),
+              );
+              blocks.push(summary);
+              console.log(
+                `stroke block ${profile.name} ${run + 1}/${repeat} ${block + 1}/3: on-time ${summary.onTimeFrames}/${summary.eligibleFrames}, states ${JSON.stringify(summary.presentationStates)}, misses ${JSON.stringify(summary.missedFrameRuns)}, before input ${JSON.stringify(summary.preInputMisses)}, main p95 ${summary.mainP95Ms.toFixed(3)} ms, pipeline p95 ${summary.pipelineP95Ms.toFixed(3)} ms, stages ${JSON.stringify(summary.stageP95Ms)}, loadavg ${loadavg()
+                  .map((value) => value.toFixed(2))
+                  .join('/')}`,
               );
               await page.keyboard.press('Meta+z');
               await afterPaint(page);
             } else {
-              blocks.push(await captureTrace(context, page, () => panZoom(context, page, profile)));
+              blocks.push(
+                await captureTrace(context, page, (markFirstInput) =>
+                  panZoom(context, page, profile, markFirstInput),
+                ),
+              );
             }
           }
           if (scenario === 'stroke') {
