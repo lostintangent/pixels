@@ -9,6 +9,7 @@ import { BRUSH_SIZES, brushSizeAt, brushSizeIndex } from '../core/brush';
 import { toolInfo, usesBrush } from '../core/tools';
 import type { Layout } from '../session/session';
 import { useEditor, useEditorState } from './EditorContext';
+import { copyFromChrome } from './files/useClipboard';
 import { pixelVars } from './tokens.stylex';
 
 const HINTS = {
@@ -63,8 +64,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   }
 
   if (tool === 'select' && selection) {
-    const run = (action: 'copy' | 'cut' | 'clear' | 'commit') =>
-      session.run({ type: 'selection', action });
+    const run = (action: 'clear' | 'commit') => session.run({ type: 'selection', action });
     return (
       <div key="selection" {...stylex.props(styles.body, phone && styles.fill)}>
         <span {...stylex.props(styles.label)}>Selection</span>
@@ -78,14 +78,14 @@ export function ToolOptions({ layout }: { layout: Layout }) {
           label="Copy"
           tooltip={tooltip('Copy  ·  ⌘C')}
           icon={<Copy size={18} />}
-          onClick={() => run('copy')}
+          onClick={() => copyFromChrome(session, 'copy')}
         />
         <IconButton
           variant="ghost"
           label="Cut"
           tooltip={tooltip('Cut  ·  ⌘X')}
           icon={<Scissors size={18} />}
-          onClick={() => run('cut')}
+          onClick={() => copyFromChrome(session, 'cut')}
         />
         <IconButton
           variant="ghost"

@@ -10,6 +10,7 @@ import {
   selectTool,
   stepBrush,
   swapColors,
+  toolPreferences,
 } from './state';
 import { formatZoom } from './zoom';
 
@@ -165,5 +166,36 @@ describe('editor state', () => {
 
   test('records painted colors as recents', () => {
     expect(recordPaintedColor(base, red).recent).toEqual([red]);
+  });
+
+  test('carries tool preferences into the next document and nothing else', () => {
+    const working = {
+      ...recordPaintedColor(chooseColor(selectTool(base, 'fill'), red, 'primary'), red),
+      brushSize: 3,
+      gridEnabled: false,
+      selection: { x: 0, y: 0, width: 4, height: 4 },
+      canUndo: true,
+      panel: 'export' as const,
+      save: 'saved' as const,
+    };
+    const next = initialEditorState(
+      { name: 'Sprite', width: 16, height: 16 },
+      null,
+      toolPreferences(working),
+    );
+    expect(toolPreferences(next)).toEqual({
+      tool: 'fill',
+      brushSize: 3,
+      primary: red,
+      secondary: base.secondary,
+      recent: [red],
+      gridEnabled: false,
+    });
+    expect([next.selection, next.canUndo, next.panel, next.save]).toEqual([
+      null,
+      false,
+      null,
+      null,
+    ]);
   });
 });

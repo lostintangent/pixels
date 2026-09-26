@@ -6,6 +6,7 @@ import { packRgba } from '../../../document';
 import { toCss, TRANSPARENT } from '../../../palette';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
+import { useFileActions } from '../files/FileActions';
 import { Dimensions, Field, Footer, Form, formatBytes, sideError, Surface } from './Surface';
 
 const PRESETS = [
@@ -21,6 +22,7 @@ type Background = 'transparent' | 'white' | 'primary';
 
 export function NewCanvasDialog({ layout }: { layout: Layout }) {
   const session = useEditor();
+  const files = useFileActions();
   const isOpen = useEditorState((state) => state.panel === 'new');
   const primary = useEditorState((state) => state.primary);
   const [width, setWidth] = useState(64);
@@ -36,7 +38,7 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
         : background === 'white'
           ? packRgba(255, 255, 255)
           : primary;
-    session.createDocument(width, height, fill);
+    files.newCanvas(width, height, fill);
     close();
   };
 

@@ -5,7 +5,8 @@ import type { ToolKind } from '../../tools';
 import { stepBrushSize } from './brush';
 
 export type EditorPanel = 'new' | 'export' | 'resize' | 'colors';
-export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error';
+/** Mirrors autosave's reports. Null until a document has been saved or edited at all. */
+export type SaveStatus = 'saved' | 'saving' | 'error';
 export type ColorSlot = 'primary' | 'secondary';
 
 export interface DocumentSummary {
@@ -25,25 +26,47 @@ export interface EditorState extends PaletteState {
   canUndo: boolean;
   canRedo: boolean;
   document: DocumentSummary;
-  save: SaveStatus;
+  save: SaveStatus | null;
 }
 
-export function initialEditorState(document: DocumentSummary): EditorState {
+/**
+ * How the artist is working, as opposed to what they're working on. These carry from one document
+ * to the next, so opening a recent canvas keeps your brush, colors, and grid.
+ */
+export type ToolPreferences = Pick<
+  EditorState,
+  'tool' | 'brushSize' | 'primary' | 'secondary' | 'recent' | 'gridEnabled'
+>;
+
+export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
+  tool: 'pencil',
+  brushSize: 1,
+  primary: DEFAULT_PALETTE[11]!,
+  secondary: DEFAULT_PALETTE[1]!,
+  recent: [],
+  gridEnabled: true,
+};
+
+export function initialEditorState(
+  document: DocumentSummary,
+  save: SaveStatus | null = null,
+  preferences: ToolPreferences = DEFAULT_TOOL_PREFERENCES,
+): EditorState {
   return {
-    tool: 'pencil',
-    brushSize: 1,
-    primary: DEFAULT_PALETTE[11]!,
-    secondary: DEFAULT_PALETTE[1]!,
-    recent: [],
-    gridEnabled: true,
+    ...toolPreferences(preferences),
     chromeHidden: false,
     panel: null,
     selection: null,
     canUndo: false,
     canRedo: false,
     document,
-    save: 'saved',
+    save,
   };
+}
+
+export function toolPreferences(state: ToolPreferences): ToolPreferences {
+  const { tool, brushSize, primary, secondary, recent, gridEnabled } = state;
+  return { tool, brushSize, primary, secondary, recent, gridEnabled };
 }
 
 export function selectTool(state: EditorState, tool: ToolKind): EditorState {

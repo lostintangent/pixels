@@ -8,11 +8,17 @@ import {
   sizeVars,
   spacingVars,
 } from '@astryxdesign/core/theme/tokens.stylex';
+import { ToastViewport } from '@astryxdesign/core/Toast';
+import type { ToastViewportProps } from '@astryxdesign/core/Toast';
+import { getRouteApi } from '@tanstack/react-router';
 import { useSelector } from '@tanstack/react-store';
 import { Grid3x3, Minus, Plus, Redo2, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { RefObject } from 'react';
 import { CanvasSurface, MAX_ZOOM, MIN_ZOOM } from '../../canvas';
 import type { CanvasInput, DocumentPoint, OverlayState } from '../../canvas';
+import type { BitmapDocument } from '../../document';
+import type { DocumentStore } from '../../files';
 import {
   ColorPanel,
   ColorPickerPopover,
@@ -22,7 +28,8 @@ import {
   RECENT_LIMIT,
 } from '../../palette';
 import type { EditorCommand } from '../core/shortcuts';
-import type { ColorSlot } from '../core/state';
+import { DEFAULT_TOOL_PREFERENCES, toolPreferences } from '../core/state';
+import type { ColorSlot, ToolPreferences } from '../core/state';
 import { usesBrush } from '../core/tools';
 import { useColorScheme } from '../session/appearance';
 import type { ColorScheme } from '../session/appearance';
@@ -32,6 +39,10 @@ import { ExportDialog } from './dialogs/ExportDialog';
 import { NewCanvasDialog } from './dialogs/NewCanvasDialog';
 import { ResizeDialog } from './dialogs/ResizeDialog';
 import { EditorProvider, useEditor, useEditorState } from './EditorContext';
+import { DropOverlay } from './files/DropOverlay';
+import { FileActionsProvider, useFileActions } from './files/FileActions';
+import { useAutosave } from './files/useAutosave';
+import { useClipboard } from './files/useClipboard';
 import { Island, IslandDivider } from './Island';
 import { DocMenu, ZoomMenu } from './Menus';
 import { DocumentMeta, StatusPill } from './Status';
@@ -60,27 +71,109 @@ const CANVAS_COLORS: Record<ColorScheme, NonNullable<OverlayState['colors']>> = 
 /** Below this zoom a brush footprint is too small to read, so the system crosshair stays. */
 const FOOTPRINT_CURSOR_ZOOM = 4;
 
+const documentRoute = getRouteApi('/d/$docId');
+
+/** Toasts clear the chrome: bottom right on desktop, just above the dock on a phone. */
+/**
+ * ToastViewport pads 16px inside its inset. These cancel that padding so toasts line up with the
+ * islands' 12px edge on desktop and float 12px above the phone dock, measured at its tallest.
+ */
+const TOAST_INSETS: Record<Layout, ToastViewportProps['inset']> = {
+  desktop: { bottom: -4, end: -4 },
+  phone: { bottom: 122, start: -4, end: -4 },
+};
+
+/** The `/d/$docId` route. Each document gets its own session, so switching never mixes history. */
 export function EditorShell() {
-  const [session] = useState(createEditorSession);
+  const { document, isNew } = documentRoute.useLoaderData();
+  const { documentStore } = documentRoute.useRouteContext();
   const layout = useLayout();
+  // Kept current while editing, since the next document mounts before the previous one unmounts.
+  const preferences = useRef(DEFAULT_TOOL_PREFERENCES);
+  return (
+    <ToastViewport position="bottomEnd" inset={TOAST_INSETS[layout]} maxVisible={3}>
+      <Editor
+        key={document.id}
+        document={document}
+        isNew={isNew}
+        store={documentStore}
+        layout={layout}
+        preferences={preferences}
+      />
+    </ToastViewport>
+  );
+}
+
+interface EditorProps {
+  document: BitmapDocument;
+  /** A blank canvas that has never been stored. It shows no save status until the first edit. */
+  isNew: boolean;
+  store: DocumentStore;
+  layout: Layout;
+  /** Seeds this document's tools and receives every change, for the next document to pick up. */
+  preferences: RefObject<ToolPreferences>;
+}
+
+function Editor({ document, isNew, store, layout, preferences }: EditorProps) {
+  const [session] = useState(() =>
+    createEditorSession({
+      document,
+      save: isNew ? null : 'saved',
+      preferences: preferences.current,
+    }),
+  );
   const scheme = useColorScheme();
 
+  useEffect(() => {
+    const subscription = session.state.subscribe(() => {
+      preferences.current = toolPreferences(session.state.state);
+    });
+    return () => subscription.unsubscribe();
+  }, [session, preferences]);
   useEffect(() => session.setLayout(layout), [session, layout]);
   useEffect(() => session.setCanvasColors(CANVAS_COLORS[scheme]), [session, scheme]);
-
-  const run = useCallback((command: EditorCommand) => session.run(command), [session]);
-  useShortcuts(session, run);
+  useAutosave(session, store);
 
   return (
     <EditorProvider value={session}>
-      <main {...stylex.props(styles.app, layout === 'phone' && styles.phone)}>
-        <Canvas session={session} />
-        {layout === 'phone' ? <PhoneChrome /> : <DesktopChrome />}
-        <NewCanvasDialog layout={layout} />
-        <ResizeDialog layout={layout} />
-        <ExportDialog layout={layout} onExport={() => session.setPanel(null)} />
-      </main>
+      <FileActionsProvider session={session} store={store} layout={layout}>
+        <main {...stylex.props(styles.app, layout === 'phone' && styles.phone)}>
+          <Canvas session={session} />
+          {layout === 'phone' ? <PhoneChrome /> : <DesktopChrome />}
+          <Panels layout={layout} />
+          <DropOverlay />
+        </main>
+      </FileActionsProvider>
     </EditorProvider>
+  );
+}
+
+/** Dialogs and sheets, plus the input that reaches beyond the canvas: shortcuts and clipboard. */
+function Panels({ layout }: { layout: Layout }) {
+  const session = useEditor();
+  const files = useFileActions();
+  const run = useCallback(
+    (command: EditorCommand) => {
+      if (command.type === 'open-file') files.pickFile();
+      else session.run(command);
+    },
+    [session, files],
+  );
+  useShortcuts(session, run);
+  useClipboard(session, files);
+
+  return (
+    <>
+      <NewCanvasDialog layout={layout} />
+      <ResizeDialog layout={layout} />
+      <ExportDialog
+        layout={layout}
+        onExport={(fileName, scale) => {
+          files.exportPng(fileName, scale);
+          session.setPanel(null);
+        }}
+      />
+    </>
   );
 }
 

@@ -8,7 +8,7 @@ import type {
   Viewport,
   ViewportInsets,
 } from '../../canvas';
-import { createBitmapDocument, getPixel, intersectRect, resizeDocument } from '../../document';
+import { getPixel, intersectRect, resizeDocument } from '../../document';
 import type {
   BitmapDocument,
   CanvasAnchor,
@@ -40,7 +40,15 @@ import {
   stepBrush,
   swapColors,
 } from '../core/state';
-import type { ColorSlot, EditorPanel, EditorState } from '../core/state';
+import type {
+  ColorSlot,
+  EditorPanel,
+  EditorState,
+  SaveStatus,
+  ToolPreferences,
+} from '../core/state';
+import { appClipboard } from './clipboard';
+import type { PixelClipboard } from './clipboard';
 
 /** Modifier state for one canvas gesture sample. */
 export interface GestureInput {
@@ -82,7 +90,9 @@ export interface EditorSession {
   setLayout(layout: Layout): void;
   setViewportSize(width: number, height: number, devicePixelRatio: number): void;
   setViewport(viewport: Viewport): void;
-  createDocument(width: number, height: number, background: PackedColor): void;
+  setSaveStatus(status: SaveStatus): void;
+  /** Pastes outside pixels centered on the canvas as a selection. False when they don't fit. */
+  place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels'>): boolean;
   resizeDocument(width: number, height: number, anchor: CanvasAnchor): void;
   toDocument(point: ScreenPoint): PixelPoint;
   hover(point: PixelPoint | null): void;
@@ -93,15 +103,31 @@ export interface EditorSession {
   cancelGesture(): void;
 }
 
-export function createEditorSession(): EditorSession {
-  const initial = createBitmapDocument(crypto.randomUUID(), 32, 32);
+export interface EditorSessionOptions {
+  document: BitmapDocument;
+  /** Null for a document that has never been saved or edited. */
+  save: SaveStatus | null;
+  clipboard?: PixelClipboard;
+  /** Carried over from the previous document. */
+  preferences?: ToolPreferences;
+}
 
+export function createEditorSession({
+  document: initial,
+  save,
+  clipboard = appClipboard,
+  preferences,
+}: EditorSessionOptions): EditorSession {
   const history = createDocumentHistory();
   const fillWorkspace = new FillWorkspace();
   const lineWorkspace = new LinePreviewWorkspace();
   const scratchRect: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
   const state = createStore(
-    initialEditorState({ name: initial.name, width: initial.width, height: initial.height }),
+    initialEditorState(
+      { name: initial.name, width: initial.width, height: initial.height },
+      save,
+      preferences,
+    ),
   );
   const bitmap = createStore(initial);
   const viewport = createStore<Viewport>({
@@ -125,7 +151,6 @@ export function createEditorSession(): EditorSession {
   let refitOnResize = false;
   let gesture: Gesture | null = null;
   let selection: SelectionSession = beginSelection(initial, history);
-  let clipboard: FloatingSelection | null = null;
 
   const update = (transition: (current: EditorState) => EditorState) => state.setState(transition);
   const setOverlay = (patch: Partial<OverlayState>) =>
@@ -255,27 +280,32 @@ export function createEditorSession(): EditorSession {
       case 'cut': {
         if (!rect) return;
         const floating = selection.floating;
-        clipboard = floating
+        const copied = floating
           ? {
               bounds: { ...floating.bounds },
               sourceBounds: { ...floating.bounds },
               pixels: floating.pixels.slice(),
             }
           : copySelection(document(), rect);
+        if (copied) clipboard.write(copied);
         if (action === 'cut') runSelection('clear');
         return;
       }
       case 'paste': {
-        if (!clipboard) return;
-        commitFloating();
-        const at = { x: clipboard.bounds.x, y: clipboard.bounds.y };
-        if (pasteSelection(document(), clipboard, at, history)) {
-          syncHistory();
-          setSelection({ ...at, width: clipboard.bounds.width, height: clipboard.bounds.height });
-        }
+        const copied = clipboard.read();
+        if (copied) paste(copied, { x: copied.bounds.x, y: copied.bounds.y });
         return;
       }
     }
+  }
+
+  function paste(pixels: FloatingSelection, at: PixelPoint): boolean {
+    commitFloating();
+    if (!pasteSelection(document(), pixels, at, history)) return false;
+    syncHistory();
+    update((current) => selectTool(current, 'select'));
+    setSelection({ ...at, width: pixels.bounds.width, height: pixels.bounds.height });
+    return true;
   }
 
   function zoomBy(direction: -1 | 1, anchor = center()): void {
@@ -330,6 +360,7 @@ export function createEditorSession(): EditorSession {
           update((current) => openPanel(current, command.panel));
           return;
         case 'open-file':
+          // File pickers need the DOM, so the shell handles this one before it reaches here.
           return;
         case 'selection':
           runSelection(command.action);
@@ -390,10 +421,19 @@ export function createEditorSession(): EditorSession {
       viewport.setState(() => next);
     },
 
-    createDocument(width, height, background) {
-      const next = createBitmapDocument(crypto.randomUUID(), width, height);
-      if (background !== TRANSPARENT) next.pixels.fill(background);
-      replaceDocument(next);
+    setSaveStatus(status) {
+      update((current) => (current.save === status ? current : { ...current, save: status }));
+    },
+
+    place(image) {
+      const { width, height } = document();
+      if (image.width > width || image.height > height) return false;
+      const at = {
+        x: Math.floor((width - image.width) / 2),
+        y: Math.floor((height - image.height) / 2),
+      };
+      const bounds = { ...at, width: image.width, height: image.height };
+      return paste({ bounds, sourceBounds: bounds, pixels: image.pixels }, at);
     },
 
     resizeDocument(width, height, anchor) {

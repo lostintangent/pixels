@@ -1,4 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
+import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { DropdownMenuItemData, DropdownMenuOption } from '@astryxdesign/core/DropdownMenu';
 import { Kbd } from '@astryxdesign/core/Kbd';
@@ -9,6 +10,7 @@ import {
   FilePlus2,
   FolderOpen,
   Grid3x3,
+  History,
   Maximize,
   Minus,
   Monitor,
@@ -24,14 +26,28 @@ import { setAppearance, useAppearance } from '../session/appearance';
 import type { Appearance } from '../session/appearance';
 import type { Layout } from '../session/session';
 import { useEditor, useEditorState } from './EditorContext';
+import { useFileActions } from './files/FileActions';
+import { formatEdited, useRecents } from './files/useRecents';
+import type { RecentDocument } from './files/useRecents';
 
 const icon = (Glyph: typeof Check) => <Glyph size={16} strokeWidth={1.75} aria-hidden />;
 const checked = (on: boolean): ReactElement | undefined => (on ? icon(Check) : undefined);
+const APPEARANCE_ICON: Record<Appearance, typeof Check> = {
+  system: Monitor,
+  light: Sun,
+  dark: Moon,
+};
 
-/** The document menu: file actions and app appearance behind the document's name. */
+/**
+ * The document menu: file actions and app appearance behind the document's name.
+ * Recent documents and appearance fly out so the top level stays one short, scannable list.
+ */
 export function DocMenu({ layout }: { layout: Layout }) {
   const session = useEditor();
+  const files = useFileActions();
   const name = useEditorState((state) => state.document.name);
+  const id = useSelector(session.bitmap, (document) => document.id);
+  const { recents, refresh } = useRecents(files.store, id);
   const mode = useAppearance();
   const phone = layout === 'phone';
   const keys = (shortcut: string) => (phone ? undefined : <Kbd keys={shortcut} />);
@@ -57,8 +73,21 @@ export function DocMenu({ layout }: { layout: Layout }) {
       label: 'Open PNG…',
       icon: icon(FolderOpen),
       endContent: keys('mod+o'),
-      onClick: () => session.run({ type: 'open-file' }),
+      onClick: () => files.pickFile(),
     },
+    {
+      label: 'Open recent',
+      icon: icon(History),
+      isDisabled: recents.length === 0,
+      items: recents.map((recent) => ({
+        id: recent.id,
+        label: recent.name,
+        description: `${recent.width} × ${recent.height} · ${formatEdited(recent.updatedAt)}`,
+        icon: <Thumbnail recent={recent} />,
+        onClick: () => files.openRecent(recent.id),
+      })),
+    },
+    { type: 'divider' },
     {
       label: 'Export PNG…',
       icon: icon(Download),
@@ -71,11 +100,16 @@ export function DocMenu({ layout }: { layout: Layout }) {
       endContent: keys('mod+alt+c'),
       onClick: () => session.run({ type: 'open', panel: 'resize' }),
     },
-    ...appearanceGroup(phone, [
-      appearance('system', 'System', Monitor),
-      appearance('light', 'Light', Sun),
-      appearance('dark', 'Dark', Moon),
-    ]),
+    { type: 'divider' },
+    {
+      label: 'Appearance',
+      icon: icon(APPEARANCE_ICON[mode]),
+      items: [
+        appearance('system', 'System', Monitor),
+        appearance('light', 'Light', Sun),
+        appearance('dark', 'Dark', Moon),
+      ],
+    },
   ];
 
   return (
@@ -84,6 +118,7 @@ export function DocMenu({ layout }: { layout: Layout }) {
       items={items}
       presentation={phone ? 'bottom-sheet' : 'popover'}
       menuWidth={264}
+      onOpenChange={(open) => open && refresh()}
     />
   );
 }
@@ -161,11 +196,32 @@ const styles = stylex.create({
   logo: { display: 'grid', gridTemplateColumns: 'repeat(2, 8px)', gap: 1, marginInlineEnd: 2 },
   logoPixel: { display: 'block', width: 8, height: 8, borderRadius: 1.5 },
   color: (color: string) => ({ backgroundColor: color }),
+  thumb: {
+    display: 'grid',
+    placeItems: 'center',
+    width: 28,
+    height: 28,
+    overflow: 'hidden',
+    borderRadius: 6,
+    boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
+    backgroundImage:
+      'repeating-conic-gradient(light-dark(#fff, #3a3a3c) 0 25%, light-dark(#ebebef, #313133) 0 50%)',
+    backgroundSize: '6px 6px',
+  },
+  thumbImage: {
+    display: 'block',
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
+    imageRendering: 'pixelated',
+  },
 });
 
-/** Pointer menus title the group. Touch sheets use a divider, since their headings sit flush left. */
-function appearanceGroup(phone: boolean, items: DropdownMenuItemData[]): DropdownMenuOption[] {
-  return phone
-    ? [{ type: 'divider' }, ...items]
-    : [{ type: 'section', title: 'Appearance', items }];
+/** The stored thumbnail at icon size, crisp and on a checker so transparency reads. */
+function Thumbnail({ recent }: { recent: RecentDocument }) {
+  return (
+    <span aria-hidden {...stylex.props(styles.thumb)}>
+      <img src={recent.thumbnail} alt="" {...stylex.props(styles.thumbImage)} />
+    </span>
+  );
 }
