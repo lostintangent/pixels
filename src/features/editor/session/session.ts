@@ -1,6 +1,6 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
-import { fitViewport, screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
+import { screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
 import type {
   OverlayPreview,
   OverlayState,
@@ -28,6 +28,8 @@ import {
   floodFill,
 } from '../../tools';
 import type { FloatingSelection, LinePreview, SelectionSession, StrokeSession } from '../../tools';
+import { fitAroundIslands, frameCenter } from '../core/fit';
+import type { IslandRect } from '../core/fit';
 import { usesBrush } from '../core/tools';
 import type { EditorCommand, SelectionAction } from '../core/shortcuts';
 import {
@@ -59,9 +61,13 @@ export interface GestureInput {
 
 export type Layout = 'desktop' | 'phone';
 
-/** Space the floating islands occupy, so fit centers the canvas in what's left. */
-const INSETS: Record<Layout, ViewportInsets> = {
-  desktop: { top: 72, right: 272, bottom: 56, left: 76 },
+/**
+ * The margin chrome always takes, mirrored left and right so a fit lands truly centered. Islands
+ * that only sometimes collide with the document, like the desktop color panel, are reported
+ * separately and cleared only when they would overlap.
+ */
+const FRAMES: Record<Layout, ViewportInsets> = {
+  desktop: { top: 72, right: 76, bottom: 56, left: 76 },
   phone: { top: 72, right: 16, bottom: 148, left: 16 },
 };
 
@@ -89,6 +95,8 @@ export interface EditorSession {
   /** Checker and grid colors follow the resolved color scheme. */
   setCanvasColors(colors: NonNullable<OverlayState['colors']>): void;
   setLayout(layout: Layout): void;
+  /** Floating chrome a fit should keep the document out from under, in canvas CSS pixels. */
+  setIslands(islands: readonly IslandRect[]): void;
   setViewportSize(width: number, height: number, devicePixelRatio: number): void;
   setViewport(viewport: Viewport): void;
   setSaveStatus(status: SaveStatus): void;
@@ -142,7 +150,7 @@ export function createEditorSession({
     devicePixelRatio: 1,
   });
   const overlay = createStore<OverlayState>({
-    grid: 'auto',
+    grid: state.state.gridEnabled ? 'auto' : 'off',
     cursor: null,
     marquee: null,
     preview: null,
@@ -151,7 +159,10 @@ export function createEditorSession({
   const pointer = createStore<PixelPoint | null>(null);
 
   let layout: Layout = 'desktop';
+  let islands: readonly IslandRect[] = [];
   let fitted = false;
+  // The view a fit produced, so a later island measurement can tell nobody has panned since.
+  let lastFit: Viewport | null = null;
   let refitOnResize = false;
   let gesture: Gesture | null = null;
   let selection: SelectionSession = beginSelection(initial, history);
@@ -188,22 +199,24 @@ export function createEditorSession({
   function fit(): void {
     const view = viewport.state;
     if (!view.cssWidth || !view.cssHeight) return;
-    const next = fitViewport(view, document().width, document().height, INSETS[layout]);
+    const next = fitAroundIslands(
+      view,
+      document().width,
+      document().height,
+      FRAMES[layout],
+      islands,
+    );
     viewport.setState(() => ({
       ...next,
       panX: Math.round(next.panX),
       panY: Math.round(next.panY),
     }));
     fitted = true;
+    lastFit = viewport.state;
   }
 
   function center(): ScreenPoint {
-    const insets = INSETS[layout];
-    const view = viewport.state;
-    return {
-      x: insets.left + (view.cssWidth - insets.left - insets.right) / 2,
-      y: insets.top + (view.cssHeight - insets.top - insets.bottom) / 2,
-    };
+    return frameCenter(viewport.state, FRAMES[layout]);
   }
 
   function replaceDocument(next: BitmapDocument): void {
@@ -450,6 +463,13 @@ export function createEditorSession({
       // The layout flips with the window, before the canvas reports its new size.
       refitOnResize = true;
       fit();
+    },
+
+    setIslands(next) {
+      const untouched = fitted && viewport.state === lastFit;
+      islands = next;
+      // Islands measure after the first fit can run. Redo it unless the artist has moved since.
+      if (untouched) fit();
     },
 
     setViewportSize(width, height, devicePixelRatio) {

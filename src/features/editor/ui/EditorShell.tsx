@@ -13,7 +13,15 @@ import type { ToastViewportProps } from '@astryxdesign/core/Toast';
 import { getRouteApi } from '@tanstack/react-router';
 import { useSelector } from '@tanstack/react-store';
 import { Grid3x3, Minus, Plus, Redo2, Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { RefObject } from 'react';
 import { CanvasSurface, MAX_ZOOM, MIN_ZOOM } from '../../canvas';
 import type { CanvasInput, CanvasPointerSample, OverlayState } from '../../canvas';
@@ -28,11 +36,13 @@ import {
   RECENT_LIMIT,
 } from '../../palette';
 import type { EditorCommand } from '../core/shortcuts';
-import { DEFAULT_TOOL_PREFERENCES, toolPreferences } from '../core/state';
+import { sameToolPreferences } from '../core/preferences';
+import { toolPreferences } from '../core/state';
 import type { ColorSlot, ToolPreferences } from '../core/state';
 import { usesBrush } from '../core/tools';
 import { useColorScheme } from '../session/appearance';
 import type { ColorScheme } from '../session/appearance';
+import { readToolPreferences, writeToolPreferences } from '../session/preferences';
 import { createEditorSession } from '../session/session';
 import type { EditorSession, Layout } from '../session/session';
 import { ExportDialog, NewCanvasDialog, ResizeDialog } from './dialogs';
@@ -89,7 +99,8 @@ export function EditorShell() {
   const { documentStore } = documentRoute.useRouteContext();
   const layout = useLayout();
   // Kept current while editing, since the next document mounts before the previous one unmounts.
-  const preferences = useRef(DEFAULT_TOOL_PREFERENCES);
+  const [saved] = useState(readToolPreferences);
+  const preferences = useRef(saved);
   useEffect(prefetchWhenIdle, []);
   return (
     <ToastHost inset={TOAST_INSETS[layout]}>
@@ -127,7 +138,10 @@ function Editor({ document, isNew, store, layout, preferences }: EditorProps) {
 
   useEffect(() => {
     const subscription = session.state.subscribe(() => {
-      preferences.current = toolPreferences(session.state.state);
+      const next = toolPreferences(session.state.state);
+      if (sameToolPreferences(next, preferences.current)) return;
+      preferences.current = next;
+      writeToolPreferences(next);
     });
     return () => subscription.unsubscribe();
   }, [session, preferences]);
@@ -313,6 +327,7 @@ function DesktopColors({ fade }: { fade: Fade }) {
   const secondary = useEditorState((state) => state.secondary);
   const recent = useEditorState((state) => state.recent);
   const panel = useRef<HTMLElement>(null);
+  useFitClearance(session, panel);
   return (
     <Island ref={panel} as="aside" aria-label="Colors" xstyle={[styles.panel, fade]}>
       <ColorPanel
@@ -326,6 +341,36 @@ function DesktopColors({ fade }: { fade: Fade }) {
       />
     </Island>
   );
+}
+
+/**
+ * Tells fit where this island sits so a document can center beneath it. Offsets measure the
+ * layout box, unaffected by the fade's transform, relative to the full-bleed editor.
+ */
+function useFitClearance(session: EditorSession, island: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const element = island.current;
+    if (!element) return;
+    const report = () =>
+      session.setIslands([
+        {
+          left: element.offsetLeft,
+          top: element.offsetTop,
+          right: element.offsetLeft + element.offsetWidth,
+          bottom: element.offsetTop + element.offsetHeight,
+        },
+      ]);
+    report();
+    // A right-anchored island moves with the window without changing size.
+    const observer = new ResizeObserver(report);
+    observer.observe(element);
+    window.addEventListener('resize', report);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', report);
+      session.setIslands([]);
+    };
+  }, [session, island]);
 }
 
 function PhoneChrome() {

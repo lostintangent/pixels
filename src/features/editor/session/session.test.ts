@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
 import { exportPng, importPng } from '../../files';
 import { copySelection } from '../../tools';
+import { DEFAULT_TOOL_PREFERENCES } from '../core/state';
 import { createPixelClipboard } from './clipboard';
 import { createEditorSession } from './session';
 
@@ -133,4 +134,30 @@ test('opening export commits a floating move before the preview snapshots pixels
   expect(session.overlay.state.sourceClear).toBeNull();
   session.run({ type: 'undo' });
   expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
+});
+
+test('a session opened with the grid off draws no grid', () => {
+  const document = createBitmapDocument('grid', 4, 4);
+  const preferences = { ...DEFAULT_TOOL_PREFERENCES, gridEnabled: false };
+  const session = createEditorSession({ document, save: null, preferences });
+  expect(session.overlay.state.grid).toBe('off');
+  session.run({ type: 'toggle-grid' });
+  expect(session.overlay.state.grid).toBe('auto');
+});
+
+test('an island measured after the first fit refits only an untouched view', () => {
+  const document = createBitmapDocument('fit', 64, 64);
+  const session = createEditorSession({ document, save: null });
+  session.setViewportSize(820, 1180, 2);
+  expect(session.viewport.state).toMatchObject({ zoom: 8, panX: 154, panY: 342 });
+
+  const panel = { left: 434, top: 16, right: 804, bottom: 397 };
+  session.setIslands([panel]);
+  expect(session.viewport.state).toMatchObject({ zoom: 6, panX: 218, panY: 406 });
+
+  session.setViewport({ ...session.viewport.state, panX: 10 });
+  session.setIslands([]);
+  expect(session.viewport.state).toMatchObject({ zoom: 6, panX: 10 });
+  session.run({ type: 'zoom-fit' });
+  expect(session.viewport.state).toMatchObject({ zoom: 8, panX: 154 });
 });

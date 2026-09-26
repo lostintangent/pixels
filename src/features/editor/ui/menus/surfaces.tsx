@@ -17,7 +17,7 @@ import {
   Moon,
   Plus,
   Scaling,
-  Scan,
+  SquareDot,
   Sun,
 } from 'lucide-react';
 import { useEffect, useEffectEvent } from 'react';
@@ -171,7 +171,7 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
     },
     {
       label: 'Actual size',
-      icon: icon(Scan),
+      icon: icon(SquareDot),
       endContent: keys('mod+1'),
       onClick: () => session.run({ type: 'zoom-actual' }),
     },
