@@ -1,9 +1,40 @@
 import 'fake-indexeddb/auto';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
+import type { DocumentSnapshot, TileSnapshot } from '../core/contracts';
 import { extractTile } from '../core/tiles';
 import { snapshotDocument } from '../core/snapshot';
 import { createDocumentStore } from './documentStore';
+
+/** A minimal in-memory `Storage`, since `bun test` has no `localStorage` global of its own — the
+ *  crash-recovery journal is otherwise only ever exercised by the live-browser durability suite. */
+class MemoryStorage {
+  private readonly data = new Map<string, string>();
+  getItem(key: string): string | null {
+    return this.data.has(key) ? this.data.get(key)! : null;
+  }
+  setItem(key: string, value: string): void {
+    this.data.set(key, value);
+  }
+  removeItem(key: string): void {
+    this.data.delete(key);
+  }
+}
+
+let memoryStorage: MemoryStorage;
+beforeEach(() => {
+  memoryStorage = new MemoryStorage();
+  (globalThis as { localStorage?: unknown }).localStorage = memoryStorage;
+});
+afterEach(() => {
+  delete (globalThis as { localStorage?: unknown }).localStorage;
+});
+
+/** Mirrors the private key format in `documentStore.ts`, purely so these tests can inspect
+ *  whether a stash actually landed in (or was cleared from) `localStorage`. */
+function crashRecoveryKey(id: string): string {
+  return `pixels-files-crash-recovery:${id}`;
+}
 
 let dbCounter = 0;
 function freshStore() {
@@ -273,5 +304,182 @@ describe('per-id write chain', () => {
     const afterPatch = await store.listRecents();
     const bytes = new Uint8Array(await afterPatch[0]!.thumbnail.arrayBuffer());
     expect([...bytes]).toEqual([7, 7, 7]);
+  });
+});
+
+/** Builds a `DocumentSnapshot` shaped like an exit-time journal stash, without going through a
+ *  live `BitmapDocument` — these tests exercise `load()`'s recovery merge directly. */
+function recoveryStash(options: {
+  id: string;
+  name?: string;
+  width: number;
+  height: number;
+  updatedAt: number;
+  fullResave: boolean;
+  tiles: TileSnapshot[];
+}): DocumentSnapshot {
+  return {
+    id: options.id,
+    name: options.name ?? 'Recovered',
+    width: options.width,
+    height: options.height,
+    updatedAt: options.updatedAt,
+    tiles: options.tiles,
+    fullResave: options.fullResave,
+    thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
+  };
+}
+
+function soloTile(tx: number, ty: number, fill: number): TileSnapshot {
+  const pixels = new Uint8Array(64 * 64 * 4);
+  pixels.fill(fill);
+  return { tx, ty, pixels };
+}
+
+describe('crash-recovery journal', () => {
+  test('recovery merges the stashed tiles over what is already stored, leaving the rest intact', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-merge', 128, 64, 'Merge');
+    document.pixels.fill(packRgba(1, 1, 1, 255));
+    await saveFull(document, store);
+
+    // A journal entry left behind at exit, covering only the second tile (tx=1) with a newer
+    // timestamp than the stored record — exactly what an exit stash for one dirtied tile looks
+    // like when the rest of the document already committed normally.
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-merge',
+        width: 128,
+        height: 64,
+        updatedAt: Date.now() + 1000,
+        fullResave: false,
+        tiles: [soloTile(1, 0, 2)],
+      }),
+    );
+
+    const loaded = await store.load('doc-merge');
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([1, 1, 1, 255]); // tile 0 untouched, from storage
+    expect([...loaded!.pixels.subarray(64 * 4, 64 * 4 + 4)]).toEqual([2, 2, 2, 2]); // tile 1, from the journal
+  });
+
+  test('a full-resave journal entry replaces the stored grid entirely, not merges over it', async () => {
+    const store = freshStore();
+    const big = createBitmapDocument('doc-full', 128, 128, 'Big');
+    big.pixels.fill(packRgba(5, 5, 5, 255));
+    await saveFull(big, store);
+
+    // A full-resave exit stash (e.g. after a resize) only ever includes tile 0:0's corner filled
+    // in; a merge would incorrectly resurrect the old tile 1/1 corner from storage.
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-full',
+        width: 128,
+        height: 128,
+        updatedAt: Date.now() + 1000,
+        fullResave: true,
+        tiles: [soloTile(0, 0, 9)],
+      }),
+    );
+
+    const loaded = await store.load('doc-full');
+    const farCorner = (127 * 128 + 127) * 4;
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([9, 9, 9, 9]);
+    expect([...loaded!.pixels.subarray(farCorner, farCorner + 4)]).toEqual([0, 0, 0, 0]);
+  });
+
+  test('a journal entry no newer than the stored record is ignored, and cleared rather than left behind', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-stale', 64, 64, 'Stale');
+    document.pixels.fill(packRgba(3, 3, 3, 255));
+    await store.save(
+      { ...snapshotDocument(document, [], true), updatedAt: 2000 },
+      new Uint8Array(),
+    );
+
+    // A leftover journal entry from before the save above landed — same age, so it must not win.
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-stale',
+        width: 64,
+        height: 64,
+        updatedAt: 2000,
+        fullResave: false,
+        tiles: [soloTile(0, 0, 8)],
+      }),
+    );
+
+    const loaded = await store.load('doc-stale');
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([3, 3, 3, 255]); // the stored write wins
+    expect(memoryStorage.getItem(crashRecoveryKey('doc-stale'))).toBeNull(); // and the stale entry is gone
+  });
+
+  test('remove clears any pending journal entry, so a deleted document is never resurrected by it', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-removed', 64, 64, 'Removed');
+    await saveFull(document, store);
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-removed',
+        width: 64,
+        height: 64,
+        updatedAt: Date.now() + 1000,
+        fullResave: false,
+        tiles: [soloTile(0, 0, 1)],
+      }),
+    );
+
+    await store.remove('doc-removed');
+
+    expect(await store.load('doc-removed')).toBeNull();
+    expect(memoryStorage.getItem(crashRecoveryKey('doc-removed'))).toBeNull();
+  });
+
+  test('a snapshot over the crash-recovery size cap is never stashed', async () => {
+    const store = freshStore();
+    const oversizedTile: TileSnapshot = { tx: 0, ty: 0, pixels: new Uint8Array(2 * 1024 * 1024) };
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-oversize',
+        width: 64,
+        height: 64,
+        updatedAt: Date.now(),
+        fullResave: true,
+        tiles: [oversizedTile],
+      }),
+    );
+
+    expect(memoryStorage.getItem(crashRecoveryKey('doc-oversize'))).toBeNull();
+    expect(await store.load('doc-oversize')).toBeNull(); // nothing to recover from, either
+  });
+
+  test('load() persists a recovered document to IndexedDB, not just returned in memory', async () => {
+    const store = freshStore();
+    // A brand-new document that crashed before its first normal save ever landed: nothing in
+    // IndexedDB yet, only the journal.
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-recover-persist',
+        name: 'RecoverPersist',
+        width: 64,
+        height: 64,
+        updatedAt: Date.now(),
+        fullResave: true,
+        tiles: [soloTile(0, 0, 4)],
+      }),
+    );
+
+    const firstLoad = await store.load('doc-recover-persist');
+    expect([...firstLoad!.pixels.subarray(0, 4)]).toEqual([4, 4, 4, 4]);
+
+    // The journal entry is cleared once recovery persists, so this second load can only be
+    // seeing this if the recovered write actually reached IndexedDB the first time.
+    expect(memoryStorage.getItem(crashRecoveryKey('doc-recover-persist'))).toBeNull();
+    const secondLoad = await store.load('doc-recover-persist');
+    expect([...secondLoad!.pixels.subarray(0, 4)]).toEqual([4, 4, 4, 4]);
+
+    const recents = await store.listRecents();
+    const summary = recents.find((r) => r.id === 'doc-recover-persist');
+    expect(summary).not.toBeUndefined();
+    expect(summary!.thumbnail.size).toBeGreaterThan(0); // a real PNG, not the blank placeholder
   });
 });

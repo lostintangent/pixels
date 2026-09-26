@@ -6,7 +6,8 @@ import type {
   LoadedDocument,
   TileSnapshot,
 } from '../core/contracts';
-import { writeTile } from '../core/tiles';
+import { encodePng } from '../core/png';
+import { buildThumbnail, writeTile } from '../core/tiles';
 
 const DB_NAME = 'pixels-files';
 const DB_VERSION = 1;
@@ -63,22 +64,14 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
   });
 }
 
-/** Deletes every stored tile for a document id, used before a full resave replaces the whole grid. */
-function deleteAllTiles(tx: IDBTransaction, id: DocumentId): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const index = tx.objectStore(TILES_STORE).index(TILES_BY_ID_INDEX);
-    const cursorRequest = index.openCursor(IDBKeyRange.only(id));
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result;
-      if (cursor) {
-        cursor.delete();
-        cursor.continue();
-      } else {
-        resolve();
-      }
-    };
-    cursorRequest.onerror = () => reject(cursorRequest.error);
-  });
+/** Deletes every stored tile for a document id, used before a full resave replaces the whole grid.
+ *  A single range delete on the primary key (`[id, tx, ty]`) rather than an awaited cursor walk:
+ *  `[id, []]` sorts above every real `[id, tx, ty]` key (IndexedDB orders a number below an array
+ *  in the same slot), so the bound below always covers exactly this id's tiles. Issued
+ *  synchronously alongside the puts below, so nothing here forces its own await before the
+ *  transaction's explicit `commit()`. */
+function deleteAllTiles(tx: IDBTransaction, id: DocumentId): void {
+  tx.objectStore(TILES_STORE).delete(IDBKeyRange.bound([id], [id, []]));
 }
 
 const BASE64_CHUNK = 0x2000;
@@ -107,14 +100,18 @@ interface CrashRecoveryPayload {
   tiles: { tx: number; ty: number; pixels: string }[];
 }
 
-// A real, confirmed browser behavior (not something application code can restructure around): an
-// immediate `location.reload()` can discard a page before an already-queued IndexedDB
-// transaction's commit reaches durable storage, even when every `put` was submitted synchronously
-// the instant `pagehide` fired — closing the page instead reliably lets that same commit land.
-// `localStorage.setItem` is a genuinely synchronous, blocking write with no such gap, so it
-// survives exactly the teardown IndexedDB doesn't. This is a pure safety net for that one narrow
-// window, not a second primary write path — capped in size so a large simultaneous edit just
-// forgoes it rather than risking `localStorage`'s much smaller quota.
+// Measured directly, with the journal disabled, against real Chromium: once `saveNow` issues its
+// `put`s and commits the transaction explicitly (rather than waiting for the microtask queue to
+// idle into an implicit auto-commit), a `location.reload()` reliably lets that commit land —
+// reload's data loss was this store's own commit timing, not a browser quirk reload specifically
+// exposes. Actually *closing* the page is the case that still loses it: the same test shows an
+// already-committed transaction can be discarded 5 of 5 on close, even with the explicit commit
+// and even with a pause before reopening. `localStorage.setItem` is a genuinely synchronous,
+// blocking write with no such gap, so it covers exactly the teardown IndexedDB doesn't survive on
+// close. This is a pure safety net for that one narrow window, not a second primary write path —
+// capped in size so a large simultaneous edit just forgoes it rather than risking `localStorage`'s
+// much smaller quota, and only ever written at the moment the page is actually exiting (see
+// `attachAutosave`'s pagehide/hidden handling), never on every routine debounced save.
 const CRASH_RECOVERY_MAX_BYTES = 1.5 * 1024 * 1024;
 
 function crashRecoveryKey(id: DocumentId): string {
@@ -194,6 +191,18 @@ class WriteChain {
   }
 }
 
+/** A cheap, one-shot thumbnail for a document recovered from the crash journal that never had a
+ *  real one — recovery is rare, so an inline (not off-main-thread) encode here is fine. */
+async function buildRecoveredThumbnail(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+): Promise<Uint8Array> {
+  const pixels32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.length / 4);
+  const thumbnailPixels = buildThumbnail(pixels32, width, height);
+  return encodePng(thumbnailPixels.width, thumbnailPixels.height, thumbnailPixels.pixels);
+}
+
 /** Real IndexedDB persistence. Under `bun test`, `fake-indexeddb/auto` provides the same global.
  *  `databaseName` defaults to the app's single database; tests override it for isolation. */
 export function createDocumentStore(options: { databaseName?: string } = {}): DocumentStore {
@@ -209,11 +218,6 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
     snapshot: DocumentSnapshot,
     thumbnail: Uint8Array | Promise<Uint8Array>,
   ): Promise<void> {
-    // Stashed first, before this function's first await: submitting `documents.put`/`tiles.put`
-    // synchronously (below) already reaches IndexedDB the instant a `pagehide` flush runs, but a
-    // reload can still discard the page before that queued transaction's commit lands. This
-    // synchronous fallback has no such gap — see its definition above.
-    stashForCrashRecovery(snapshot);
     // Open the transaction and write pixel data as soon as the database itself is ready. `dbPromise`
     // resolves once, early, and is never the bottleneck — but the thumbnail is a PNG-worker round
     // trip that can still be in flight when the page is torn down. A `pagehide` flush that awaited
@@ -225,7 +229,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
     const documents = tx.objectStore(DOCUMENTS_STORE);
     const tiles = tx.objectStore(TILES_STORE);
 
-    if (snapshot.fullResave) await deleteAllTiles(tx, snapshot.id);
+    if (snapshot.fullResave) deleteAllTiles(tx, snapshot.id);
 
     const record: DocumentRecord = {
       id: snapshot.id,
@@ -247,6 +251,10 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       };
       tiles.put(tileRecord);
     }
+    // Commits the instant every put above is queued, instead of leaving it to auto-commit once
+    // the microtask queue drains: that implicit drain is exactly the gap a fast reload could win
+    // (see the comment on `CRASH_RECOVERY_MAX_BYTES` above).
+    tx.commit();
     await transactionDone(tx);
     // This write is now durably committed in IndexedDB; the crash-recovery fallback would only
     // ever be needed to cover for exactly this line never being reached.
@@ -289,7 +297,8 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
     const db = await dbPromise;
     const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readwrite');
     tx.objectStore(DOCUMENTS_STORE).delete(id);
-    await deleteAllTiles(tx, id);
+    deleteAllTiles(tx, id);
+    tx.commit();
     await transactionDone(tx);
     lastKnownThumbnail.delete(id);
     clearCrashRecovery(id);
@@ -304,6 +313,10 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       // once its turn comes, so a real failure still propagates to this call's caller normally.
       Promise.resolve(thumbnail).catch(() => {});
       return writes.run(snapshot.id, () => saveNow(snapshot, thumbnail));
+    },
+
+    stashForRecovery(snapshot: DocumentSnapshot): void {
+      stashForCrashRecovery(snapshot);
     },
 
     rename(id: DocumentId, name: string): Promise<void> {
@@ -329,9 +342,10 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
 
       const recovery = readCrashRecovery(id);
       if (recovery && (!record || recovery.updatedAt > record.updatedAt)) {
-        // The crash-recovery fallback caught tiles a `pagehide` flush queued for IndexedDB but
-        // whose commit the page's own teardown never let land (see `stashForCrashRecovery`).
-        // Rebuild from whatever IndexedDB already has — unless that recovered flush was itself a
+        // The crash-recovery fallback caught every tile not yet confirmed committed for this id
+        // at the moment the page actually exited (see `attachAutosave`'s pagehide/hidden
+        // handling) — covering exactly the close-page teardown IndexedDB itself can't always
+        // survive (see the comment on `CRASH_RECOVERY_MAX_BYTES` above). Rebuild from whatever IndexedDB already has — unless that recovered flush was itself a
         // full resave, in which case the old grid is stale and only the recovered tiles apply —
         // then persist the recovered state now that there's a live page to do it durably, and
         // only then retire the fallback entry.
@@ -357,9 +371,12 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
           fullResave: !record || recovery.fullResave,
           thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
         };
-        await writes.run(id, () =>
-          saveNow(recoverySnapshot, lastKnownThumbnail.get(id) ?? new Uint8Array(0)),
-        );
+        // A document that crashed before its first real thumbnail ever computed has nothing in
+        // `lastKnownThumbnail` to carry forward: give it a real one now (a cheap, one-shot
+        // encode) instead of leaving Recent Documents showing a blank tile until the next edit.
+        const thumbnail =
+          lastKnownThumbnail.get(id) ?? (await buildRecoveredThumbnail(pixels, width, height));
+        await writes.run(id, () => saveNow(recoverySnapshot, thumbnail));
         clearCrashRecovery(id);
         return { id, name: recovery.name, width, height, pixels };
       }

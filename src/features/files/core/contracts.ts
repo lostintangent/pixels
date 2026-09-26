@@ -66,6 +66,15 @@ export interface DocumentStore {
    * issued right after — even while the thumbnail is still encoding — correctly waits for it.
    */
   save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>): Promise<void>;
+  /**
+   * A synchronous, `localStorage`-backed fallback for the one narrow teardown window a
+   * synchronously-committed IndexedDB write still can't cover: the browser discarding an
+   * already-committed transaction when the page actually closes (not reloads). Call this only
+   * from an exit signal (`pagehide`, or `visibilitychange` going hidden) with every tile not yet
+   * confirmed committed for the id — never from a routine debounced save, which already reaches
+   * IndexedDB on its own.
+   */
+  stashForRecovery(snapshot: DocumentSnapshot): void;
   rename(id: DocumentId, name: string): Promise<void>;
   load(id: DocumentId): Promise<LoadedDocument | null>;
   remove(id: DocumentId): Promise<void>;

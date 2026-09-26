@@ -69,10 +69,20 @@ export function attachAutosave(
   // sitting unsaved with nothing scheduled to retry it, and the UI needs to keep offering Retry.
   let failedGround = false;
   let failedGroundError: unknown;
+  // Every tile dirtied since the last moment we knew for certain zero writes for this document
+  // were outstanding — a superset of `dirtyTiles` that, unlike it, is never cleared just because
+  // some flush captured it. Only dropped once `inFlightFlushes` returns to zero on a success, i.e.
+  // once IndexedDB is known to hold every one of these tiles. This is what an exit stash reads:
+  // if an earlier stroke's save is still in flight when the page exits, its tiles stay in here
+  // even though a later flush already took `dirtyTiles` from under it for a newer stroke.
+  let pendingTiles = new Map<string, TileCoord>();
+  let pendingFullResave = options.initialResave ?? false;
+  let inFlightFlushes = 0;
 
   const unsubscribe = document.events.subscribe((rect) => {
     for (const coord of tilesForRect(rect, document.width, document.height)) {
       dirtyTiles.set(`${coord.tx}:${coord.ty}`, coord);
+      pendingTiles.set(`${coord.tx}:${coord.ty}`, coord);
     }
     scheduler.noteChange();
   });
@@ -94,6 +104,7 @@ export function attachAutosave(
     // account for them, so any pending "failed ground" carried by an in-between failure is moot.
     failedGround = false;
     const generation = ++latestGeneration;
+    inFlightFlushes++;
     onStatus('saving');
     try {
       const snapshot = snapshotDocument(document, coords, fullResave);
@@ -107,6 +118,14 @@ export function attachAutosave(
         snapshot.thumbnailPixels.pixels,
       );
       await store.save(snapshot, thumbnail);
+      inFlightFlushes--;
+      // Only once every write for this document (this one and any older one still finishing) has
+      // actually committed do we know IndexedDB truly holds everything: only then is nothing left
+      // an exit stash would need to cover.
+      if (inFlightFlushes === 0) {
+        pendingTiles = new Map();
+        pendingFullResave = false;
+      }
       // A newer flush may have started (and possibly already finished) while this one was
       // writing. Only the newest started flush's outcome should reach the UI: this write did
       // commit, but reporting "saved" here would be a lie if a later write is still pending — or
@@ -116,12 +135,16 @@ export function attachAutosave(
         onStatus(failedGround ? 'error' : 'saved', failedGround ? failedGroundError : undefined);
       }
     } catch (error) {
+      inFlightFlushes--;
       // This attempt's ground wasn't saved: put it back, merged with whatever's accumulated
       // since, so the next flush (scheduled or manual) retries all of it, not just the newest.
       for (const [key, coord] of captured) {
         if (!dirtyTiles.has(key)) dirtyTiles.set(key, coord);
       }
-      if (fullResave) fullResavePending = true;
+      if (fullResave) {
+        fullResavePending = true;
+        pendingFullResave = true;
+      }
       failedGround = true;
       failedGroundError = error;
       if (generation === latestGeneration) onStatus('error', error);
@@ -141,10 +164,32 @@ export function attachAutosave(
     scheduler.cancel();
     flush().catch(() => {});
   }
+  // Synchronous, so it runs to completion even if the page is torn down before this task's next
+  // tick — unlike `flush()`, which chains behind any write already in flight for this id and so
+  // could still be waiting its turn when the page actually exits. Reads `pendingTiles`, not just
+  // whatever `dirtyTiles` holds right now, so an earlier stroke's save that's still in flight
+  // stays covered even though `flush()` already took `dirtyTiles` out from under it for a newer
+  // one. `document` here is the local `BitmapDocument` parameter, not the DOM global — the actual
+  // `visibilityState` check below goes through `globalThis.document` for that reason.
+  function stashForExit(): void {
+    if (pendingTiles.size === 0 && !pendingFullResave) return;
+    const snapshot = snapshotDocument(document, pendingTiles.values(), pendingFullResave);
+    store.stashForRecovery(snapshot);
+  }
+  function handlePageHide(): void {
+    stashForExit();
+    flushNow();
+  }
+  function handleVisibilityChange(): void {
+    // Fires on becoming visible too; the journal is only worth its cost on the way to being
+    // hidden, the one transition that can precede an actual close.
+    if (globalThis.document?.visibilityState === 'hidden') stashForExit();
+    flushNow();
+  }
   const hasWindow = typeof window !== 'undefined';
   if (hasWindow) {
-    window.addEventListener('pagehide', flushNow);
-    window.addEventListener('visibilitychange', flushNow);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('visibilitychange', handleVisibilityChange);
   }
 
   return {
@@ -154,12 +199,14 @@ export function attachAutosave(
       unsubscribe();
       scheduler.cancel();
       if (hasWindow) {
-        window.removeEventListener('pagehide', flushNow);
-        window.removeEventListener('visibilitychange', flushNow);
+        window.removeEventListener('pagehide', handlePageHide);
+        window.removeEventListener('visibilitychange', handleVisibilityChange);
       }
       // Read `disposed` inside flush() is still false at this call, so this final flush runs;
       // only after capturing it do we block any further explicit `.flush()` calls. `store.save`
       // chains this after any write already in flight for the id, so it's still ordered correctly.
+      // This is an ordinary in-app teardown (switching documents, navigating away within the
+      // app), not a page exit, so it never stashes to the crash journal.
       flush().catch(() => {});
       disposed = true;
     },
