@@ -49,18 +49,30 @@ function createManualClock() {
   return { clock, advance };
 }
 
-function createFakeStore(): DocumentStore & { saves: DocumentSnapshot[]; failNext: boolean } {
+function createFakeStore(): DocumentStore & {
+  saves: DocumentSnapshot[];
+  failNext: boolean;
+  /** Makes the next `save()` call wait until the returned function is called, so a test can
+   *  land a second edit while that save is still in flight. */
+  blockNextSave(): () => void;
+} {
   const saved = new Map<string, DocumentSnapshot & { thumbnail: Uint8Array }>();
+  let gate: Promise<void> | undefined;
   const store = {
     saves: [] as DocumentSnapshot[],
     failNext: false,
-    async save(snapshot: DocumentSnapshot, thumbnail: Uint8Array) {
+    async save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>) {
+      if (gate) {
+        await gate;
+        gate = undefined;
+      }
       if (store.failNext) {
         store.failNext = false;
         throw new Error('simulated write failure');
       }
+      const resolvedThumbnail = await thumbnail;
       store.saves.push(snapshot);
-      saved.set(snapshot.id, { ...snapshot, thumbnail });
+      saved.set(snapshot.id, { ...snapshot, thumbnail: resolvedThumbnail });
     },
     async rename() {},
     async load() {
@@ -69,6 +81,13 @@ function createFakeStore(): DocumentStore & { saves: DocumentSnapshot[]; failNex
     async remove() {},
     async listRecents(): Promise<DocumentSummary[]> {
       return [];
+    },
+    blockNextSave(): () => void {
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
     },
   };
   return store;
@@ -156,6 +175,34 @@ describe('attachAutosave', () => {
     expect(statuses).toEqual(['saving', 'error', 'saving', 'saved']);
     expect(store.saves).toHaveLength(1);
     autosave.dispose();
+  });
+
+  test('an edit that lands while a save is in flight is not dropped when that save completes', async () => {
+    const document = createBitmapDocument('doc', 256, 256);
+    const store = createFakeStore();
+    const { clock } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+
+    const release = store.blockNextSave();
+    document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
+    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+    const firstFlush = autosave.flush(); // starts; blocks inside store.save on the gate
+
+    await new Promise((resolve) => setTimeout(resolve, 10)); // let it actually reach the gate
+
+    // A second edit, in a different tile, lands while the first save is still in flight.
+    document.pixels[200 * 256 + 200] = packRgba(2, 2, 2, 255); // tile 3:3
+    document.events.invalidate({ x: 200, y: 200, width: 1, height: 1 });
+
+    release();
+    await firstFlush;
+
+    await autosave.flush(); // must still see tile 3:3 as dirty, not have lost it to the first save
+    autosave.dispose();
+
+    expect(store.saves).toHaveLength(2);
+    expect(store.saves[0]!.tiles.map((t) => `${t.tx}:${t.ty}`)).toEqual(['0:0']);
+    expect(store.saves[1]!.tiles.map((t) => `${t.tx}:${t.ty}`)).toEqual(['3:3']);
   });
 
   test('dispose stops future saves', async () => {

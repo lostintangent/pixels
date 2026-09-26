@@ -212,4 +212,37 @@ describe('per-id write chain', () => {
 
     expect([...loaded!.pixels.subarray(0, 4)]).toEqual([4, 3, 2, 1]);
   });
+
+  test('a rejected thumbnail promise queued behind another write never surfaces as an unhandled rejection', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-reject', 8, 8, 'Reject');
+    await saveFull(document, store);
+
+    let releaseFirst!: (bytes: Uint8Array) => void;
+    const firstThumbnail = new Promise<Uint8Array>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstSave = store.save(snapshotDocument(document, [], true), firstThumbnail);
+
+    // Queued behind the first: its thumbnail rejects before its own operation ever runs, so
+    // nothing but `store.save` itself has had a chance to attach a handler yet.
+    const secondSave = store.save(
+      snapshotDocument(document, [], true),
+      Promise.reject(new Error('thumbnail encode failed')),
+    );
+    secondSave.catch(() => {}); // this call's own rejection is expected; only unhandledRejection matters here
+
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20)); // give it a chance to misfire
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+      releaseFirst(new Uint8Array([1]));
+      await firstSave;
+      await secondSave.catch(() => {});
+    }
+  });
 });

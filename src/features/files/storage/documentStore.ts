@@ -171,6 +171,12 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
 
   return {
     save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>): Promise<void> {
+      // If a write is already in flight for this id, `thumbnail` sits unreferenced until this
+      // save's turn comes up in the chain — nothing has awaited or attached to it yet. Attach a
+      // no-op catch immediately so a rejection in the meantime doesn't surface as an unhandled
+      // rejection; `saveNow` still awaits the same promise for its actual value (or failure)
+      // once its turn comes, so a real failure still propagates to this call's caller normally.
+      Promise.resolve(thumbnail).catch(() => {});
       return writes.run(snapshot.id, () => saveNow(snapshot, thumbnail));
     },
 

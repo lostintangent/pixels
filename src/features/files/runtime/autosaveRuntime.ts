@@ -68,8 +68,15 @@ export function attachAutosave(
   async function flush(): Promise<void> {
     if (disposed) return;
     const fullResave = fullResavePending;
-    const coords = [...dirtyTiles.values()];
-    if (!fullResave && coords.length === 0) return;
+    if (!fullResave && dirtyTiles.size === 0) return;
+    // Take ownership of exactly what's dirty right now, then hand the live state a fresh map
+    // immediately — before this function's first await — so an edit that lands while this save
+    // is in flight accumulates in the new map instead of being wiped out when this save
+    // completes and the *old* reference would otherwise get cleared out from under it.
+    const captured = dirtyTiles;
+    const coords = [...captured.values()];
+    dirtyTiles = new Map();
+    fullResavePending = false;
     onStatus('saving');
     try {
       const snapshot = snapshotDocument(document, coords, fullResave);
@@ -83,11 +90,14 @@ export function attachAutosave(
         snapshot.thumbnailPixels.pixels,
       );
       await store.save(snapshot, thumbnail);
-      // Only drop pending state once the write actually commits, so a failure keeps retrying.
-      dirtyTiles = new Map();
-      fullResavePending = false;
       onStatus('saved');
     } catch (error) {
+      // This attempt's ground wasn't saved: put it back, merged with whatever's accumulated
+      // since, so the next flush (scheduled or manual) retries all of it, not just the newest.
+      for (const [key, coord] of captured) {
+        if (!dirtyTiles.has(key)) dirtyTiles.set(key, coord);
+      }
+      if (fullResave) fullResavePending = true;
       onStatus('error', error);
       throw error;
     }
