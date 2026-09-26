@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useEffect, useRef, useState } from 'react';
-import { getPixel } from '../../document';
+import { getPixel, type PixelPoint, type PixelRect } from '../../document';
 import { alpha, formatColor, toCss } from '../../palette';
 import type { SaveStatus } from '../core/state';
 import { useEditor, useEditorState } from './EditorContext';
@@ -21,22 +21,44 @@ export function StatusPill() {
   const hex = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
+    // Only what changed is written, so a stroke in one color repaints just the position slot.
+    const shown = { idle: 'true', position: '', chip: '', hex: '' };
     const render = () => {
       const point = session.pointer.state;
       const node = root.current;
       if (!node || !position.current || !chip.current || !hex.current) return;
-      node.dataset.idle = point ? 'false' : 'true';
+      const idle = point ? 'false' : 'true';
+      if (shown.idle !== idle) node.dataset.idle = shown.idle = idle;
       if (!point) return;
-      position.current.textContent = `${point.x}, ${point.y}`;
+      const at = `${point.x}, ${point.y}`;
+      if (shown.position !== at) position.current.textContent = shown.position = at;
       const color = getPixel(session.bitmap.state, point);
       const visible = color !== null && alpha(color) > 0;
       // A transparent pixel keeps the chip as an empty ring, so the readout never shifts.
-      chip.current.style.backgroundColor = visible ? toCss(color) : 'transparent';
-      hex.current.textContent = visible ? formatColor(color) : 'Transparent';
+      const fill = visible ? toCss(color) : 'transparent';
+      if (shown.chip !== fill) chip.current.style.backgroundColor = shown.chip = fill;
+      const label = visible ? formatColor(color) : 'Transparent';
+      if (shown.hex !== label) hex.current.textContent = shown.hex = label;
     };
     render();
-    const subscription = session.pointer.subscribe(render);
-    return () => subscription.unsubscribe();
+    const pointer = session.pointer.subscribe(render);
+    // An edit under a resting pointer changes its color, so the readout follows the document too.
+    let stopEdits = () => {};
+    const watch = () => {
+      stopEdits();
+      stopEdits = session.bitmap.state.events.subscribe((rect) => {
+        const point = session.pointer.state;
+        if (point && contains(rect, point)) render();
+      });
+      render();
+    };
+    watch();
+    const bitmap = session.bitmap.subscribe(watch);
+    return () => {
+      pointer.unsubscribe();
+      bitmap.unsubscribe();
+      stopEdits();
+    };
   }, [session]);
 
   return (
@@ -73,6 +95,12 @@ export function DocumentMeta() {
 }
 
 const digits = (value: number) => String(value).length;
+
+const contains = (rect: PixelRect, point: PixelPoint) =>
+  point.x >= rect.x &&
+  point.y >= rect.y &&
+  point.x < rect.x + rect.width &&
+  point.y < rect.y + rect.height;
 
 const SLOW_SAVE_MS = 400;
 
