@@ -57,6 +57,11 @@ export function attachAutosave(
   let dirtyTiles = new Map<string, TileCoord>();
   let fullResavePending = options.initialResave ?? false;
   let disposed = false;
+  // Bumped each time a flush actually starts a write. If an older flush is still writing when a
+  // newer one starts, the older one finishing later must not report "saved" (or "error"): only
+  // the newest started flush's own outcome should reach `onStatus`, since an older completion no
+  // longer reflects whether the document is actually fully persisted.
+  let latestGeneration = 0;
 
   const unsubscribe = document.events.subscribe((rect) => {
     for (const coord of tilesForRect(rect, document.width, document.height)) {
@@ -77,6 +82,7 @@ export function attachAutosave(
     const coords = [...captured.values()];
     dirtyTiles = new Map();
     fullResavePending = false;
+    const generation = ++latestGeneration;
     onStatus('saving');
     try {
       const snapshot = snapshotDocument(document, coords, fullResave);
@@ -90,7 +96,10 @@ export function attachAutosave(
         snapshot.thumbnailPixels.pixels,
       );
       await store.save(snapshot, thumbnail);
-      onStatus('saved');
+      // A newer flush may have started (and possibly already finished) while this one was
+      // writing. Only the newest started flush's outcome should reach the UI: this write did
+      // commit, but reporting "saved" here would be a lie if a later write is still pending.
+      if (generation === latestGeneration) onStatus('saved');
     } catch (error) {
       // This attempt's ground wasn't saved: put it back, merged with whatever's accumulated
       // since, so the next flush (scheduled or manual) retries all of it, not just the newest.
@@ -98,7 +107,7 @@ export function attachAutosave(
         if (!dirtyTiles.has(key)) dirtyTiles.set(key, coord);
       }
       if (fullResave) fullResavePending = true;
-      onStatus('error', error);
+      if (generation === latestGeneration) onStatus('error', error);
       throw error;
     }
   }

@@ -62,10 +62,12 @@ function createFakeStore(): DocumentStore & {
     saves: [] as DocumentSnapshot[],
     failNext: false,
     async save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>) {
-      if (gate) {
-        await gate;
-        gate = undefined;
-      }
+      // Capture-and-clear synchronously, before awaiting: only the first `save()` call that
+      // observes a pending gate consumes it. A second call issued while the first is still
+      // blocked sees no gate and proceeds unblocked, so a test can control exactly one call.
+      const myGate = gate;
+      gate = undefined;
+      if (myGate) await myGate;
       if (store.failNext) {
         store.failNext = false;
         throw new Error('simulated write failure');
@@ -203,6 +205,41 @@ describe('attachAutosave', () => {
     expect(store.saves).toHaveLength(2);
     expect(store.saves[0]!.tiles.map((t) => `${t.tx}:${t.ty}`)).toEqual(['0:0']);
     expect(store.saves[1]!.tiles.map((t) => `${t.tx}:${t.ty}`)).toEqual(['3:3']);
+  });
+
+  test('an older flush finishing after a newer one has started never reports "saved" itself', async () => {
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock } = createManualClock();
+    const statuses: string[] = [];
+    const autosave = attachAutosave(document, store, {
+      clock,
+      debounceMs: 5000,
+      maxWaitMs: 20000,
+      onStatus: (status) => statuses.push(status),
+    });
+
+    const releaseFirst = store.blockNextSave();
+    document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
+    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+    const firstFlush = autosave.flush(); // A: blocks inside store.save
+
+    await new Promise((resolve) => setTimeout(resolve, 10)); // let A actually reach the gate
+
+    // B starts and completes entirely while A is still blocked.
+    document.pixels[1] = packRgba(2, 2, 2, 255); // tile 0:0 again, a later edit
+    document.events.invalidate({ x: 1, y: 0, width: 1, height: 1 });
+    await autosave.flush();
+    expect(statuses).toEqual(['saving', 'saving', 'saved']); // only B's completion reported
+
+    // Now let A finish. Its write did commit, but it must not tell the UI "saved" again: B
+    // already reported the true, fully-persisted state, and A finishing after doesn't change
+    // that here (nothing dirtied since B).
+    releaseFirst();
+    await firstFlush;
+    expect(statuses).toEqual(['saving', 'saving', 'saved']);
+
+    autosave.dispose();
   });
 
   test('dispose stops future saves', async () => {
