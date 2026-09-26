@@ -63,9 +63,11 @@ export function StatusPill() {
 
   return (
     <div ref={root} data-idle="true" aria-hidden {...stylex.props(styles.pill)}>
-      <b ref={position} {...stylex.props(styles.slot, styles.position(digits(side - 1)))} />
-      <span ref={chip} {...stylex.props(styles.chip)} />
-      <span ref={hex} {...stylex.props(styles.slot, styles.hex)} />
+      <div {...stylex.props(styles.readout)}>
+        <b ref={position} {...stylex.props(styles.slot, styles.position(digits(side - 1)))} />
+        <span ref={chip} {...stylex.props(styles.chip)} />
+        <span ref={hex} {...stylex.props(styles.slot, styles.hex)} />
+      </div>
     </div>
   );
 }
@@ -125,9 +127,6 @@ const styles = stylex.create({
     zIndex: 2,
     left: pixelVars.edge,
     bottom: pixelVars.safeBottom,
-    display: 'flex',
-    alignItems: 'center',
-    gap: spacingVars['--spacing-2'],
     paddingBlock: 6,
     paddingInline: 10,
     borderRadius: 999,
@@ -145,6 +144,14 @@ const styles = stylex.create({
       default: durationVars['--duration-fast'],
       '@media (prefers-reduced-motion: reduce)': '0s',
     },
+  },
+  // Its own compositing layer, so a readout change re-rasters only this strip of text and never
+  // the surface and soft shadow behind it.
+  readout: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: spacingVars['--spacing-2'],
+    willChange: 'transform',
   },
   // A relayout boundary: its size never depends on the text written into it.
   slot: {

@@ -77,17 +77,20 @@ const styles = stylex.create({
     borderStyle: 'dashed',
     borderColor: colorVars['--color-accent'],
     backgroundColor: `color-mix(in srgb, ${pixelVars.canvasBg} 72%, transparent)`,
-    backdropFilter: 'blur(2px)',
     opacity: 0,
+    // Hidden, not just transparent, so no idle layer sits over the live canvas. The visibility
+    // flip waits out the fade on the way out.
+    visibility: 'hidden',
     pointerEvents: 'none',
-    transitionProperty: 'opacity',
+    transitionProperty: 'opacity, visibility',
     transitionDuration: {
       default: durationVars['--duration-fast'],
       '@media (prefers-reduced-motion: reduce)': '0s',
     },
     transitionTimingFunction: pixelVars.ease,
   },
-  over: { opacity: 1 },
+  // The blur exists only while a file is over the window.
+  over: { opacity: 1, visibility: 'visible', backdropFilter: 'blur(2px)' },
   card: {
     display: 'flex',
     flexDirection: 'column',
