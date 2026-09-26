@@ -23,6 +23,7 @@ export interface EditorState extends PaletteState {
   chromeHidden: boolean;
   panel: EditorPanel | null;
   selection: PixelRect | null;
+  hasClipboardPixels: boolean;
   canUndo: boolean;
   canRedo: boolean;
   document: DocumentSummary;
@@ -57,6 +58,7 @@ export function initialEditorState(
     chromeHidden: false,
     panel: null,
     selection: null,
+    hasClipboardPixels: false,
     canUndo: false,
     canRedo: false,
     document,

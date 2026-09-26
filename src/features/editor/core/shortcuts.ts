@@ -16,7 +16,15 @@ export type EditorCommand =
   | { type: 'open-file' }
   | { type: 'selection'; action: SelectionAction };
 
-export type SelectionAction = 'all' | 'commit' | 'cancel' | 'clear' | 'copy' | 'cut' | 'paste';
+export type SelectionAction =
+  | 'all'
+  | 'commit'
+  | 'cancel'
+  | 'clear'
+  | 'copy'
+  | 'cut'
+  | 'paste'
+  | 'duplicate';
 
 /** A platform-neutral key press. `mod` is Command on Apple platforms and Control elsewhere. */
 export interface KeyPress {

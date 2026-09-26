@@ -1,13 +1,13 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
-import { fitViewport, screenToDocument, stepZoom, zoomToStep } from '../../canvas';
+import { fitViewport, screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
 import type {
   OverlayPreview,
   OverlayState,
   ScreenPoint,
   Viewport,
   ViewportInsets,
-} from '../../canvas';
+} from '../../canvas/model';
 import { getPixel, intersectRect, resizeDocument } from '../../document';
 import type {
   BitmapDocument,
@@ -17,7 +17,7 @@ import type {
   PixelRect,
 } from '../../document';
 import { createDocumentHistory } from '../../history';
-import { alpha, TRANSPARENT } from '../../palette';
+import { alpha, TRANSPARENT } from '../../palette/model';
 import {
   beginLinePreview,
   LinePreviewWorkspace,
@@ -26,7 +26,6 @@ import {
   copySelection,
   FillWorkspace,
   floodFill,
-  pasteSelection,
 } from '../../tools';
 import type { FloatingSelection, LinePreview, SelectionSession, StrokeSession } from '../../tools';
 import { usesBrush } from '../core/tools';
@@ -123,13 +122,14 @@ export function createEditorSession({
   const fillWorkspace = new FillWorkspace();
   const lineWorkspace = new LinePreviewWorkspace();
   const scratchRect: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
-  const state = createStore(
-    initialEditorState(
+  const state = createStore({
+    ...initialEditorState(
       { name: initial.name, width: initial.width, height: initial.height },
       save,
       preferences,
     ),
-  );
+    hasClipboardPixels: clipboard.read() !== null,
+  });
   const bitmap = createStore(initial);
   const viewport = createStore<Viewport>({
     zoom: 1,
@@ -288,22 +288,73 @@ export function createEditorSession({
               pixels: floating.pixels.slice(),
             }
           : copySelection(document(), rect);
-        if (copied) clipboard.write(copied);
+        if (copied) {
+          clipboard.write(copied);
+          update((current) => ({ ...current, hasClipboardPixels: true }));
+        }
         if (action === 'cut') runSelection('clear');
         return;
       }
       case 'paste': {
         const copied = clipboard.read();
+        if (copied) paste(copied, pasteOrigin(copied));
+        return;
+      }
+      case 'duplicate': {
+        if (!rect) return;
+        const floating = selection.floating;
+        const copied = floating
+          ? {
+              bounds: { ...floating.bounds },
+              sourceBounds: { ...floating.bounds },
+              pixels: floating.pixels.slice(),
+            }
+          : copySelection(document(), rect);
         if (copied) paste(copied, { x: copied.bounds.x, y: copied.bounds.y });
         return;
       }
     }
   }
 
+  function pasteOrigin(pixels: FloatingSelection): PixelPoint {
+    const bounds = pixels.bounds;
+    const bitmap = document();
+    const view = viewport.state;
+    const fitsDocument =
+      bounds.x >= 0 &&
+      bounds.y >= 0 &&
+      bounds.x + bounds.width <= bitmap.width &&
+      bounds.y + bounds.height <= bitmap.height;
+    const left = view.panX + bounds.x * view.zoom;
+    const top = view.panY + bounds.y * view.zoom;
+    const fullyVisible =
+      view.cssWidth > 0 &&
+      view.cssHeight > 0 &&
+      left >= 0 &&
+      top >= 0 &&
+      left + bounds.width * view.zoom <= view.cssWidth &&
+      top + bounds.height * view.zoom <= view.cssHeight;
+    if (fitsDocument && fullyVisible) return { x: bounds.x, y: bounds.y };
+    const visibleLeft = Math.max(0, -view.panX / view.zoom);
+    const visibleTop = Math.max(0, -view.panY / view.zoom);
+    const visibleRight = Math.min(bitmap.width, (view.cssWidth - view.panX) / view.zoom);
+    const visibleBottom = Math.min(bitmap.height, (view.cssHeight - view.panY) / view.zoom);
+    const centerX =
+      visibleRight > visibleLeft ? (visibleLeft + visibleRight) / 2 : bitmap.width / 2;
+    const centerY =
+      visibleBottom > visibleTop ? (visibleTop + visibleBottom) / 2 : bitmap.height / 2;
+    return {
+      x: Math.max(0, Math.min(Math.floor(centerX - bounds.width / 2), bitmap.width - bounds.width)),
+      y: Math.max(
+        0,
+        Math.min(Math.floor(centerY - bounds.height / 2), bitmap.height - bounds.height),
+      ),
+    };
+  }
+
   function paste(pixels: FloatingSelection, at: PixelPoint): boolean {
     commitFloating();
-    if (!pasteSelection(document(), pixels, at, history)) return false;
-    syncHistory();
+    if (!selection.paste(pixels, at)) return false;
     update((current) => selectTool(current, 'select'));
     setSelection({ ...at, width: pixels.bounds.width, height: pixels.bounds.height });
     return true;

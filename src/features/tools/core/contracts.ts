@@ -50,6 +50,8 @@ export interface FloatingSelection {
 export interface SelectionSession {
   readonly floating: FloatingSelection | null;
   lift(rect: PixelRect): FloatingSelection | null;
+  /** Floats copied pixels over the document without changing the pixels underneath. */
+  paste(selection: FloatingSelection, to: PixelPoint): FloatingSelection | null;
   move(to: PixelPoint): PixelRect | null;
   commit(): boolean;
   cancel(): void;

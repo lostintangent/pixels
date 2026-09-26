@@ -1,4 +1,4 @@
-import type { BitmapDocument, PixelPoint, PixelRect } from '../../document';
+import type { BitmapDocument, PixelRect } from '../../document';
 import { intersectRect, unionRect } from '../../document';
 import type { DocumentHistory, HistoryTransaction } from '../../history';
 import type { FloatingSelection, SelectionSession } from './contracts';
@@ -33,27 +33,6 @@ export function copySelection(document: BitmapDocument, rect: PixelRect): Floati
   return copyRegion(document, rect);
 }
 
-export function pasteSelection(
-  document: BitmapDocument,
-  selection: FloatingSelection,
-  to: PixelPoint,
-  history: DocumentHistory,
-): boolean {
-  const target: FloatingSelection = {
-    ...selection,
-    bounds: { ...selection.bounds, x: Math.floor(to.x), y: Math.floor(to.y) },
-  };
-  const documentBounds: PixelRect = { x: 0, y: 0, width: document.width, height: document.height };
-  const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
-  if (!intersectRect(target.bounds, documentBounds, clip)) return false;
-  const transaction = history.begin('Paste', document);
-  transaction.capture(clip);
-  const dirty = pasteRegion(document, target)!;
-  transaction.commit();
-  document.events.invalidate(dirty);
-  return true;
-}
-
 export function beginSelection(
   document: BitmapDocument,
   history: DocumentHistory,
@@ -77,6 +56,26 @@ export function beginSelection(
       floating = copied;
       document.events.invalidate(copied.sourceBounds);
       return copied;
+    },
+    paste(selection, to) {
+      if (floating) throw new Error('Selection is already floating');
+      const bounds = {
+        x: Math.floor(to.x),
+        y: Math.floor(to.y),
+        width: selection.bounds.width,
+        height: selection.bounds.height,
+      };
+      const documentBounds: PixelRect = {
+        x: 0,
+        y: 0,
+        width: document.width,
+        height: document.height,
+      };
+      const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
+      if (!intersectRect(bounds, documentBounds, clip)) return null;
+      transaction = history.begin('Paste', document);
+      floating = { bounds, sourceBounds: { ...bounds }, pixels: selection.pixels.slice() };
+      return floating;
     },
     move(to) {
       if (!floating) return null;

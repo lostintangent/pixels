@@ -13,4 +13,4 @@ export type {
 export { beginStroke } from './core/stroke';
 export { FillWorkspace, floodFill } from './core/fill';
 export { beginLinePreview, LinePreviewWorkspace, snapLineEndpoint } from './core/line';
-export { beginSelection, copySelection, pasteSelection } from './core/selection';
+export { beginSelection, copySelection } from './core/selection';
