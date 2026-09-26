@@ -218,31 +218,60 @@ describe('per-id write chain', () => {
     const document = createBitmapDocument('doc-reject', 8, 8, 'Reject');
     await saveFull(document, store);
 
-    let releaseFirst!: (bytes: Uint8Array) => void;
-    const firstThumbnail = new Promise<Uint8Array>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const firstSave = store.save(snapshotDocument(document, [], true), firstThumbnail);
-
-    // Queued behind the first: its thumbnail rejects before its own operation ever runs, so
-    // nothing but `store.save` itself has had a chance to attach a handler yet.
-    const secondSave = store.save(
+    // The thumbnail is best-effort: its own promise is never awaited by the write path, so even a
+    // thumbnail that rejects immediately must not surface as an unhandled rejection, and the save
+    // it belongs to (the tile and document-record write) must still resolve normally.
+    const save = store.save(
       snapshotDocument(document, [], true),
       Promise.reject(new Error('thumbnail encode failed')),
     );
-    secondSave.catch(() => {}); // this call's own rejection is expected; only unhandledRejection matters here
 
     const unhandled: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', onUnhandledRejection);
     try {
+      await save;
       await new Promise((resolve) => setTimeout(resolve, 20)); // give it a chance to misfire
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandledRejection);
-      releaseFirst(new Uint8Array([1]));
-      await firstSave;
-      await secondSave.catch(() => {});
     }
+  });
+
+  test('a save resolves — and its tiles become loadable — without waiting for the thumbnail at all', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-no-wait', 8, 8, 'NoWait');
+    document.pixels[0] = packRgba(5, 6, 7, 8);
+
+    // A thumbnail that never settles: if the write path still waited on it, `save` would hang
+    // forever. It must not — pixel data is real document state; the thumbnail is a preview icon.
+    const neverSettles = new Promise<Uint8Array>(() => {});
+    await store.save(snapshotDocument(document, [], true), neverSettles);
+
+    const loaded = await store.load('doc-no-wait');
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([5, 6, 7, 8]);
+  });
+
+  test('the thumbnail is patched in once it resolves, after an initial save that did not wait for it', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-patch', 8, 8, 'Patch');
+
+    let resolveThumbnail!: (bytes: Uint8Array) => void;
+    const thumbnail = new Promise<Uint8Array>((resolve) => {
+      resolveThumbnail = resolve;
+    });
+    await store.save(snapshotDocument(document, [], true), thumbnail);
+
+    // The save above already resolved without the real thumbnail: it's an entirely new document,
+    // so its placeholder is empty until the worker round trip below actually lands.
+    const beforePatch = await store.listRecents();
+    expect(beforePatch[0]!.thumbnail.size).toBe(0);
+
+    resolveThumbnail(new Uint8Array([7, 7, 7]));
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let the detached patch write land
+
+    const afterPatch = await store.listRecents();
+    const bytes = new Uint8Array(await afterPatch[0]!.thumbnail.arrayBuffer());
+    expect([...bytes]).toEqual([7, 7, 7]);
   });
 });
