@@ -49,6 +49,8 @@ export interface FloatingSelection {
 }
 export interface SelectionSession {
   readonly floating: FloatingSelection | null;
+  /** Source pixels hidden by a lifted selection, while the document stays unchanged. */
+  readonly sourceToClear: PixelRect | null;
   lift(rect: PixelRect): FloatingSelection | null;
   /** Floats copied pixels over the document without changing the pixels underneath. */
   paste(selection: FloatingSelection, to: PixelPoint): FloatingSelection | null;

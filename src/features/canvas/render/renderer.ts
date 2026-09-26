@@ -3,7 +3,13 @@ import { intersectRect, unionRect } from '../../document';
 import type { Viewport } from '../core/contracts';
 import type { CanvasRenderer, OverlayPreview, OverlayState, RendererSurface } from './contracts';
 
-const EMPTY_OVERLAY: OverlayState = { grid: 'auto', cursor: null, marquee: null, preview: null };
+const EMPTY_OVERLAY: OverlayState = {
+  grid: 'auto',
+  cursor: null,
+  marquee: null,
+  preview: null,
+  sourceClear: null,
+};
 
 function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const ctx = canvas.getContext('2d', { alpha: true });
@@ -55,6 +61,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   const viewportCtx = context(surface.viewportCanvas);
   const overlayCtx = context(surface.overlayCanvas);
   let checker = checkerPattern(viewportCtx, '#fff', '#d6d6d6');
+  let overlayChecker = checkerPattern(overlayCtx, '#fff', '#d6d6d6');
   let checkerA = '#fff';
   let checkerB = '#d6d6d6';
   const previewCanvas = globalThis.document.createElement('canvas');
@@ -202,6 +209,22 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     }
   }
 
+  function drawClearedSource(view: Viewport, bitmap: BitmapDocument, source: PixelRect): void {
+    overlayCtx.save();
+    overlayCtx.beginPath();
+    overlayCtx.rect(
+      view.panX + source.x * view.zoom,
+      view.panY + source.y * view.zoom,
+      source.width * view.zoom,
+      source.height * view.zoom,
+    );
+    overlayCtx.clip();
+    overlayCtx.fillStyle = overlayChecker;
+    overlayCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
+    drawGrid(overlayCtx, bitmap, view);
+    overlayCtx.restore();
+  }
+
   function render(): void {
     frame = 0;
     if (!document || !viewport || disposed) return;
@@ -237,6 +260,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
     overlayCtx.clearRect(0, 0, surface.overlayCanvas.width, surface.overlayCanvas.height);
     overlayCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
+    if (overlay.sourceClear) drawClearedSource(view, bitmap, overlay.sourceClear);
     if (overlay.preview) drawPreview(view, overlay.preview);
     if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, phase);
     if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, phase);
@@ -269,7 +293,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     setViewport(next) {
       viewport = next;
       viewportDirty = true;
-      if (overlay.preview || overlay.marquee || overlay.cursor) overlayDirty = true;
+      if (overlay.preview || overlay.sourceClear || overlay.marquee || overlay.cursor)
+        overlayDirty = true;
       schedule();
     },
     setOverlay(next) {
@@ -277,6 +302,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       const b = next.colors?.checkerB ?? '#d6d6d6';
       if (a !== checkerA || b !== checkerB) {
         checker = checkerPattern(viewportCtx, a, b);
+        overlayChecker = checkerPattern(overlayCtx, a, b);
         checkerA = a;
         checkerB = b;
         viewportDirty = true;

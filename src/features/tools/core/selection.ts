@@ -29,6 +29,13 @@ function pasteRegion(document: BitmapDocument, selection: FloatingSelection): Pi
   return { ...clip };
 }
 
+function clearRegion(document: BitmapDocument, rect: PixelRect): void {
+  for (let row = 0; row < rect.height; row++) {
+    const start = (rect.y + row) * document.width + rect.x;
+    document.pixels.fill(0, start, start + rect.width);
+  }
+}
+
 export function copySelection(document: BitmapDocument, rect: PixelRect): FloatingSelection | null {
   return copyRegion(document, rect);
 }
@@ -39,22 +46,21 @@ export function beginSelection(
 ): SelectionSession {
   let floating: FloatingSelection | null = null;
   let transaction: HistoryTransaction | null = null;
+  let lifted = false;
   return {
     get floating() {
       return floating;
+    },
+    get sourceToClear() {
+      return lifted ? (floating?.sourceBounds ?? null) : null;
     },
     lift(rect) {
       if (floating) throw new Error('Selection is already floating');
       const copied = copyRegion(document, rect);
       if (!copied) return null;
       transaction = history.begin('Move selection', document);
-      transaction.capture(copied.sourceBounds);
-      for (let row = 0; row < copied.sourceBounds.height; row++) {
-        const start = (copied.sourceBounds.y + row) * document.width + copied.sourceBounds.x;
-        document.pixels.fill(0, start, start + copied.sourceBounds.width);
-      }
       floating = copied;
-      document.events.invalidate(copied.sourceBounds);
+      lifted = true;
       return copied;
     },
     paste(selection, to) {
@@ -75,6 +81,7 @@ export function beginSelection(
       if (!intersectRect(bounds, documentBounds, clip)) return null;
       transaction = history.begin('Paste', document);
       floating = { bounds, sourceBounds: { ...bounds }, pixels: selection.pixels.slice() };
+      lifted = false;
       return floating;
     },
     move(to) {
@@ -88,8 +95,10 @@ export function beginSelection(
       if (!floating || !transaction) return false;
       const target = floating;
       const current = transaction;
+      const clearSource = lifted;
       floating = null;
       transaction = null;
+      lifted = false;
       const documentBounds: PixelRect = {
         x: 0,
         y: 0,
@@ -97,25 +106,40 @@ export function beginSelection(
         height: document.height,
       };
       const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
+      let dirty: PixelRect | null = null;
+      if (clearSource) {
+        current.capture(target.sourceBounds);
+        clearRegion(document, target.sourceBounds);
+        dirty = { ...target.sourceBounds };
+      }
       if (intersectRect(target.bounds, documentBounds, clip)) {
         current.capture(clip);
-        const dirty = pasteRegion(document, target)!;
-        document.events.invalidate(dirty);
+        const pasted = pasteRegion(document, target)!;
+        dirty = dirty ? unionRect(dirty, pasted, dirty) : pasted;
       }
+      if (dirty) document.events.invalidate(dirty);
       return current.commit();
     },
     cancel() {
       if (!floating || !transaction) return;
       floating = null;
+      lifted = false;
       const current = transaction;
       transaction = null;
       current.cancel();
     },
     clear() {
       if (!floating || !transaction) return false;
+      const source = lifted ? floating.sourceBounds : null;
       floating = null;
+      lifted = false;
       const current = transaction;
       transaction = null;
+      if (source) {
+        current.capture(source);
+        clearRegion(document, source);
+        document.events.invalidate(source);
+      }
       return current.commit();
     },
   };

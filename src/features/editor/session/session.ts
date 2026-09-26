@@ -79,6 +79,8 @@ export interface EditorSession {
   readonly overlay: Store<OverlayState>;
   /** Document pixel under the pointer, or null when outside the canvas. */
   readonly pointer: Store<PixelPoint | null>;
+  /** Commits a floating selection before a document snapshot such as PNG export. */
+  commitFloatingSelection(): boolean;
   run(command: EditorCommand): void;
   chooseColor(color: PackedColor, slot: ColorSlot): void;
   setBrushSize(size: number): void;
@@ -144,6 +146,7 @@ export function createEditorSession({
     cursor: null,
     marquee: null,
     preview: null,
+    sourceClear: null,
   });
   const pointer = createStore<PixelPoint | null>(null);
 
@@ -178,6 +181,7 @@ export function createEditorSession({
     setOverlay({
       marquee: rect,
       preview: floating ? { pixels: floating.pixels, bounds: floating.bounds } : null,
+      sourceClear: selection.sourceToClear,
     });
   }
 
@@ -242,10 +246,12 @@ export function createEditorSession({
     return { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) };
   }
 
-  function commitFloating(): void {
-    if (!selection.floating) return;
-    selection.commit();
+  function commitFloating(): boolean {
+    if (!selection.floating) return false;
+    const committed = selection.commit();
+    setSelection(null);
     syncHistory();
+    return committed;
   }
 
   function pickColor(point: PixelPoint): void {
@@ -370,6 +376,7 @@ export function createEditorSession({
     viewport,
     overlay,
     pointer,
+    commitFloatingSelection: commitFloating,
 
     run(command) {
       switch (command.type) {
@@ -409,6 +416,7 @@ export function createEditorSession({
           update((current) => ({ ...current, chromeHidden: !current.chromeHidden }));
           return;
         case 'open':
+          if (command.panel === 'export') commitFloating();
           update((current) => openPanel(current, command.panel));
           return;
         case 'open-file':

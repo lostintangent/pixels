@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
+import { exportPng, importPng } from '../../files';
 import { copySelection } from '../../tools';
 import { createPixelClipboard } from './clipboard';
 import { createEditorSession } from './session';
@@ -92,4 +93,44 @@ test('paste stays at a visible origin and recenters when that origin is off scre
   session.run({ type: 'selection', action: 'clear' });
   expect(document.pixels.every((pixel) => pixel === 0)).toBe(true);
   expect(session.state.state.canUndo).toBe(false);
+});
+
+test('lifted move leaves saved pixels intact and export commits the moved result', async () => {
+  const document = createBitmapDocument('move', 3, 1);
+  document.pixels.set([A, 0, B]);
+  const before = document.rgbaBytes.slice();
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'select' });
+  session.run({ type: 'selection', action: 'all' });
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(1, 0)]);
+  session.endGesture();
+  expect(document.rgbaBytes).toEqual(before);
+  expect(session.overlay.state.sourceClear).toEqual({ x: 0, y: 0, width: 3, height: 1 });
+  expect(session.commitFloatingSelection()).toBe(true);
+  expect(session.overlay.state.sourceClear).toBeNull();
+  expect(Array.from(document.pixels)).toEqual([0, A, 0]);
+  const png = await exportPng(session.bitmap.state);
+  const exported = await importPng(new Blob([png as BlobPart]), 'export', 'export');
+  expect(Array.from(exported.pixels)).toEqual([0, A, 0]);
+  session.run({ type: 'undo' });
+  expect(document.rgbaBytes).toEqual(before);
+});
+
+test('opening export commits a floating move before the preview snapshots pixels', () => {
+  const document = createBitmapDocument('preview', 3, 1);
+  document.pixels[0] = A;
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'select' });
+  session.run({ type: 'selection', action: 'all' });
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(1, 0)]);
+  session.endGesture();
+  expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
+  session.run({ type: 'open', panel: 'export' });
+  expect(session.state.state.panel).toBe('export');
+  expect(Array.from(document.pixels)).toEqual([0, A, 0]);
+  expect(session.overlay.state.sourceClear).toBeNull();
+  session.run({ type: 'undo' });
+  expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
 });

@@ -22,6 +22,8 @@ export interface OverlayState {
   cursor: PixelRect | null;
   marquee: PixelRect | null;
   preview: OverlayPreview | null;
+  /** Cover committed source pixels while a lifted selection floats above them. */
+  sourceClear?: PixelRect | null;
   reducedMotion?: boolean;
   colors?: {
     checkerA: string;

@@ -117,6 +117,7 @@ export function FileActionsProvider({
       },
       openRecent: show,
       exportPng(fileName, scale) {
+        session.commitFloatingSelection();
         exportPng(session.bitmap.state, { scale })
           .then((bytes) => deliver(new File([bytes as BlobPart], fileName, { type: 'image/png' })))
           .catch((error: unknown) => fail(error, 'The PNG couldn’t be exported.'));

@@ -11,16 +11,21 @@ test('lift, move, and commit is one history step with exact destination pixels',
   document.pixels.set([A, B, 0, 0, A, B, 0, 0, 0, 0, 0, 0]);
   const history = createDocumentHistory();
   const selection = beginSelection(document, history);
+  const before = document.rgbaBytes.slice();
   const floating = selection.lift({ x: 0, y: 0, width: 2, height: 2 });
   expect(Array.from(floating!.pixels)).toEqual([A, B, A, B]);
-  expect(Array.from(document.pixels.slice(0, 6))).toEqual([0, 0, 0, 0, 0, 0]);
+  expect(selection.sourceToClear).toEqual({ x: 0, y: 0, width: 2, height: 2 });
+  expect(document.rgbaBytes).toEqual(before);
   expect(selection.move({ x: 2, y: 1 })).toEqual({ x: 0, y: 0, width: 4, height: 3 });
+  expect(document.rgbaBytes).toEqual(before);
   expect(selection.commit()).toBe(true);
   expect(Array.from(document.pixels)).toEqual([0, 0, 0, 0, 0, 0, A, B, 0, 0, A, B]);
   history.undo(document);
   expect(Array.from(document.pixels)).toEqual([A, B, 0, 0, A, B, 0, 0, 0, 0, 0, 0]);
   history.redo(document);
   expect(Array.from(document.pixels)).toEqual([0, 0, 0, 0, 0, 0, A, B, 0, 0, A, B]);
+  history.undo(document);
+  expect(history.canUndo).toBe(false);
 });
 
 test('cancel restores lifted pixels; clear deletes as one undoable step', () => {
@@ -28,9 +33,13 @@ test('cancel restores lifted pixels; clear deletes as one undoable step', () => 
   document.pixels[0] = A;
   const history = createDocumentHistory();
   const selection = beginSelection(document, history);
+  const before = document.rgbaBytes.slice();
   selection.lift({ x: 0, y: 0, width: 1, height: 1 });
+  selection.move({ x: 1, y: 0 });
+  expect(document.rgbaBytes).toEqual(before);
   selection.cancel();
-  expect(document.pixels[0]).toBe(A);
+  expect(document.rgbaBytes).toEqual(before);
+  expect(selection.sourceToClear).toBeNull();
   expect(history.canUndo).toBe(false);
   selection.lift({ x: 0, y: 0, width: 1, height: 1 });
   expect(selection.clear()).toBe(true);
@@ -46,6 +55,7 @@ test('paste floats, then move preserves the original pixels', () => {
   const selection = beginSelection(document, history);
   const copied = copySelection(document, { x: 0, y: 0, width: 1, height: 1 })!;
   expect(selection.paste(copied, { x: 0, y: 0 })?.pixels[0]).toBe(A);
+  expect(selection.sourceToClear).toBeNull();
   expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
   selection.move({ x: 2, y: 0 });
   expect(selection.commit()).toBe(true);
