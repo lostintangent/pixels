@@ -120,11 +120,14 @@ export function attachAutosave(
       await store.save(snapshot, thumbnail);
       inFlightFlushes--;
       // Only once every write for this document (this one and any older one still finishing) has
-      // actually committed do we know IndexedDB truly holds everything: only then is nothing left
-      // an exit stash would need to cover.
+      // actually committed do we know IndexedDB truly holds everything this flush captured — but
+      // an edit can land on `dirtyTiles` while this very flush was in flight, and that edit was
+      // never part of what just committed. So this can't just clear to empty: it has to reset to
+      // whatever `dirtyTiles`/`fullResavePending` hold right now, which is exactly the tiles no
+      // committed write accounts for yet (nothing, if none landed during the flush).
       if (inFlightFlushes === 0) {
-        pendingTiles = new Map();
-        pendingFullResave = false;
+        pendingTiles = new Map(dirtyTiles);
+        pendingFullResave = fullResavePending;
       }
       // A newer flush may have started (and possibly already finished) while this one was
       // writing. Only the newest started flush's outcome should reach the UI: this write did

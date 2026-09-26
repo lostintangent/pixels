@@ -448,6 +448,45 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     });
   });
 
+  test('an edit made while a save is in flight is still stashed after that save commits', async () => {
+    // Regression for a gap the lead found: resetting `pendingTiles` to empty whenever
+    // `inFlightFlushes` reaches zero on success wrongly assumed every accumulated tile was part
+    // of the flush that just committed. An edit that lands mid-flush sits in `dirtyTiles` for the
+    // *next* flush and was never captured by this one — clearing it out from under `pendingTiles`
+    // would let it vanish from the journal even though it is still only in memory.
+    await withFakeWindow(async (fakeWindow) => {
+      const document = createBitmapDocument('doc', 256, 256);
+      const store = createFakeStore();
+      const { clock } = createManualClock();
+      const autosave = attachAutosave(document, store, {
+        clock,
+        debounceMs: 5000,
+        maxWaitMs: 20000,
+      });
+
+      const release = store.blockNextSave();
+      document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
+      document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+      const firstFlush = autosave.flush(); // starts, blocks inside store.save on the gate
+
+      await new Promise((resolve) => setTimeout(resolve, 10)); // let it actually reach the gate
+
+      // Lands while the first save is still in flight — captured by neither that flush (already
+      // took its snapshot) nor any flush yet (nothing else has run).
+      document.pixels[70 * 256 + 70] = packRgba(2, 2, 2, 255); // tile 1:1
+      document.events.invalidate({ x: 70, y: 70, width: 1, height: 1 });
+
+      release();
+      await firstFlush; // the first save commits; tile 1:1 was never part of it
+
+      fakeWindow.dispatch('pagehide');
+      expect(store.stashes).toHaveLength(1);
+      expect(store.stashes[0]!.tiles.map((t) => `${t.tx}:${t.ty}`)).toEqual(['1:1']);
+
+      autosave.dispose();
+    });
+  });
+
   test('once a save commits, a later exit signal has nothing left to stash', async () => {
     await withFakeWindow(async (fakeWindow) => {
       const document = createBitmapDocument('doc', 32, 32);
