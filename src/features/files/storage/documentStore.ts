@@ -80,51 +80,109 @@ function deleteAllTiles(tx: IDBTransaction, id: DocumentId): Promise<void> {
   });
 }
 
+/**
+ * Chains every write for a document id after the last one registered for that same id, so `load`
+ * can wait on a single promise that only resolves once every write that happened-before it has
+ * actually committed — instead of quietly depending on IndexedDB serializing same-scope readwrite
+ * transactions in creation order. A write that fails still lets the next one for the id proceed
+ * (the id must never wedge), but `load` never throws because of it: only the caller of the failed
+ * write itself sees that rejection.
+ */
+class WriteChain {
+  private readonly chains = new Map<DocumentId, Promise<void>>();
+
+  run(id: DocumentId, operation: () => Promise<void>): Promise<void> {
+    const previous = this.chains.get(id) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.chains.set(id, settled);
+    void settled.then(() => {
+      if (this.chains.get(id) === settled) this.chains.delete(id);
+    });
+    return result;
+  }
+
+  /** Resolves once every write already chained for `id` has settled. A no-op if there is none. */
+  async settle(id: DocumentId): Promise<void> {
+    await this.chains.get(id);
+  }
+}
+
 /** Real IndexedDB persistence. Under `bun test`, `fake-indexeddb/auto` provides the same global.
  *  `databaseName` defaults to the app's single database; tests override it for isolation. */
 export function createDocumentStore(options: { databaseName?: string } = {}): DocumentStore {
   const dbPromise = openDatabase(options.databaseName ?? DB_NAME);
+  const writes = new WriteChain();
+
+  async function saveNow(
+    snapshot: DocumentSnapshot,
+    thumbnail: Uint8Array | Promise<Uint8Array>,
+  ): Promise<void> {
+    // Resolve the thumbnail (and open the database) before touching IndexedDB. Both can run
+    // while this write already holds its place in the per-id chain, so nothing else for this id
+    // can start — or finish being waited on by `load` — until this write actually commits.
+    const [db, resolvedThumbnail] = await Promise.all([dbPromise, thumbnail]);
+    const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readwrite');
+    const documents = tx.objectStore(DOCUMENTS_STORE);
+    const tiles = tx.objectStore(TILES_STORE);
+
+    if (snapshot.fullResave) await deleteAllTiles(tx, snapshot.id);
+
+    const record: DocumentRecord = {
+      id: snapshot.id,
+      name: snapshot.name,
+      width: snapshot.width,
+      height: snapshot.height,
+      updatedAt: snapshot.updatedAt,
+      thumbnail: resolvedThumbnail,
+    };
+    documents.put(record);
+    for (const tile of snapshot.tiles) {
+      const tileRecord: TileRecord = {
+        id: snapshot.id,
+        tx: tile.tx,
+        ty: tile.ty,
+        pixels: tile.pixels,
+      };
+      tiles.put(tileRecord);
+    }
+    await transactionDone(tx);
+  }
+
+  async function renameNow(id: DocumentId, name: string): Promise<void> {
+    const db = await dbPromise;
+    const tx = db.transaction(DOCUMENTS_STORE, 'readwrite');
+    const store = tx.objectStore(DOCUMENTS_STORE);
+    const existing = await requestToPromise(store.get(id));
+    if (existing) store.put({ ...existing, name, updatedAt: Date.now() });
+    await transactionDone(tx);
+  }
+
+  async function removeNow(id: DocumentId): Promise<void> {
+    const db = await dbPromise;
+    const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readwrite');
+    tx.objectStore(DOCUMENTS_STORE).delete(id);
+    await deleteAllTiles(tx, id);
+    await transactionDone(tx);
+  }
 
   return {
-    async save(snapshot: DocumentSnapshot, thumbnail: Uint8Array): Promise<void> {
-      const db = await dbPromise;
-      const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readwrite');
-      const documents = tx.objectStore(DOCUMENTS_STORE);
-      const tiles = tx.objectStore(TILES_STORE);
-
-      if (snapshot.fullResave) await deleteAllTiles(tx, snapshot.id);
-
-      const record: DocumentRecord = {
-        id: snapshot.id,
-        name: snapshot.name,
-        width: snapshot.width,
-        height: snapshot.height,
-        updatedAt: snapshot.updatedAt,
-        thumbnail,
-      };
-      documents.put(record);
-      for (const tile of snapshot.tiles) {
-        const tileRecord: TileRecord = {
-          id: snapshot.id,
-          tx: tile.tx,
-          ty: tile.ty,
-          pixels: tile.pixels,
-        };
-        tiles.put(tileRecord);
-      }
-      await transactionDone(tx);
+    save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>): Promise<void> {
+      return writes.run(snapshot.id, () => saveNow(snapshot, thumbnail));
     },
 
-    async rename(id: DocumentId, name: string): Promise<void> {
-      const db = await dbPromise;
-      const tx = db.transaction(DOCUMENTS_STORE, 'readwrite');
-      const store = tx.objectStore(DOCUMENTS_STORE);
-      const existing = await requestToPromise(store.get(id));
-      if (existing) store.put({ ...existing, name, updatedAt: Date.now() });
-      await transactionDone(tx);
+    rename(id: DocumentId, name: string): Promise<void> {
+      return writes.run(id, () => renameNow(id, name));
     },
 
     async load(id: DocumentId): Promise<LoadedDocument | null> {
+      // Wait for every write already chained for this id before reading, so a route with
+      // `gcTime: 0` re-reading right after a navigation-triggered flush can't observe a partial
+      // or stale write.
+      await writes.settle(id);
       const db = await dbPromise;
       const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readonly');
       const record = (await requestToPromise(tx.objectStore(DOCUMENTS_STORE).get(id))) as
@@ -150,12 +208,8 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       };
     },
 
-    async remove(id: DocumentId): Promise<void> {
-      const db = await dbPromise;
-      const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readwrite');
-      tx.objectStore(DOCUMENTS_STORE).delete(id);
-      await deleteAllTiles(tx, id);
-      await transactionDone(tx);
+    remove(id: DocumentId): Promise<void> {
+      return writes.run(id, () => removeNow(id));
     },
 
     async listRecents(): Promise<DocumentSummary[]> {

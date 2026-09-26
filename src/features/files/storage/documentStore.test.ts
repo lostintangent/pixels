@@ -128,3 +128,88 @@ describe('createDocumentStore', () => {
     expect(tile.pixels[0]).toBe(3);
   });
 });
+
+describe('per-id write chain', () => {
+  test('load waits for a save already in flight for the same id, instead of racing it', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-race', 8, 8, 'Race');
+    await saveFull(document, store); // baseline row so this is an update, not a fresh insert
+
+    document.pixels[0] = packRgba(9, 8, 7, 6);
+    const snapshot = snapshotDocument(document, [{ tx: 0, ty: 0 }], false);
+    const save = store.save(snapshot, new Uint8Array([1])); // not awaited on purpose
+
+    const loaded = await store.load('doc-race'); // fires while the save above is still in flight
+    await save;
+
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([9, 8, 7, 6]);
+  });
+
+  test('two overlapping saves for the same id commit in call order, not whichever transaction happens to finish first', async () => {
+    const store = freshStore();
+    // A big baseline so the first save's full-resave delete-cursor has many tiles to walk,
+    // making it the slower of the two if writes aren't explicitly chained.
+    const big = createBitmapDocument('doc-order', 256, 256, 'Order');
+    big.pixels.fill(packRgba(1, 1, 1, 255));
+    await saveFull(big, store);
+
+    const first = createBitmapDocument('doc-order', 256, 256, 'First');
+    first.pixels.fill(packRgba(2, 2, 2, 255));
+    const firstSave = store.save(snapshotDocument(first, [], true), new Uint8Array([1]));
+
+    // Issued immediately after, touching a single small tile: the "fast" write if unserialized.
+    const second = createBitmapDocument('doc-order', 256, 256, 'Second');
+    second.pixels[0] = packRgba(3, 3, 3, 255);
+    const secondSave = store.save(
+      snapshotDocument(second, [{ tx: 0, ty: 0 }], false),
+      new Uint8Array([2]),
+    );
+
+    await Promise.all([firstSave, secondSave]);
+    const loaded = await store.load('doc-order');
+    // Second was issued after first, so it must win regardless of which transaction actually
+    // committed first — proving writes are chained in call order, not left to race.
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([3, 3, 3, 255]);
+  });
+
+  test('a load for an unrelated document id is never held up by another id’s pending write', async () => {
+    const store = freshStore();
+    const documentA = createBitmapDocument('doc-a', 8, 8, 'A');
+    const documentB = createBitmapDocument('doc-b', 8, 8, 'B');
+    await saveFull(documentA, store);
+    await saveFull(documentB, store);
+
+    documentA.pixels[0] = packRgba(1, 1, 1, 1);
+    const pendingA = store.save(
+      snapshotDocument(documentA, [{ tx: 0, ty: 0 }], false),
+      new Uint8Array([1]),
+    );
+
+    const loadedB = await store.load('doc-b');
+    expect(loadedB!.name).toBe('B');
+    await pendingA;
+  });
+
+  test('save reserves this id’s write order the instant it is called, even while the thumbnail is still encoding', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-thumb', 8, 8, 'Thumb');
+    await saveFull(document, store);
+
+    document.pixels[0] = packRgba(4, 3, 2, 1);
+    const snapshot = snapshotDocument(document, [{ tx: 0, ty: 0 }], false);
+    let resolveThumbnail!: (bytes: Uint8Array) => void;
+    const thumbnail = new Promise<Uint8Array>((resolve) => {
+      resolveThumbnail = resolve;
+    });
+    // Passed straight through, unresolved — mirrors how the autosave runtime hands `store.save`
+    // the thumbnail encode's promise directly so this call reserves its place synchronously.
+    const save = store.save(snapshot, thumbnail);
+
+    const loadPromise = store.load('doc-thumb'); // issued while the thumbnail is still pending
+    resolveThumbnail(new Uint8Array([1]));
+    const loaded = await loadPromise;
+    await save;
+
+    expect([...loaded!.pixels.subarray(0, 4)]).toEqual([4, 3, 2, 1]);
+  });
+});

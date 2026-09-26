@@ -248,7 +248,7 @@ async function inflateZlib(data: Uint8Array): Promise<Uint8Array> {
 }
 
 function verifySignature(bytes: Uint8Array): void {
-  if (bytes.length < 8) throw corrupt('The file is too small to be a PNG.');
+  if (bytes.length < 8) throw corrupt("This file isn't a valid PNG.");
   for (let i = 0; i < SIGNATURE.length; i++) {
     if (bytes[i] !== SIGNATURE[i]) throw unsupported('This file is not a PNG.');
   }

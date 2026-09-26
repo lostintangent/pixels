@@ -1,7 +1,6 @@
 import type { BitmapDocument } from '../../document';
 import { createAutosaveScheduler } from '../core/autosave';
 import type { AutosaveOptions, DocumentStore, TileCoord } from '../core/contracts';
-import { trackPendingSave } from '../core/pendingSaves';
 import { snapshotDocument } from '../core/snapshot';
 import { tilesForRect } from '../core/tiles';
 import { encodePngOffMainThread } from './pngWorkerClient';
@@ -9,18 +8,15 @@ import { encodePngOffMainThread } from './pngWorkerClient';
 /**
  * A single, immediate full save, independent of any live `attachAutosave` subscription. For a
  * one-shot persist-then-navigate flow (New canvas, Open PNG) where there's no ongoing edit
- * session to debounce. Registered as a pending save, so a `loadDocument` for the same id started
- * right after can't race it.
+ * session to debounce. `store` itself chains this after any write already in flight for the same
+ * id and makes a following `load` wait for it — but only from the instant `store.save` is called,
+ * so the thumbnail encode's promise is handed to it directly, unawaited, rather than resolved
+ * first: that reserves this id's place in the write order synchronously, before this function's
+ * first await, instead of leaving a gap a same-id `load` right after could race.
  */
-export function saveDocument(document: BitmapDocument, store: DocumentStore): Promise<void> {
-  const save = saveDocumentNow(document, store);
-  trackPendingSave(document.id, save);
-  return save;
-}
-
-async function saveDocumentNow(document: BitmapDocument, store: DocumentStore): Promise<void> {
+export async function saveDocument(document: BitmapDocument, store: DocumentStore): Promise<void> {
   const snapshot = snapshotDocument(document, [], true);
-  const thumbnail = await encodePngOffMainThread(
+  const thumbnail = encodePngOffMainThread(
     snapshot.thumbnailPixels.width,
     snapshot.thumbnailPixels.height,
     snapshot.thumbnailPixels.pixels,
@@ -77,7 +73,11 @@ export function attachAutosave(
     onStatus('saving');
     try {
       const snapshot = snapshotDocument(document, coords, fullResave);
-      const thumbnail = await encodePngOffMainThread(
+      // Handed to `store.save` unawaited: the call below reserves this id's place in the
+      // store's write order the instant it runs, before this function's first suspension, so a
+      // `load` for the same id issued right after `flush()` (even fire-and-forget, as `dispose`
+      // does) is guaranteed to wait for it — encoding included.
+      const thumbnail = encodePngOffMainThread(
         snapshot.thumbnailPixels.width,
         snapshot.thumbnailPixels.height,
         snapshot.thumbnailPixels.pixels,
@@ -93,15 +93,8 @@ export function attachAutosave(
     }
   }
 
-  /** Every save attempt, whatever triggers it, is registered so a same-id load can wait for it. */
-  function runFlush(): Promise<void> {
-    const save = flush();
-    trackPendingSave(document.id, save);
-    return save;
-  }
-
   const scheduler = createAutosaveScheduler(() => {
-    runFlush().catch(() => {
+    flush().catch(() => {
       /* status already reported via onStatus; a scheduled flush must not throw unhandled */
     });
   }, options);
@@ -110,7 +103,7 @@ export function attachAutosave(
 
   function flushNow(): void {
     scheduler.cancel();
-    runFlush().catch(() => {});
+    flush().catch(() => {});
   }
   const hasWindow = typeof window !== 'undefined';
   if (hasWindow) {
@@ -119,7 +112,7 @@ export function attachAutosave(
   }
 
   return {
-    flush: runFlush,
+    flush,
     dispose() {
       if (disposed) return;
       unsubscribe();
@@ -129,8 +122,9 @@ export function attachAutosave(
         window.removeEventListener('visibilitychange', flushNow);
       }
       // Read `disposed` inside flush() is still false at this call, so this final flush runs;
-      // only after capturing it do we block any further explicit `.flush()` calls.
-      runFlush().catch(() => {});
+      // only after capturing it do we block any further explicit `.flush()` calls. `store.save`
+      // chains this after any write already in flight for the id, so it's still ordered correctly.
+      flush().catch(() => {});
       disposed = true;
     },
   };

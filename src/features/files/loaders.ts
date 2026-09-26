@@ -1,6 +1,5 @@
 import { createBitmapDocument, type BitmapDocument } from '../document';
 import type { DocumentStore } from './core/contracts';
-import { waitForPendingSave } from './core/pendingSaves';
 
 export interface RecentOrNewResult {
   document: BitmapDocument;
@@ -10,15 +9,14 @@ export interface RecentOrNewResult {
 /**
  * For `/d/$docId`. Returns null so the route can render a graceful not-found state.
  *
- * Waits for any save already registered for `id` before reading, so a route with `gcTime: 0`
- * (re-reading IndexedDB on every visit) can't race the flush a just-left document kicked off and
- * read the pixels it's about to replace.
+ * `store.load` itself waits for any write already chained for `id` before reading, so a route
+ * with `gcTime: 0` (re-reading IndexedDB on every visit) can't race the flush a just-left document
+ * kicked off and read the pixels it's about to replace.
  */
 export async function loadDocument(
   store: DocumentStore,
   id: string,
 ): Promise<BitmapDocument | null> {
-  await waitForPendingSave(id);
   const loaded = await store.load(id);
   if (!loaded) return null;
   const document = createBitmapDocument(loaded.id, loaded.width, loaded.height, loaded.name);

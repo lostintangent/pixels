@@ -59,8 +59,13 @@ export interface LoadedDocument {
 }
 
 export interface DocumentStore {
-  /** thumbnail is already-encoded PNG bytes; encode it from a detached snapshot copy before calling save. */
-  save(snapshot: DocumentSnapshot, thumbnail: Uint8Array): Promise<void>;
+  /**
+   * `thumbnail` is PNG bytes encoded from a detached snapshot copy. Pass the encode's promise
+   * straight through rather than awaiting it first: `save` reserves this id's place in the
+   * store's write order the instant it's called, before it awaits anything, so a `load(id)`
+   * issued right after — even while the thumbnail is still encoding — correctly waits for it.
+   */
+  save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>): Promise<void>;
   rename(id: DocumentId, name: string): Promise<void>;
   load(id: DocumentId): Promise<LoadedDocument | null>;
   remove(id: DocumentId): Promise<void>;
