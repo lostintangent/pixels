@@ -4,7 +4,7 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { Slider } from '@astryxdesign/core/Slider';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { Copy, Scissors, Trash2, X } from 'lucide-react';
+import { Copy, CopyPlus, Scissors, Trash2, X } from 'lucide-react';
 import { BRUSH_SIZES, brushSizeAt, brushSizeIndex } from '../core/brush';
 import { toolInfo, usesBrush } from '../core/tools';
 import type { Layout } from '../session/session';
@@ -26,12 +26,16 @@ const HINTS = {
   },
 } as const;
 
+type SelectionRun = 'all' | 'clear' | 'commit' | 'duplicate' | 'paste';
+
 /** The contextual strip: brush size, selection actions, or a one-line hint. */
 export function ToolOptions({ layout }: { layout: Layout }) {
   const session = useEditor();
   const tool = useEditorState((state) => state.tool);
   const brushSize = useEditorState((state) => state.brushSize);
   const selection = useEditorState((state) => state.selection);
+  const canPaste = useEditorState((state) => state.hasClipboardPixels);
+  const run = (action: SelectionRun) => session.run({ type: 'selection', action });
   const phone = layout === 'phone';
   const tooltip = (text: string) => (phone ? undefined : text);
 
@@ -65,10 +69,9 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   }
 
   if (tool === 'select' && selection) {
-    const run = (action: 'clear' | 'commit') => session.run({ type: 'selection', action });
     return (
       <div key="selection" {...stylex.props(styles.body, phone && styles.fill)}>
-        <span {...stylex.props(styles.label)}>Selection</span>
+        {!phone && <span {...stylex.props(styles.label)}>Selection</span>}
         <span {...stylex.props(styles.number, styles.muted, phone && styles.fill)}>
           {selection.width} × {selection.height}
           {!phone && `  at ${selection.x}, ${selection.y}`}
@@ -87,6 +90,13 @@ export function ToolOptions({ layout }: { layout: Layout }) {
           tooltip={tooltip('Cut  ·  ⌘X')}
           icon={<Scissors size={18} />}
           onClick={() => copyFromChrome(session, 'cut')}
+        />
+        <IconButton
+          variant="ghost"
+          label="Duplicate"
+          tooltip={tooltip('Duplicate in place')}
+          icon={<CopyPlus size={18} />}
+          onClick={() => run('duplicate')}
         />
         <IconButton
           variant="ghost"
@@ -114,13 +124,55 @@ export function ToolOptions({ layout }: { layout: Layout }) {
     );
   }
 
-  const kind = tool as keyof (typeof HINTS)['mouse'];
+  // Touch has no ⌘A or ⌘V, so Select offers both. Paste waits until there's something to paste.
+  if (tool === 'select') {
+    return (
+      <div key="select" {...stylex.props(styles.body, phone && styles.fill)}>
+        {!phone && <span {...stylex.props(styles.label)}>Select</span>}
+        {phone ? (
+          <span {...stylex.props(styles.hint, styles.fill)}>Drag to select</span>
+        ) : (
+          <Hint kind="select" />
+        )}
+        {!phone && <span aria-hidden {...stylex.props(styles.divider)} />}
+        <Button
+          variant="ghost"
+          label="Select all"
+          tooltip={tooltip('Select all  ·  ⌘A')}
+          onClick={() => run('all')}
+        />
+        {canPaste && (
+          <Button
+            variant="ghost"
+            label="Paste"
+            tooltip={tooltip('Paste  ·  ⌘V')}
+            onClick={() => run('paste')}
+          />
+        )}
+      </div>
+    );
+  }
+
+  const kind = tool as Exclude<keyof (typeof HINTS)['mouse'], 'select'>;
   return (
     <div key={tool} {...stylex.props(styles.body, phone && styles.fill)}>
       {!phone && <span {...stylex.props(styles.label)}>{toolInfo(tool).label}</span>}
-      {!phone && <span {...stylex.props(styles.hint, styles.mouseOnly)}>{HINTS.mouse[kind]}</span>}
-      <span {...stylex.props(styles.hint, !phone && styles.touchOnly)}>{HINTS.touch[kind]}</span>
+      {phone ? (
+        <span {...stylex.props(styles.hint)}>{HINTS.touch[kind]}</span>
+      ) : (
+        <Hint kind={kind} />
+      )}
     </div>
+  );
+}
+
+/** Hints follow the pointer inside the desktop layout, so both render and CSS picks one. */
+function Hint({ kind }: { kind: keyof (typeof HINTS)['mouse'] }) {
+  return (
+    <>
+      <span {...stylex.props(styles.hint, styles.mouseOnly)}>{HINTS.mouse[kind]}</span>
+      <span {...stylex.props(styles.hint, styles.touchOnly)}>{HINTS.touch[kind]}</span>
+    </>
   );
 }
 
