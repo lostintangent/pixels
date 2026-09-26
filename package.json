@@ -1,0 +1,39 @@
+{
+  "name": "pixels",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@eslint/js": "9",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "9",
+    "eslint-plugin-import": "^2.32.0",
+    "prettier": "^3.9.9",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "@astryxdesign/core": "^0.6.3",
+    "@astryxdesign/theme-neutral": "^0.6.3",
+    "@stylexjs/stylex": "^0.19.1",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@tanstack/react-router": "^1.170.39",
+    "@tanstack/react-store": "^0.11.1",
+    "@tanstack/store": "^0.11.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "scripts": {
+    "dev": "bunx --bun vite --host 0.0.0.0",
+    "build": "bunx --bun vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "check": "bun run typecheck && bun run lint && bun run format",
+    "test": "bun test",
+    "perf": "bun src/shared/perf/run.ts"
+  }
+}
