@@ -5,6 +5,7 @@ node_modules
 out
 dist
 dist-perf
+dist-perf-export
 *.tgz
 
 # code coverage
