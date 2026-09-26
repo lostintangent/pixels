@@ -62,6 +62,13 @@ export function attachAutosave(
   // the newest started flush's own outcome should reach `onStatus`, since an older completion no
   // longer reflects whether the document is actually fully persisted.
   let latestGeneration = 0;
+  // True when some flush's failure merged its tiles back into `dirtyTiles` and no later flush has
+  // started since (and thus taken ownership of them). If the newest flush then succeeds anyway —
+  // because it was already in flight when that failure happened, so its own captured tiles never
+  // included the failed ones — its success must not be reported as "saved": that ground is still
+  // sitting unsaved with nothing scheduled to retry it, and the UI needs to keep offering Retry.
+  let failedGround = false;
+  let failedGroundError: unknown;
 
   const unsubscribe = document.events.subscribe((rect) => {
     for (const coord of tilesForRect(rect, document.width, document.height)) {
@@ -82,6 +89,10 @@ export function attachAutosave(
     const coords = [...captured.values()];
     dirtyTiles = new Map();
     fullResavePending = false;
+    // This flush now owns every tile that's currently dirty, including any an earlier failure
+    // already merged back (if that merge-back landed before this line ran): its own outcome will
+    // account for them, so any pending "failed ground" carried by an in-between failure is moot.
+    failedGround = false;
     const generation = ++latestGeneration;
     onStatus('saving');
     try {
@@ -98,8 +109,12 @@ export function attachAutosave(
       await store.save(snapshot, thumbnail);
       // A newer flush may have started (and possibly already finished) while this one was
       // writing. Only the newest started flush's outcome should reach the UI: this write did
-      // commit, but reporting "saved" here would be a lie if a later write is still pending.
-      if (generation === latestGeneration) onStatus('saved');
+      // commit, but reporting "saved" here would be a lie if a later write is still pending — or
+      // if an older flush that was already in flight when this one started later failed and left
+      // ground this attempt never touched.
+      if (generation === latestGeneration) {
+        onStatus(failedGround ? 'error' : 'saved', failedGround ? failedGroundError : undefined);
+      }
     } catch (error) {
       // This attempt's ground wasn't saved: put it back, merged with whatever's accumulated
       // since, so the next flush (scheduled or manual) retries all of it, not just the newest.
@@ -107,6 +122,8 @@ export function attachAutosave(
         if (!dirtyTiles.has(key)) dirtyTiles.set(key, coord);
       }
       if (fullResave) fullResavePending = true;
+      failedGround = true;
+      failedGroundError = error;
       if (generation === latestGeneration) onStatus('error', error);
       throw error;
     }

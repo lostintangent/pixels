@@ -55,19 +55,21 @@ function createFakeStore(): DocumentStore & {
   /** Makes the next `save()` call wait until the returned function is called, so a test can
    *  land a second edit while that save is still in flight. */
   blockNextSave(): () => void;
+  /** Like `blockNextSave`, but the returned function rejects that call's `save()` instead of
+   *  letting it through, so a test can control exactly when a specific in-flight save fails. */
+  blockNextSaveAndFail(): (error: Error) => void;
 } {
   const saved = new Map<string, DocumentSnapshot & { thumbnail: Uint8Array }>();
-  let gate: Promise<void> | undefined;
+  // A FIFO queue of gates, one per still-unconsumed `blockNextSave`/`blockNextSaveAndFail` call.
+  // Each `save()` call consumes at most one gate, in call order, so overlapping saves can each be
+  // controlled independently rather than all waiting on the same one.
+  const gateQueue: Promise<void>[] = [];
   const store = {
     saves: [] as DocumentSnapshot[],
     failNext: false,
     async save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>) {
-      // Capture-and-clear synchronously, before awaiting: only the first `save()` call that
-      // observes a pending gate consumes it. A second call issued while the first is still
-      // blocked sees no gate and proceeds unblocked, so a test can control exactly one call.
-      const myGate = gate;
-      gate = undefined;
-      if (myGate) await myGate;
+      const myGate = gateQueue.shift();
+      if (myGate) await myGate; // may reject, surfacing as this call's own failure
       if (store.failNext) {
         store.failNext = false;
         throw new Error('simulated write failure');
@@ -86,10 +88,21 @@ function createFakeStore(): DocumentStore & {
     },
     blockNextSave(): () => void {
       let release!: () => void;
-      gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
+      gateQueue.push(
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      );
       return release;
+    },
+    blockNextSaveAndFail(): (error: Error) => void {
+      let fail!: (error: Error) => void;
+      gateQueue.push(
+        new Promise<void>((_resolve, reject) => {
+          fail = reject;
+        }),
+      );
+      return fail;
     },
   };
   return store;
@@ -238,6 +251,52 @@ describe('attachAutosave', () => {
     releaseFirst();
     await firstFlush;
     expect(statuses).toEqual(['saving', 'saving', 'saved']);
+
+    autosave.dispose();
+  });
+
+  test("a failure that lands while a newer flush is already saving is not masked by that flush's success", async () => {
+    const document = createBitmapDocument('doc', 256, 256);
+    const store = createFakeStore();
+    const { clock } = createManualClock();
+    const statuses: string[] = [];
+    const autosave = attachAutosave(document, store, {
+      clock,
+      debounceMs: 5000,
+      maxWaitMs: 20000,
+      onStatus: (status) => statuses.push(status),
+    });
+
+    const failA = store.blockNextSaveAndFail();
+    document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
+    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+    const flushA = autosave.flush().catch(() => {}); // A: blocks inside store.save, will fail
+
+    await new Promise((resolve) => setTimeout(resolve, 10)); // let A actually reach its gate
+
+    const releaseB = store.blockNextSave();
+    document.pixels[70 * 256 + 70] = packRgba(2, 2, 2, 255); // tile 1:1, a second edit while A is in flight
+    document.events.invalidate({ x: 70, y: 70, width: 1, height: 1 });
+    const flushB = autosave.flush(); // B: starts (and captures only tile 1:1), also blocks
+
+    await new Promise((resolve) => setTimeout(resolve, 10)); // let B actually reach its own gate
+
+    // A fails while B is still saving: A's tiles merge back, but B already captured its own
+    // separately and won't include them.
+    failA(new Error('simulated write failure'));
+    await flushA;
+    expect(statuses).toEqual(['saving', 'saving']); // A's error suppressed: B is the newer flush
+
+    releaseB();
+    await flushB;
+    // B's write did commit, but tile 0:0 is still unsaved (merged back by A's failure) and
+    // nothing has captured it yet: reporting "saved" here would hide that from the UI, so this
+    // must read as an error instead, keeping Retry available.
+    expect(statuses).toEqual(['saving', 'saving', 'error']);
+
+    await autosave.flush(); // retry: must still pick up tile 0:0
+    expect(statuses).toEqual(['saving', 'saving', 'error', 'saving', 'saved']);
+    expect(store.saves.at(-1)!.tiles.map((t) => `${t.tx}:${t.ty}`)).toEqual(['0:0']);
 
     autosave.dispose();
   });
