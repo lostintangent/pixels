@@ -16,7 +16,7 @@ import { Grid3x3, Minus, Plus, Redo2, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { RefObject } from 'react';
 import { CanvasSurface, MAX_ZOOM, MIN_ZOOM } from '../../canvas';
-import type { CanvasInput, DocumentPoint, OverlayState } from '../../canvas';
+import type { CanvasInput, CanvasPointerSample, OverlayState } from '../../canvas';
 import type { BitmapDocument } from '../../document';
 import type { DocumentStore } from '../../files';
 import {
@@ -183,7 +183,7 @@ function Panels({ layout }: { layout: Layout }) {
 function Canvas({ session }: { session: EditorSession }) {
   const input = useMemo<CanvasInput>(
     () => ({
-      hover: (point) => session.hover(point),
+      hover: (sample) => session.hover(sample && sample.point, sample?.alt),
       begin: (sample) => session.beginGesture(sample),
       extend: (samples) => session.extendGesture(samples),
       end: () => session.endGesture(),
@@ -195,7 +195,7 @@ function Canvas({ session }: { session: EditorSession }) {
     [session],
   );
   const cursorAt = useCallback(
-    (point: DocumentPoint) => {
+    ({ point, alt }: CanvasPointerSample) => {
       const { tool, selection, document } = session.state.state;
       const x = Math.floor(point.x);
       const y = Math.floor(point.y);
@@ -210,8 +210,8 @@ function Canvas({ session }: { session: EditorSession }) {
       }
       // The renderer draws the brush footprint, so a second cursor would only add noise.
       const inside = x >= 0 && y >= 0 && x < document.width && y < document.height;
-      if (inside && usesBrush(tool) && session.viewport.state.zoom >= FOOTPRINT_CURSOR_ZOOM)
-        return 'none';
+      const brush = usesBrush(tool) && !alt;
+      if (inside && brush && session.viewport.state.zoom >= FOOTPRINT_CURSOR_ZOOM) return 'none';
       return 'crosshair';
     },
     [session],

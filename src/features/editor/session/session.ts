@@ -95,7 +95,8 @@ export interface EditorSession {
   place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels'>): boolean;
   resizeDocument(width: number, height: number, anchor: CanvasAnchor): void;
   toDocument(point: ScreenPoint): PixelPoint;
-  hover(point: PixelPoint | null): void;
+  /** Alt previews the temporary eyedropper's single pixel instead of the brush. */
+  hover(point: PixelPoint | null, alt?: boolean): void;
   beginGesture(input: GestureInput): void;
   extendGesture(inputs: readonly GestureInput[]): void;
   endGesture(): void;
@@ -216,9 +217,9 @@ export function createEditorSession({
     fit();
   }
 
-  function footprint(point: PixelPoint): PixelRect {
+  function footprint(point: PixelPoint, picking = false): PixelRect {
     const { tool, brushSize } = state.state;
-    const size = usesBrush(tool) ? brushSize : 1;
+    const size = usesBrush(tool) && !picking ? brushSize : 1;
     const before = Math.floor((size - 1) / 2);
     return { x: point.x - before, y: point.y - before, width: size, height: size };
   }
@@ -445,14 +446,14 @@ export function createEditorSession({
       return screenToDocument(viewport.state, point);
     },
 
-    hover(point) {
+    hover(point, alt = false) {
       const cell = point && { x: Math.floor(point.x), y: Math.floor(point.y) };
       const inside = cell && contains(documentRect(), cell) ? cell : null;
       const previous = pointer.state;
       if (previous?.x !== inside?.x || previous?.y !== inside?.y) pointer.setState(() => inside);
       const { tool } = state.state;
       // A brush previews its full footprint while any part of it can still paint.
-      const cursor = cell && tool !== 'select' ? footprint(cell) : null;
+      const cursor = cell && tool !== 'select' ? footprint(cell, alt) : null;
       const paints = cursor && intersectRect(cursor, documentRect(), scratchRect);
       setOverlay({ cursor: paints ? cursor : null });
     },

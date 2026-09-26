@@ -3,7 +3,15 @@ import type { Store } from '@tanstack/store';
 import { useEffect, useRef } from 'react';
 import type { BitmapDocument } from '../../document';
 import type { DocumentPoint, ScreenPoint, Viewport } from '../core/contracts';
+import {
+  type GestureEvent,
+  type GesturePointer,
+  initialGestureState,
+  isNavigating,
+  stepGesture,
+} from '../core/gestures';
 import { clampZoom, screenToDocument, settleZoom, stepZoom, zoomAt } from '../core/viewport';
+import { initialWheelState, wheelIntent } from '../core/wheel';
 import type { OverlayState } from '../render/contracts';
 import { createCanvasRenderer } from '../render/renderer';
 
@@ -16,7 +24,8 @@ export interface CanvasPointerSample {
 
 /** What the canvas asks of its owner. The surface knows gestures, never tools. */
 export interface CanvasInput {
-  hover(point: DocumentPoint | null): void;
+  /** The point under a mouse or pen that isn't navigating, with Alt for a temporary eyedropper. */
+  hover(sample: CanvasPointerSample | null): void;
   begin(sample: CanvasPointerSample): void;
   extend(samples: readonly CanvasPointerSample[]): void;
   end(): void;
@@ -32,32 +41,18 @@ export interface CanvasSurfaceProps {
   viewport: Store<Viewport>;
   overlay: Store<OverlayState>;
   input: CanvasInput;
-  /** CSS cursor for a document point while nothing is panning. */
-  cursorAt: (point: DocumentPoint) => string;
+  /** CSS cursor for a hovered sample while nothing is panning. */
+  cursorAt: (sample: CanvasPointerSample) => string;
 }
 
-const TAP_MS = 250;
-const TAP_SLOP = 10;
 const SETTLE_MS = 180;
+/** A trackpad pinch settles onto the ladder once it pauses this long. */
+const PINCH_SETTLE_MS = 140;
+/** Safari reports trackpad pinches twice. The wheel copy wins inside this window. */
+const WHEEL_ZOOM_MS = 200;
 
-type Mode =
-  | { kind: 'idle' }
-  | { kind: 'draw'; pointerId: number }
-  | { kind: 'pan'; pointerId: number; origin: ScreenPoint; view: Viewport }
-  | {
-      kind: 'pinch';
-      distance: number;
-      midpoint: ScreenPoint;
-      /** Document point under the starting midpoint: it stays under the fingers. */
-      anchor: DocumentPoint;
-      zoom: number;
-      startedAt: number;
-      fingers: number;
-      moved: boolean;
-      latest: ScreenPoint;
-    }
-  /** A pinch ended with fingers still down. Wait for all to lift. */
-  | { kind: 'drain' };
+/** WebKit's trackpad pinch event, which other browsers report as a Ctrl wheel. */
+type WebKitGestureEvent = Event & { scale?: number; clientX?: number; clientY?: number };
 
 export function CanvasSurface({
   document,
@@ -88,14 +83,15 @@ export function CanvasSurface({
       overlay.subscribe((next) => renderer.setOverlay(next)),
     ];
 
-    const pointers = new Map<number, ScreenPoint>();
+    // The host's origin is cached while pointers are down, so moves never force layout.
+    const down = new Set<number>();
     let activeOrigin: { left: number; top: number } | null = null;
     const refreshOrigin = () => {
       const { left, top } = host.getBoundingClientRect();
       activeOrigin = { left, top };
     };
     const refreshActiveOrigin = () => {
-      if (pointers.size > 0) refreshOrigin();
+      if (down.size > 0) refreshOrigin();
     };
     const resize = new ResizeObserver(([entry]) => {
       if (!entry) return;
@@ -108,13 +104,17 @@ export function CanvasSurface({
     window.visualViewport?.addEventListener('scroll', refreshActiveOrigin);
     window.visualViewport?.addEventListener('resize', refreshActiveOrigin);
 
-    let mode: Mode = { kind: 'idle' };
-    let penSeen = false;
+    let gesture = initialGestureState;
+    let wheel = initialWheelState;
     let spaceHeld = false;
+    let altHeld = false;
     let hovered: ScreenPoint | null = null;
     let settleFrame = 0;
+    let settleTarget: Viewport | null = null;
     let settleTimer: ReturnType<typeof setTimeout> | undefined;
-    let wheelNotches = 0;
+    let settlePending: ScreenPoint | null = null;
+    let lastWheelZoomAt = -Infinity;
+    let webkitPinch: { zoom: number; at: ScreenPoint } | null = null;
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
     const local = (event: { clientX: number; clientY: number }): ScreenPoint => {
@@ -126,52 +126,69 @@ export function CanvasSurface({
       shift: event.shiftKey,
       alt: event.altKey,
     });
+    const pointer = (event: PointerEvent): GesturePointer => ({
+      id: event.pointerId,
+      kind:
+        event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse',
+      point: local(event),
+      time: event.timeStamp,
+    });
     const setView = (next: Viewport) => viewport.setState(() => next);
 
     function updateCursor(): void {
-      if (mode.kind === 'pan') host.style.cursor = 'grabbing';
+      if (gesture.mode.kind === 'pan') host.style.cursor = 'grabbing';
       else if (spaceHeld) host.style.cursor = 'grab';
       else if (hovered)
-        host.style.cursor = latest.current.cursorAt(screenToDocument(viewport.state, hovered));
+        host.style.cursor = latest.current.cursorAt({
+          point: screenToDocument(viewport.state, hovered),
+          shift: false,
+          alt: altHeld,
+        });
       else host.style.cursor = '';
     }
 
     function hover(point: ScreenPoint | null): void {
       hovered = point;
-      const pan = mode.kind === 'pan' || spaceHeld;
-      latest.current.input.hover(point && !pan ? screenToDocument(viewport.state, point) : null);
+      const aside = spaceHeld || isNavigating(gesture);
+      latest.current.input.hover(
+        point && !aside
+          ? { point: screenToDocument(viewport.state, point), shift: false, alt: altHeld }
+          : null,
+      );
       updateCursor();
-    }
-
-    /** Pinch pans and zooms at once: keeps `anchor` (a document point) under the moving midpoint. */
-    function anchored(zoom: number, anchor: DocumentPoint, screen: ScreenPoint): Viewport {
-      return {
-        ...viewport.state,
-        zoom,
-        panX: screen.x - anchor.x * zoom,
-        panY: screen.y - anchor.y * zoom,
-      };
     }
 
     function stopSettle(): void {
       cancelAnimationFrame(settleFrame);
       settleFrame = 0;
+      settleTarget = null;
       clearTimeout(settleTimer);
+      settlePending = null;
+    }
+
+    /** Jumps a settle in flight to its end, so a new gesture starts from a ladder zoom. */
+    function finishSettle(): void {
+      if (settlePending) return settle(settlePending, false);
+      const target = settleTarget;
+      stopSettle();
+      if (target) setView(target);
     }
 
     /** Eases a free zoom onto the nearest ladder step with pixel-aligned pan. */
-    function settle(screen: ScreenPoint): void {
+    function settle(screen: ScreenPoint, animate = true): void {
       stopSettle();
       const from = viewport.state;
       const end = settleZoom(from, screen);
       const target = end.zoom;
       const final = { ...end, panX: Math.round(end.panX), panY: Math.round(end.panY) };
-      if (reducedMotion.matches || target === from.zoom) return setView(final);
+      if (!animate || reducedMotion.matches || target === from.zoom) return setView(final);
+      settleTarget = final;
       const startedAt = performance.now();
       const step = (now: number) => {
         const t = Math.min(1, (now - startedAt) / SETTLE_MS);
         if (t >= 1) {
           settleFrame = 0;
+          settleTarget = null;
           return setView(final);
         }
         const eased = 1 - (1 - t) ** 3;
@@ -181,180 +198,162 @@ export function CanvasSurface({
       settleFrame = requestAnimationFrame(step);
     }
 
-    function fingers(): { distance: number; midpoint: ScreenPoint } {
-      const [a, b] = [...pointers.values()];
-      if (!a || !b) return { distance: 1, midpoint: a ?? { x: 0, y: 0 } };
-      return {
-        distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
-        midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-      };
-    }
-
-    function beginPinch(): void {
-      if (mode.kind === 'draw') latest.current.input.cancel();
-      stopSettle();
-      const { distance, midpoint } = fingers();
-      mode = {
-        kind: 'pinch',
-        distance,
-        midpoint,
-        anchor: screenToDocument(viewport.state, midpoint),
-        zoom: viewport.state.zoom,
-        startedAt: performance.now(),
-        fingers: pointers.size,
-        moved: false,
-        latest: midpoint,
-      };
-      latest.current.input.hover(null);
+    function run(event: GestureEvent, source: PointerEvent | null): void {
+      const wasNavigating = isNavigating(gesture);
+      const step = stepGesture(gesture, event, viewport.state);
+      gesture = step.state;
+      const { input } = latest.current;
+      for (const command of step.commands) {
+        switch (command.type) {
+          case 'begin':
+            if (source) input.begin(sample(source));
+            break;
+          case 'extend':
+            if (source) {
+              const events = source.getCoalescedEvents?.() ?? [];
+              input.extend((events.length ? events : [source]).map(sample));
+            }
+            break;
+          case 'end':
+            input.end();
+            break;
+          case 'cancel':
+            input.cancel();
+            break;
+          case 'view':
+            stopSettle();
+            setView(command.viewport);
+            break;
+          case 'settle':
+            settle(command.at);
+            break;
+          case 'undo':
+            input.undo();
+            break;
+          case 'redo':
+            input.redo();
+            break;
+        }
+      }
+      if (isNavigating(gesture) !== wasNavigating) hover(isNavigating(gesture) ? null : hovered);
     }
 
     function onPointerDown(event: PointerEvent): void {
       if (event.button === 2) return;
-      if (pointers.size === 0) refreshOrigin();
+      if (down.size === 0) refreshOrigin();
+      down.add(event.pointerId);
       host.setPointerCapture(event.pointerId);
       host.focus({ preventScroll: true });
-      pointers.set(event.pointerId, local(event));
-      if (event.pointerType === 'pen') penSeen = true;
-
-      if (event.pointerType === 'touch' && pointers.size >= 2) {
-        if (mode.kind === 'pinch') {
-          mode.fingers = Math.max(mode.fingers, pointers.size);
-          return;
-        }
-        if (mode.kind === 'idle' || mode.kind === 'draw' || mode.kind === 'pan') beginPinch();
-        return;
-      }
-      if (mode.kind !== 'idle') return;
-      stopSettle();
-
-      // Middle button, held space, or a finger once a pen is in play: all pan.
-      const palm = event.pointerType === 'touch' && penSeen;
-      if (event.button === 1 || spaceHeld || palm) {
-        mode = {
-          kind: 'pan',
-          pointerId: event.pointerId,
-          origin: local(event),
-          view: viewport.state,
-        };
-        hover(null);
-        return;
-      }
-      mode = { kind: 'draw', pointerId: event.pointerId };
-      latest.current.input.begin(sample(event));
+      finishSettle();
+      altHeld = event.altKey;
+      run({ type: 'down', pointer: pointer(event), button: event.button, space: spaceHeld }, event);
     }
 
     function onPointerMove(event: PointerEvent): void {
-      const tracked = pointers.has(event.pointerId);
-      if (tracked) pointers.set(event.pointerId, local(event));
-
-      if (mode.kind === 'pinch') {
-        if (!tracked || pointers.size < 2) return;
-        const { distance, midpoint } = fingers();
-        if (
-          Math.abs(distance - mode.distance) > TAP_SLOP ||
-          Math.hypot(midpoint.x - mode.midpoint.x, midpoint.y - mode.midpoint.y) > TAP_SLOP
-        )
-          mode.moved = true;
-        mode.latest = midpoint;
-        setView(anchored(clampZoom(mode.zoom * (distance / mode.distance)), mode.anchor, midpoint));
-        return;
-      }
-      if (mode.kind === 'pan') {
-        if (event.pointerId !== mode.pointerId) return;
-        const point = local(event);
-        setView({
-          ...mode.view,
-          panX: Math.round(mode.view.panX + point.x - mode.origin.x),
-          panY: Math.round(mode.view.panY + point.y - mode.origin.y),
-        });
-        return;
-      }
-      if (mode.kind === 'drain') return;
-      if (event.pointerType !== 'touch') hover(local(event));
-      if (mode.kind === 'draw' && event.pointerId === mode.pointerId) {
-        const events = event.getCoalescedEvents?.() ?? [];
-        latest.current.input.extend((events.length ? events : [event]).map(sample));
-      }
+      if (event.pointerType !== 'touch') altHeld = event.altKey;
+      if (down.has(event.pointerId)) run({ type: 'move', pointer: pointer(event) }, event);
+      if (event.pointerType !== 'touch' && !isNavigating(gesture)) hover(local(event));
     }
 
     function onPointerUp(event: PointerEvent): void {
-      if (!pointers.delete(event.pointerId)) return;
-      if (pointers.size === 0) activeOrigin = null;
-      if (mode.kind === 'pinch') {
-        if (pointers.size > 0) {
-          // Lifting one finger ends the pinch, so the last finger can't start a stroke.
-          if (mode.moved) settle(mode.latest);
-          else if (performance.now() - mode.startedAt < TAP_MS) return;
-          mode = mode.moved ? { kind: 'drain' } : mode;
-          return;
-        }
-        const tap = !mode.moved && performance.now() - mode.startedAt < TAP_MS;
-        if (tap) {
-          if (mode.fingers >= 3) latest.current.input.redo();
-          else latest.current.input.undo();
-        } else settle(mode.latest);
-        mode = { kind: 'idle' };
-        return;
-      }
-      if (mode.kind === 'drain') {
-        if (pointers.size === 0) mode = { kind: 'idle' };
-        return;
-      }
-      if (mode.kind === 'pan' && event.pointerId === mode.pointerId) {
-        mode = { kind: 'idle' };
-        hover(event.pointerType === 'touch' ? null : local(event));
-        return;
-      }
-      if (mode.kind === 'draw' && event.pointerId === mode.pointerId) {
-        mode = { kind: 'idle' };
-        if (event.type === 'pointercancel') latest.current.input.cancel();
-        else latest.current.input.end();
-        if (event.pointerType === 'touch') hover(null);
-      }
+      if (!down.delete(event.pointerId)) return;
+      const cancelled = event.type === 'pointercancel';
+      run({ type: 'up', pointer: pointer(event), cancelled }, event);
+      if (event.pointerType === 'touch') {
+        if (!isNavigating(gesture)) hover(null);
+      } else hover(cancelled ? null : local(event));
+      if (down.size === 0) activeOrigin = null;
     }
 
     function onPointerLeave(event: PointerEvent): void {
-      if (mode.kind === 'idle' && event.pointerType !== 'touch') hover(null);
+      if (gesture.mode.kind === 'idle' && event.pointerType !== 'touch') hover(null);
     }
 
     function onWheel(event: WheelEvent): void {
       event.preventDefault();
       const point = local(event);
-      if (!(event.ctrlKey || event.metaKey)) {
-        stopSettle();
+      const read = wheelIntent(wheel, {
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        deltaMode: event.deltaMode,
+        zoomKey: event.ctrlKey || event.metaKey,
+        shift: event.shiftKey,
+        legacyDeltaY: (event as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY,
+        time: event.timeStamp,
+      });
+      wheel = read.state;
+      const { intent } = read;
+      if (intent.kind === 'pan') {
+        finishSettle();
         const view = viewport.state;
         setView({
           ...view,
-          panX: Math.round(view.panX - event.deltaX),
-          panY: Math.round(view.panY - event.deltaY),
+          panX: Math.round(view.panX + intent.dx),
+          panY: Math.round(view.panY + intent.dy),
         });
-        hover(point);
-        return;
-      }
-      // A mouse wheel clicks in whole notches; trackpad pinches stream small deltas.
-      const notch =
-        event.deltaMode === 1 || (Math.abs(event.deltaY) >= 50 && Number.isInteger(event.deltaY));
-      if (notch) {
+      } else if (intent.kind === 'step') {
+        finishSettle();
+        setView(stepZoom(viewport.state, intent.direction, point));
+      } else if (intent.kind === 'zoom') {
         stopSettle();
-        wheelNotches += Math.sign(event.deltaY);
-        const direction = wheelNotches < 0 ? 1 : -1;
-        wheelNotches = 0;
-        setView(stepZoom(viewport.state, direction, point));
-      } else {
-        stopSettle();
+        lastWheelZoomAt = event.timeStamp;
         const view = viewport.state;
-        const zoom = clampZoom(view.zoom * Math.exp(-event.deltaY * 0.01));
-        setView(zoomAt(view, zoom, point));
-        settleTimer = setTimeout(() => settle(point), 140);
+        setView(zoomAt(view, clampZoom(view.zoom * intent.factor), point));
+        settlePending = point;
+        settleTimer = setTimeout(() => settle(point), PINCH_SETTLE_MS);
       }
       hover(point);
+    }
+
+    // Desktop Safari reports trackpad pinches as gesture events rather than Ctrl wheels.
+    function onGestureStart(event: WebKitGestureEvent): void {
+      event.preventDefault();
+      if (down.size > 0 || !(event.target instanceof Node) || !host.contains(event.target)) return;
+      finishSettle();
+      const at =
+        event.clientX === undefined || event.clientY === undefined
+          ? (hovered ?? { x: viewport.state.cssWidth / 2, y: viewport.state.cssHeight / 2 })
+          : local({ clientX: event.clientX, clientY: event.clientY });
+      webkitPinch = { zoom: viewport.state.zoom, at };
+    }
+
+    function onGestureChange(event: WebKitGestureEvent): void {
+      event.preventDefault();
+      if (!webkitPinch || down.size > 0 || event.scale === undefined) return;
+      if (event.timeStamp - lastWheelZoomAt < WHEEL_ZOOM_MS) return;
+      const zoom = clampZoom(webkitPinch.zoom * event.scale);
+      setView(zoomAt(viewport.state, zoom, webkitPinch.at));
+    }
+
+    function onGestureEnd(event: WebKitGestureEvent): void {
+      event.preventDefault();
+      if (webkitPinch && event.timeStamp - lastWheelZoomAt >= WHEEL_ZOOM_MS) settle(webkitPinch.at);
+      webkitPinch = null;
     }
 
     const editable = (target: EventTarget | null) =>
       target instanceof HTMLElement &&
       (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
+    /** Escape abandons a drag in progress before any shortcut sees it. */
+    function onEscape(event: KeyboardEvent): void {
+      if (event.key !== 'Escape' || gesture.mode.kind !== 'draw') return;
+      event.preventDefault();
+      event.stopPropagation();
+      run({ type: 'escape' }, null);
+    }
+
+    function setAlt(held: boolean): void {
+      if (altHeld === held) return;
+      altHeld = held;
+      if (hovered && gesture.mode.kind === 'idle') hover(hovered);
+    }
+
     function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Alt') {
+        if (hovered) event.preventDefault();
+        return setAlt(true);
+      }
       if (event.key !== ' ' || editable(event.target) || event.repeat) {
         if (event.key === ' ' && spaceHeld) event.preventDefault();
         return;
@@ -369,6 +368,10 @@ export function CanvasSurface({
     }
 
     function onKeyUp(event: KeyboardEvent): void {
+      if (event.key === 'Alt') {
+        if (hovered) event.preventDefault();
+        return setAlt(false);
+      }
       if (event.key !== ' ' || !spaceHeld) return;
       event.preventDefault();
       spaceHeld = false;
@@ -378,7 +381,9 @@ export function CanvasSurface({
 
     function onBlur(): void {
       spaceHeld = false;
-      updateCursor();
+      altHeld = false;
+      if (hovered) hover(hovered);
+      else updateCursor();
     }
 
     const block = (event: Event) => event.preventDefault();
@@ -389,11 +394,14 @@ export function CanvasSurface({
     host.addEventListener('pointerleave', onPointerLeave);
     host.addEventListener('wheel', onWheel, { passive: false });
     host.addEventListener('contextmenu', block);
+    window.addEventListener('keydown', onEscape, true);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
-    // iOS Safari: keep pinches on the canvas from zooming the page.
-    globalThis.document.addEventListener('gesturestart', block);
+    // iOS Safari zooms the page on pinch unless these are blocked everywhere.
+    globalThis.document.addEventListener('gesturestart', onGestureStart);
+    globalThis.document.addEventListener('gesturechange', onGestureChange);
+    globalThis.document.addEventListener('gestureend', onGestureEnd);
 
     return () => {
       stopSettle();
@@ -410,10 +418,13 @@ export function CanvasSurface({
       host.removeEventListener('pointerleave', onPointerLeave);
       host.removeEventListener('wheel', onWheel);
       host.removeEventListener('contextmenu', block);
+      window.removeEventListener('keydown', onEscape, true);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
-      globalThis.document.removeEventListener('gesturestart', block);
+      globalThis.document.removeEventListener('gesturestart', onGestureStart);
+      globalThis.document.removeEventListener('gesturechange', onGestureChange);
+      globalThis.document.removeEventListener('gestureend', onGestureEnd);
     };
   }, [document, viewport, overlay]);
 
