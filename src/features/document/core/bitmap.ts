@@ -1,4 +1,4 @@
-import type { BitmapDocument, PackedColor, PixelPoint } from './contracts';
+import type { BitmapDocument, PackedColor, PixelPoint, PixelRect } from './contracts';
 
 export const MAX_DOCUMENT_SIDE = 4096;
 
@@ -23,7 +23,21 @@ export function createBitmapDocument(
     throw new RangeError(`Canvas dimensions must be integers from 1 to ${MAX_DOCUMENT_SIDE}`);
   }
   const buffer = new ArrayBuffer(width * height * 4);
-  return {
+  const listeners = new Set<(rect: PixelRect, revision: number) => void>();
+  let document: BitmapDocument;
+  const events = {
+    subscribe(listener: (rect: PixelRect, revision: number) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    invalidate(rect: PixelRect) {
+      document.revision++;
+      for (const listener of listeners) listener(rect, document.revision);
+    },
+  };
+  document = {
     id,
     name,
     width,
@@ -31,7 +45,9 @@ export function createBitmapDocument(
     pixels: new Uint32Array(buffer),
     rgbaBytes: new Uint8ClampedArray(buffer),
     revision: 0,
+    events,
   };
+  return document;
 }
 
 export function getPixel(document: BitmapDocument, at: PixelPoint): PackedColor | null {

@@ -7,3 +7,6 @@ export type {
   PixelRect,
 } from './core/contracts';
 export { createBitmapDocument, getPixel, MAX_DOCUMENT_SIDE, packRgba } from './core/bitmap';
+export { intersectRect, unionRect, fullRect } from './core/rect';
+export { resizeDocument } from './core/resize';
+export type { CanvasAnchor } from './core/resize';

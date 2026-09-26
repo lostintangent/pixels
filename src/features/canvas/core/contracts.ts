@@ -15,3 +15,10 @@ export interface ScreenPoint {
   y: number;
 }
 export type DocumentPoint = PixelPoint;
+
+export interface ViewportInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}

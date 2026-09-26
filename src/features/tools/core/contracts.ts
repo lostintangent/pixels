@@ -1,4 +1,5 @@
 import type { BitmapDocument, PackedColor, PixelPoint, PixelRect } from '../../document';
+import type { DocumentHistory } from '../../history';
 
 export interface Brush {
   color: PackedColor;
@@ -9,37 +10,47 @@ export interface StrokeSample extends PixelPoint {
   pressure?: number;
 }
 export type ToolKind = 'pencil' | 'eraser' | 'fill' | 'eyedropper' | 'line' | 'select';
-
-/** A mutation updates pixels in place and reports precisely what changed. */
 export interface MutationResult {
   dirty: PixelRect | null;
   changedPixels: number;
-}
-export type MutatingOperation<Input> = (document: BitmapDocument, input: Input) => MutationResult;
-
-export interface StrokeInput {
-  from: StrokeSample;
-  to: StrokeSample;
-  brush: Brush;
 }
 export interface FillInput {
   at: PixelPoint;
   color: PackedColor;
 }
-export interface LineInput {
-  from: PixelPoint;
-  to: PixelPoint;
-  brush: Brush;
+
+/** One gesture owns one history transaction. Cancel restores every sample. */
+export interface StrokeSession {
+  extend(sample: StrokeSample): MutationResult;
+  end(): boolean;
+  cancel(): void;
+}
+export type BeginStroke = (
+  document: BitmapDocument,
+  brush: Brush,
+  history: DocumentHistory,
+) => StrokeSession;
+
+/** Previews rasterize only into overlay pixels, never the document. */
+export interface LinePreview {
+  readonly overlay: Uint32Array;
+  readonly dirty: PixelRect | null;
+  update(to: PixelPoint, snap?: boolean): PixelRect | null;
+  commit(): boolean;
+  cancel(): void;
 }
 
-/** Floating selection pixels are compact, row-major, and independent of the document. */
+/** A compact row-major buffer can be copied, cut, moved, and pasted. */
 export interface FloatingSelection {
   bounds: PixelRect;
   pixels: Uint32Array;
   sourceBounds: PixelRect;
 }
-
-export interface SelectionMoveInput {
-  selection: FloatingSelection;
-  to: PixelPoint;
+export interface SelectionSession {
+  readonly floating: FloatingSelection | null;
+  lift(rect: PixelRect): FloatingSelection | null;
+  move(to: PixelPoint): PixelRect | null;
+  commit(): boolean;
+  cancel(): void;
+  clear(): boolean;
 }

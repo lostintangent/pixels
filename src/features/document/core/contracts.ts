@@ -22,6 +22,7 @@ export interface BitmapDocument {
   pixels: Uint32Array;
   rgbaBytes: Uint8ClampedArray;
   revision: number;
+  events: DocumentEvents;
 }
 
 export type DirtyRectListener = (rect: PixelRect, revision: number) => void;
