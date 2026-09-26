@@ -98,77 +98,87 @@ const browser = await chromium.launch({
   args: headlessGpu ? ['--enable-gpu', '--use-angle=metal', '--ignore-gpu-blocklist'] : [],
 });
 try {
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
-    deviceScaleFactor: 1,
-    reducedMotion: 'reduce',
-  });
-  const page = await context.newPage();
-  const errors: Error[] = [];
-  page.on('pageerror', (error) => errors.push(error));
-  await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
-  await page.waitForFunction(() => Boolean(window.__pixelsPerf));
-  if (headed) await page.bringToFront();
-  const gpuRenderer = await page.evaluate(() => {
-    const gl = document.createElement('canvas').getContext('webgl');
-    if (!gl) return 'WebGL unavailable';
-    const info = gl.getExtension('WEBGL_debug_renderer_info');
-    return info
-      ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
-      : `unmasked renderer unavailable (${String(gl.getParameter(gl.RENDERER))})`;
-  });
-  // Let the browser allocate its canvas/GPU resources before tracing. The
-  // first paint is a load cost, not an editing-frame cost.
-  await page.evaluate(async () => {
-    const api = window.__pixelsPerf!;
-    await api.reset('blank');
-    await api.runStroke();
-    await api.reset('blank');
-    await api.runPanZoom();
-    await api.reset('maze');
-    await api.runMazeFill();
-  });
-  console.log(
-    `Pixels browser perf: Chromium ${browser.version()}, ${headed ? 'headed user path' : headlessGpu ? 'headless GPU experiment' : 'headless diagnostic'}, WebGL ${gpuRenderer}, ${process.platform}/${process.arch}, 1440×900 @ 1×, document 1024² @ 8×, loadavg ${loadavg()
-      .map((value) => value.toFixed(2))
-      .join('/')}`,
-  );
-  console.log(
-    'Chrome trace categories: devtools.timeline, devtools.timeline.frame, cc, toplevel; pipeline work includes renderer main, raster workers, compositor, and GPU process.',
-  );
+  const profiles = [
+    { name: 'desktop', width: 1440, height: 900, dpr: 2, scenarios: ['stroke', 'pan', 'maze'] },
+    { name: 'phone', width: 390, height: 844, dpr: 3, scenarios: ['stroke', 'pan'] },
+  ] as const;
   let failed = false;
   const targets: Record<Scenario, number> = { stroke: 4, pan: 3, maze: Infinity };
-  for (let run = 0; run < repeat; run++) {
-    console.log(`Run ${run + 1}/${repeat}`);
-    for (const scenario of ['stroke', 'pan', 'maze'] as const) {
-      const blocks: TraceSummary[] = [];
-      for (let block = 0; block < 3; block++)
-        blocks.push(await traceScenario(context, page, scenario));
-      if (errors.length) throw errors[0];
-      const frames = blocks.map((block) => block.frameCount);
-      if (scenario !== 'maze' && frames.some((count) => count < 30))
-        throw new Error(`${scenario} trace captured fewer than 30 frames: ${frames.join(', ')}`);
-      const p95 = median(blocks.map((block) => block.mainP95Ms));
-      const pipelineP95 = median(blocks.map((block) => block.pipelineP95Ms));
-      const maxLongTask = Math.max(...blocks.map((block) => block.maxMainTaskMs));
-      const eligible = blocks.reduce((sum, block) => sum + block.eligibleFrames, 0);
-      const onTime = blocks.reduce((sum, block) => sum + block.onTimeFrames, 0);
-      const dropped = blocks.reduce((sum, block) => sum + block.droppedFrames, 0);
-      const highLatency = blocks.reduce((sum, block) => sum + block.highLatencyFrames, 0);
-      const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
-      const onTimePercent = (onTime / eligible) * 100;
-      const refreshHz = median(blocks.map((block) => block.refreshHz));
-      const passed =
-        p95 < targets[scenario] &&
-        maxLongTask <= 50 &&
-        (scenario === 'maze' || (onTimePercent >= 99 && !consecutiveDrops && eligible >= 90));
-      if (!passed) failed = true;
-      console.log(
-        `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(targets[scenario]) ? `main < ${targets[scenario]} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
-      );
+  for (const profile of profiles) {
+    const context = await browser.newContext({
+      viewport: { width: profile.width, height: profile.height },
+      deviceScaleFactor: profile.dpr,
+      reducedMotion: 'reduce',
+      isMobile: profile.name === 'phone',
+      hasTouch: profile.name === 'phone',
+    });
+    const page = await context.newPage();
+    const errors: Error[] = [];
+    page.on('pageerror', (error) => errors.push(error));
+    await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
+    await page.waitForFunction(() => Boolean(window.__pixelsPerf));
+    if (headed) await page.bringToFront();
+    const gpuRenderer = await page.evaluate(() => {
+      const gl = document.createElement('canvas').getContext('webgl');
+      if (!gl) return 'WebGL unavailable';
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      return info
+        ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
+        : `unmasked renderer unavailable (${String(gl.getParameter(gl.RENDERER))})`;
+    });
+    // Let the browser allocate its canvas/GPU resources before tracing. The
+    // first paint is a load cost, not an editing-frame cost.
+    await page.evaluate(async () => {
+      const api = window.__pixelsPerf!;
+      await api.reset('blank');
+      await api.runStroke();
+      await api.reset('blank');
+      await api.runPanZoom();
+      if (window.innerWidth > 400) {
+        await api.reset('maze');
+        await api.runMazeFill();
+      }
+    });
+    console.log(
+      `Pixels browser perf ${profile.name}: Chromium ${browser.version()}, ${headed ? 'headed user path' : headlessGpu ? 'headless GPU experiment' : 'headless diagnostic'}, WebGL ${gpuRenderer}, ${process.platform}/${process.arch}, ${profile.width}×${profile.height} @ ${profile.dpr}×, document 1024² @ 8×, loadavg ${loadavg()
+        .map((value) => value.toFixed(2))
+        .join('/')}`,
+    );
+    console.log(
+      'Chrome trace categories: devtools.timeline, devtools.timeline.frame, cc, toplevel; pipeline work includes renderer main, raster workers, compositor, and GPU process.',
+    );
+    for (let run = 0; run < repeat; run++) {
+      console.log(`Run ${run + 1}/${repeat}`);
+      for (const scenario of profile.scenarios) {
+        const blocks: TraceSummary[] = [];
+        for (let block = 0; block < 3; block++)
+          blocks.push(await traceScenario(context, page, scenario));
+        if (errors.length) throw errors[0];
+        const frames = blocks.map((block) => block.frameCount);
+        if (scenario !== 'maze' && frames.some((count) => count < 30))
+          throw new Error(`${scenario} trace captured fewer than 30 frames: ${frames.join(', ')}`);
+        const p95 = median(blocks.map((block) => block.mainP95Ms));
+        const pipelineP95 = median(blocks.map((block) => block.pipelineP95Ms));
+        const maxLongTask = Math.max(...blocks.map((block) => block.maxMainTaskMs));
+        const eligible = blocks.reduce((sum, block) => sum + block.eligibleFrames, 0);
+        const onTime = blocks.reduce((sum, block) => sum + block.onTimeFrames, 0);
+        const dropped = blocks.reduce((sum, block) => sum + block.droppedFrames, 0);
+        const highLatency = blocks.reduce((sum, block) => sum + block.highLatencyFrames, 0);
+        const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
+        const onTimePercent = (onTime / eligible) * 100;
+        const refreshHz = median(blocks.map((block) => block.refreshHz));
+        const passed =
+          p95 < targets[scenario] &&
+          maxLongTask <= 50 &&
+          (scenario === 'maze' || (onTimePercent >= 99 && !consecutiveDrops && eligible >= 90));
+        if (!passed) failed = true;
+        console.log(
+          `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(targets[scenario]) ? `main < ${targets[scenario]} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
+        );
+      }
     }
+    await context.close();
   }
-  await context.close();
   if (failed && !calibrate) process.exitCode = 1;
 } finally {
   await browser.close();

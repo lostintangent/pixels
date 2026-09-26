@@ -12,11 +12,11 @@ const history = createDocumentHistory();
 const fillWorkspace = new FillWorkspace();
 const baseViewport: Viewport = {
   zoom: 8,
-  panX: 720 - 512 * 8,
-  panY: 450 - 512 * 8,
-  cssWidth: 1440,
-  cssHeight: 900,
-  devicePixelRatio: 1,
+  panX: window.innerWidth / 2 - 512 * 8,
+  panY: window.innerHeight / 2 - 512 * 8,
+  cssWidth: window.innerWidth,
+  cssHeight: window.innerHeight,
+  devicePixelRatio: window.devicePixelRatio,
 };
 const maze = new Uint32Array(SIDE * SIDE);
 for (let y = 8; y < SIDE - 8; y += 8) {
@@ -64,9 +64,13 @@ const api: BrowserPerfApi = {
     const stroke = beginStroke(bitmap, { color: INK, size: 16, pixelPerfect: false }, history);
     return new Promise((resolve) => {
       let sample = 0;
+      const span = Math.max(8, Math.min(60, Math.floor(baseViewport.cssWidth / 16) - 10));
       const timer = setInterval(() => {
-        const x = 452 + sample;
-        stroke.extend({ x, y: 512 + ((sample >> 3) & 1) });
+        const period = 2 * span;
+        const position = sample % (2 * period);
+        const x = 512 - span + (position <= period ? position : 2 * period - position);
+        const y = 476 + Math.floor(sample / period) * 18 + ((sample >> 3) & 1);
+        stroke.extend({ x, y });
         sample++;
         if (sample === 120) {
           clearInterval(timer);
@@ -85,8 +89,14 @@ const api: BrowserPerfApi = {
         renderer.setViewport({
           ...baseViewport,
           zoom,
-          panX: 720 - 512 * zoom + 100 * Math.sin(phase * Math.PI * 2),
-          panY: 450 - 512 * zoom + 60 * Math.cos(phase * Math.PI * 2),
+          panX:
+            baseViewport.cssWidth / 2 -
+            512 * zoom +
+            Math.min(100, baseViewport.cssWidth / 5) * Math.sin(phase * Math.PI * 2),
+          panY:
+            baseViewport.cssHeight / 2 -
+            512 * zoom +
+            Math.min(60, baseViewport.cssHeight / 5) * Math.cos(phase * Math.PI * 2),
         });
         frame++;
         if (frame < 90) requestAnimationFrame(next);
