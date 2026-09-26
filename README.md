@@ -22,4 +22,6 @@ bun run perf --repeat 5
 
 `bun run perf` is being implemented alongside the pixel core. It is not yet a passing gate.
 
+Vite+ handles dev, build, Oxlint, and Oxfmt. Use `vp fmt` for formatting.
+
 Features own their framework-free `core/`, React `ui/`, tests, and perf cases. Other features import only through each feature's `index.ts`.

@@ -1,5 +1,0 @@
-node_modules
-dist
-.playwright-cli
-bun.lock
-src/app/stylex.generated.css
