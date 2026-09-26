@@ -23,6 +23,12 @@ export interface OverlayState {
   marquee: PixelRect | null;
   preview: OverlayPreview | null;
   reducedMotion?: boolean;
+  colors?: {
+    checkerA: string;
+    checkerB: string;
+    gridMinor: string;
+    gridMajor: string;
+  };
 }
 
 export interface RendererSurface {

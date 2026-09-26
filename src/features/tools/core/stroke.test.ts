@@ -37,9 +37,11 @@ test('pixel-perfect mode removes the middle corner pixel and preserves its old c
   const stroke = beginStroke(document, { color: INK, size: 1, pixelPerfect: true }, history);
   stroke.extend({ x: 0, y: 0 });
   stroke.extend({ x: 1, y: 0 });
-  stroke.extend({ x: 1, y: 1 });
+  expect(stroke.extend({ x: 1, y: 1 }).changedPixels).toBe(2);
   stroke.end();
   expect(Array.from(document.pixels.slice(0, 5))).toEqual([INK, OLD, 0, 0, INK]);
+  history.undo(document);
+  expect(Array.from(document.pixels.slice(0, 5))).toEqual([0, OLD, 0, 0, 0]);
 });
 
 test('cancel restores a partial gesture when touch becomes pinch', () => {

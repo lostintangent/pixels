@@ -18,7 +18,9 @@ export interface BitmapDocument {
   name: string;
   width: number;
   height: number;
-  /** Shares its ArrayBuffer with rgbaBytes, so ImageData can be a zero-copy view. */
+  /** Shares its ArrayBuffer with rgbaBytes, so ImageData can be a zero-copy view.
+   * Full-canvas history swaps this buffer. Read pixels/rgbaBytes from the document
+   * for each operation; never cache either view across an undo or redo. */
   pixels: Uint32Array;
   rgbaBytes: Uint8ClampedArray;
   revision: number;

@@ -11,13 +11,13 @@ function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return ctx;
 }
 
-function checkerPattern(ctx: CanvasRenderingContext2D): CanvasPattern {
+function checkerPattern(ctx: CanvasRenderingContext2D, a: string, b: string): CanvasPattern {
   const tile = globalThis.document.createElement('canvas');
   tile.width = tile.height = 16;
   const tileCtx = context(tile);
-  tileCtx.fillStyle = '#fff';
+  tileCtx.fillStyle = a;
   tileCtx.fillRect(0, 0, 16, 16);
-  tileCtx.fillStyle = '#d6d6d6';
+  tileCtx.fillStyle = b;
   tileCtx.fillRect(0, 0, 8, 8);
   tileCtx.fillRect(8, 8, 8, 8);
   const pattern = ctx.createPattern(tile, 'repeat');
@@ -54,7 +54,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   const documentCtx = context(surface.documentCanvas);
   const viewportCtx = context(surface.viewportCanvas);
   const overlayCtx = context(surface.overlayCanvas);
-  const checker = checkerPattern(viewportCtx);
+  let checker = checkerPattern(viewportCtx, '#fff', '#d6d6d6');
+  let checkerA = '#fff';
+  let checkerB = '#d6d6d6';
   const previewCanvas = globalThis.document.createElement('canvas');
   const previewCtx = context(previewCanvas);
   let document: BitmapDocument | null = null;
@@ -63,6 +65,13 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   let unsubscribe: (() => void) | null = null;
   let imageData: ImageData | null = null;
   let pendingDirty: PixelRect | null = null;
+  let viewportDirty = true;
+  let overlayDirty = true;
+  let previewImage: ImageData | null = null;
+  let previewBuffer: ArrayBufferLike | null = null;
+  let previewOffset = -1;
+  let previewWidth = 0;
+  let previewHeight = 0;
   let frame = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let phase = 0;
@@ -79,8 +88,14 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     const width = Math.max(1, Math.round(view.cssWidth * view.devicePixelRatio));
     const height = Math.max(1, Math.round(view.cssHeight * view.devicePixelRatio));
     for (const canvas of [surface.viewportCanvas, surface.overlayCanvas]) {
-      if (canvas.width !== width) canvas.width = width;
-      if (canvas.height !== height) canvas.height = height;
+      if (canvas.width !== width) {
+        canvas.width = width;
+        viewportDirty = overlayDirty = true;
+      }
+      if (canvas.height !== height) {
+        canvas.height = height;
+        viewportDirty = overlayDirty = true;
+      }
     }
   }
 
@@ -120,20 +135,34 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     const stride = preview.stride ?? preview.bounds.width;
     const rows = preview.stride ? preview.pixels.length / stride : preview.bounds.height;
     if (stride <= 0 || rows <= 0) return;
+    const byteLength = stride * rows * 4;
+    if (preview.pixels.byteLength < byteLength) return;
     if (previewCanvas.width !== stride) previewCanvas.width = stride;
     if (previewCanvas.height !== rows) previewCanvas.height = rows;
-    const bytes = new Uint8ClampedArray(
-      preview.pixels.buffer as ArrayBuffer,
-      preview.pixels.byteOffset,
-      preview.pixels.byteLength,
-    );
-    const image = new ImageData(bytes, stride, rows);
+    if (
+      !previewImage ||
+      previewBuffer !== preview.pixels.buffer ||
+      previewOffset !== preview.pixels.byteOffset ||
+      previewWidth !== stride ||
+      previewHeight !== rows
+    ) {
+      const bytes = new Uint8ClampedArray(
+        preview.pixels.buffer as ArrayBuffer,
+        preview.pixels.byteOffset,
+        byteLength,
+      );
+      previewImage = new ImageData(bytes, stride, rows);
+      previewBuffer = preview.pixels.buffer;
+      previewOffset = preview.pixels.byteOffset;
+      previewWidth = stride;
+      previewHeight = rows;
+    }
     if (preview.dirty && preview.stride) {
       const clip = { x: 0, y: 0, width: 0, height: 0 };
       if (intersectRect(preview.dirty, { x: 0, y: 0, width: stride, height: rows }, clip)) {
-        previewCtx.putImageData(image, 0, 0, clip.x, clip.y, clip.width, clip.height);
+        previewCtx.putImageData(previewImage, 0, 0, clip.x, clip.y, clip.width, clip.height);
       }
-    } else previewCtx.putImageData(image, 0, 0);
+    } else previewCtx.putImageData(previewImage, 0, 0);
     overlayCtx.imageSmoothingEnabled = false;
     overlayCtx.drawImage(
       previewCanvas,
@@ -153,7 +182,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     if (left > right || top > bottom) return;
     for (let major = 0; major < 2; major++) {
       overlayCtx.beginPath();
-      overlayCtx.strokeStyle = major ? 'rgba(0,0,0,.32)' : 'rgba(0,0,0,.12)';
+      overlayCtx.strokeStyle = major
+        ? (overlay.colors?.gridMajor ?? 'rgba(0,0,0,.32)')
+        : (overlay.colors?.gridMinor ?? 'rgba(0,0,0,.12)');
       overlayCtx.lineWidth = 1;
       for (let x = left; x <= right; x++) {
         if ((x % 8 === 0) !== Boolean(major)) continue;
@@ -177,27 +208,31 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     const bitmap = document;
     const view = viewport;
     updateBackingStore(view);
-    updateDocumentCanvas(bitmap);
-    const pixelWidth = surface.viewportCanvas.width;
-    const pixelHeight = surface.viewportCanvas.height;
-    viewportCtx.setTransform(1, 0, 0, 1, 0, 0);
-    viewportCtx.clearRect(0, 0, pixelWidth, pixelHeight);
-    viewportCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
-    viewportCtx.save();
-    viewportCtx.beginPath();
-    viewportCtx.rect(view.panX, view.panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
-    viewportCtx.clip();
-    viewportCtx.fillStyle = checker;
-    viewportCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
-    viewportCtx.imageSmoothingEnabled = false;
-    viewportCtx.drawImage(
-      surface.documentCanvas,
-      view.panX,
-      view.panY,
-      bitmap.width * view.zoom,
-      bitmap.height * view.zoom,
-    );
-    viewportCtx.restore();
+    if (viewportDirty) {
+      updateDocumentCanvas(bitmap);
+      const pixelWidth = surface.viewportCanvas.width;
+      const pixelHeight = surface.viewportCanvas.height;
+      viewportCtx.setTransform(1, 0, 0, 1, 0, 0);
+      viewportCtx.clearRect(0, 0, pixelWidth, pixelHeight);
+      viewportCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
+      viewportCtx.save();
+      viewportCtx.beginPath();
+      viewportCtx.rect(view.panX, view.panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
+      viewportCtx.clip();
+      viewportCtx.fillStyle = checker;
+      viewportCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
+      viewportCtx.imageSmoothingEnabled = false;
+      viewportCtx.drawImage(
+        surface.documentCanvas,
+        view.panX,
+        view.panY,
+        bitmap.width * view.zoom,
+        bitmap.height * view.zoom,
+      );
+      viewportCtx.restore();
+      viewportDirty = false;
+    }
+    if (!overlayDirty) return;
     overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
     overlayCtx.clearRect(0, 0, surface.overlayCanvas.width, surface.overlayCanvas.height);
     overlayCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
@@ -205,14 +240,12 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     drawGrid(bitmap, view);
     if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, phase);
     if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, phase);
-    if (
-      (overlay.marquee || overlay.cursor) &&
-      !(overlay.reducedMotion ?? systemReducedMotion) &&
-      !timer
-    ) {
+    overlayDirty = false;
+    if (overlay.marquee && !(overlay.reducedMotion ?? systemReducedMotion) && !timer) {
       timer = globalThis.setTimeout(() => {
         timer = null;
         phase = (phase + 1) % 8;
+        overlayDirty = true;
         schedule();
       }, 80);
     }
@@ -224,22 +257,39 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       document = bitmap;
       imageData = null;
       pendingDirty = { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
+      viewportDirty = overlayDirty = true;
       unsubscribe = bitmap.events.subscribe((rect) => {
         if (!pendingDirty) pendingDirty = { ...rect };
         else unionRect(pendingDirty, rect, pendingDirty);
+        viewportDirty = true;
         schedule();
       });
       schedule();
     },
     setViewport(next) {
       viewport = next;
+      viewportDirty = overlayDirty = true;
       schedule();
     },
     setOverlay(next) {
+      const a = next.colors?.checkerA ?? '#fff';
+      const b = next.colors?.checkerB ?? '#d6d6d6';
+      if (a !== checkerA || b !== checkerB) {
+        checker = checkerPattern(viewportCtx, a, b);
+        checkerA = a;
+        checkerB = b;
+        viewportDirty = true;
+      }
       overlay = next;
+      overlayDirty = true;
+      if ((!next.marquee || next.reducedMotion || systemReducedMotion) && timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       schedule();
     },
     invalidateOverlay() {
+      overlayDirty = true;
       schedule();
     },
     dispose() {

@@ -34,6 +34,7 @@ export type BeginStroke = (
 /** Previews rasterize only into overlay pixels, never the document. */
 export interface LinePreview {
   readonly overlay: Uint32Array;
+  readonly bounds: PixelRect | null;
   readonly dirty: PixelRect | null;
   update(to: PixelPoint, snap?: boolean): PixelRect | null;
   commit(): boolean;

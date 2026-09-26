@@ -17,20 +17,23 @@ export function floodFill(
   const width = document.width;
   const height = document.height;
   if (x < 0 || y < 0 || x >= width || y >= height) return { dirty: null, changedPixels: 0 };
-  const pixels = document.pixels;
+  // JSC handles signed 32-bit values in the integer fast path. Opaque ABGR
+  // colors exceed 2³¹, so compare through a signed view of the same buffer.
+  const pixels = new Int32Array(
+    document.pixels.buffer,
+    document.pixels.byteOffset,
+    document.pixels.length,
+  );
   const source = pixels[y * width + x]!;
-  const color = input.color >>> 0;
+  const color = input.color | 0;
   if (source === color) return { dirty: null, changedPixels: 0 };
 
-  let uniform = true;
+  let sourceCount = 0;
   for (let i = 0; i < pixels.length; i++) {
-    if (pixels[i] !== source) {
-      uniform = false;
-      break;
-    }
+    if (pixels[i] === source) sourceCount++;
   }
   const transaction = history.begin('Fill', document);
-  if (uniform) {
+  if (sourceCount === pixels.length) {
     const dirty = { x: 0, y: 0, width, height };
     transaction.capture(dirty);
     pixels.fill(color);
@@ -39,18 +42,14 @@ export function floodFill(
     return { dirty, changedPixels: pixels.length };
   }
 
+  // A large source population makes repeated tile probes more expensive than
+  // one contiguous snapshot, even when obstacles split the fill into spans.
+  const fullSnapshot = sourceCount >= pixels.length * 0.75;
+  if (fullSnapshot) transaction.capture({ x: 0, y: 0, width, height });
+
   let stack = workspace.stack;
   let top = 0;
-  const push = (index: number) => {
-    if (top === stack.length) {
-      const grown = new Uint32Array(stack.length * 2);
-      grown.set(stack);
-      stack = grown;
-      workspace.stack = grown;
-    }
-    stack[top++] = index;
-  };
-  push(y * width + x);
+  stack[top++] = y * width + x;
   let minX = width;
   let minY = height;
   let maxX = -1;
@@ -69,7 +68,7 @@ export function floodFill(
     span.x = left - rowStart;
     span.y = row;
     span.width = right - left + 1;
-    transaction.capture(span);
+    if (!fullSnapshot) transaction.capture(span);
     pixels.fill(color, left, right + 1);
     changedPixels += span.width;
     minX = Math.min(minX, span.x);
@@ -79,11 +78,19 @@ export function floodFill(
     for (let direction = -1; direction <= 1; direction += 2) {
       const neighborRow = row + direction;
       if (neighborRow < 0 || neighborRow >= height) continue;
+      const end = neighborRow * width + span.x + span.width;
       let inRun = false;
-      for (let nx = span.x; nx < span.x + span.width; nx++) {
-        const index = neighborRow * width + nx;
+      for (let index = neighborRow * width + span.x; index < end; index++) {
         if (pixels[index] === source) {
-          if (!inRun) push(index);
+          if (!inRun) {
+            if (top === stack.length) {
+              const grown = new Uint32Array(stack.length * 2);
+              grown.set(stack);
+              stack = grown;
+              workspace.stack = grown;
+            }
+            stack[top++] = index;
+          }
           inRun = true;
         } else inRun = false;
       }

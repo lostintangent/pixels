@@ -4,6 +4,15 @@ import type { DocumentHistory } from '../../history';
 import type { Brush, LinePreview } from './contracts';
 import { paintSquare, rasterLine, segmentBounds } from './raster';
 
+export class LinePreviewWorkspace {
+  pixels = new Uint32Array(256);
+  ensure(pixelCount: number): Uint32Array {
+    if (this.pixels.length < pixelCount)
+      this.pixels = new Uint32Array(Math.max(pixelCount, this.pixels.length * 2));
+    return this.pixels;
+  }
+}
+
 export function snapLineEndpoint(from: PixelPoint, to: PixelPoint): PixelPoint {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -26,11 +35,9 @@ export function beginLinePreview(
   from: PixelPoint,
   brush: Brush,
   history: DocumentHistory,
+  workspace = new LinePreviewWorkspace(),
 ): LinePreview {
-  const overlay = new Uint32Array(document.pixels.length);
-  const width = document.width;
-  const height = document.height;
-  const bounds: PixelRect = { x: 0, y: 0, width, height };
+  const documentBounds: PixelRect = { x: 0, y: 0, width: document.width, height: document.height };
   const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
   let current: PixelPoint = from;
   let dirty: PixelRect | null = null;
@@ -38,30 +45,41 @@ export function beginLinePreview(
   const startX = Math.floor(from.x);
   const startY = Math.floor(from.y);
 
-  function clearOverlay(): void {
-    if (!dirty) return;
-    for (let row = dirty.y; row < dirty.y + dirty.height; row++) {
-      const start = row * width + dirty.x;
-      overlay.fill(0, start, start + dirty.width);
-    }
-  }
-  function draw(target: Uint32Array, to: PixelPoint): number {
+  function draw(
+    target: Uint32Array,
+    width: number,
+    height: number,
+    offsetX: number,
+    offsetY: number,
+  ): number {
     let changed = 0;
-    rasterLine(startX, startY, Math.floor(to.x), Math.floor(to.y), (x, y) => {
-      changed += paintSquare(target, width, height, x, y, brush.size, brush.color);
+    rasterLine(startX, startY, Math.floor(current.x), Math.floor(current.y), (x, y) => {
+      changed += paintSquare(
+        target,
+        width,
+        height,
+        x - offsetX,
+        y - offsetY,
+        brush.size,
+        brush.color,
+      );
     });
     return changed;
   }
 
   return {
-    overlay,
+    get overlay() {
+      return workspace.pixels;
+    },
+    get bounds() {
+      return dirty;
+    },
     get dirty() {
       return dirty;
     },
     update(to, snap = false) {
       if (closed) throw new Error('Line preview is closed');
       const previous = dirty;
-      clearOverlay();
       current = snap ? snapLineEndpoint(from, to) : to;
       const raw = segmentBounds(
         startX,
@@ -70,8 +88,12 @@ export function beginLinePreview(
         Math.floor(current.y),
         brush.size,
       );
-      dirty = intersectRect(raw, bounds, clip) ? { ...clip } : null;
-      if (dirty) draw(overlay, current);
+      dirty = intersectRect(raw, documentBounds, clip) ? { ...clip } : null;
+      if (dirty) {
+        const pixels = workspace.ensure(dirty.width * dirty.height);
+        pixels.fill(0, 0, dirty.width * dirty.height);
+        draw(pixels, dirty.width, dirty.height, dirty.x, dirty.y);
+      }
       if (!previous) return dirty;
       if (!dirty) return previous;
       return unionRect(previous, dirty, { x: 0, y: 0, width: 0, height: 0 });
@@ -79,11 +101,10 @@ export function beginLinePreview(
     commit() {
       if (closed) throw new Error('Line preview is closed');
       closed = true;
-      clearOverlay();
       if (!dirty) return false;
       const transaction = history.begin('Line', document);
       transaction.capture(dirty);
-      const changed = draw(document.pixels, current);
+      const changed = draw(document.pixels, document.width, document.height, 0, 0);
       if (!changed) {
         transaction.cancel();
         return false;
@@ -95,7 +116,7 @@ export function beginLinePreview(
     cancel() {
       if (closed) throw new Error('Line preview is closed');
       closed = true;
-      clearOverlay();
+      if (dirty) workspace.pixels.fill(0, 0, dirty.width * dirty.height);
     },
   };
 }

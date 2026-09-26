@@ -33,7 +33,10 @@ export function beginStroke(
       const elbow = (lastX === previousX && lastY === y) || (lastY === previousY && lastX === x);
       if (diagonal && elbow) {
         const oldIndex = lastY * document.width + lastX;
-        document.pixels[oldIndex] = lastBefore;
+        if (document.pixels[oldIndex] !== lastBefore) {
+          document.pixels[oldIndex] = lastBefore;
+          changedTotal++;
+        }
       } else {
         previousX = lastX;
         previousY = lastY;

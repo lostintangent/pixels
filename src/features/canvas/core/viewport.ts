@@ -2,15 +2,48 @@ import type { Viewport, ScreenPoint, DocumentPoint, ViewportInsets } from './con
 
 export const MIN_ZOOM = 1 / 32;
 export const MAX_ZOOM = 128;
+export const ZOOM_STEPS = [
+  1 / 32,
+  1 / 16,
+  1 / 8,
+  1 / 4,
+  1 / 2,
+  1,
+  2,
+  3,
+  4,
+  6,
+  8,
+  12,
+  16,
+  24,
+  32,
+  48,
+  64,
+  96,
+  128,
+] as const;
 
 export function clampZoom(zoom: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
-export function snapZoom(zoom: number): number {
+function nearestStepIndex(zoom: number): number {
   const bounded = clampZoom(zoom);
-  if (bounded >= 1) return Math.round(bounded);
-  return clampZoom(2 ** Math.round(Math.log2(bounded)));
+  let best = 0;
+  let distance = Infinity;
+  for (let i = 0; i < ZOOM_STEPS.length; i++) {
+    const current = Math.abs(Math.log(bounded / ZOOM_STEPS[i]!));
+    if (current < distance) {
+      distance = current;
+      best = i;
+    }
+  }
+  return best;
+}
+
+export function snapZoom(zoom: number): number {
+  return ZOOM_STEPS[nearestStepIndex(zoom)]!;
 }
 
 export function screenToDocument(viewport: Viewport, point: ScreenPoint): DocumentPoint {
@@ -24,18 +57,11 @@ export function documentToScreen(viewport: Viewport, point: DocumentPoint): Scre
   return { x: point.x * viewport.zoom + viewport.panX, y: point.y * viewport.zoom + viewport.panY };
 }
 
-export function zoomAt(viewport: Viewport, point: ScreenPoint, factor: number): Viewport {
-  if (!Number.isFinite(factor) || factor <= 0)
-    throw new RangeError('Zoom factor must be positive and finite');
-  return zoomToStep(viewport, viewport.zoom * factor, point);
-}
-
-export function zoomToStep(
-  viewport: Viewport,
-  requestedZoom: number,
-  point: ScreenPoint,
-): Viewport {
-  const zoom = snapZoom(requestedZoom);
+/** Continuous, clamped zoom anchored at a screen point. Pinch calls this per frame. */
+export function zoomAt(viewport: Viewport, requestedZoom: number, point: ScreenPoint): Viewport {
+  if (!Number.isFinite(requestedZoom) || requestedZoom <= 0)
+    throw new RangeError('Zoom must be positive and finite');
+  const zoom = clampZoom(requestedZoom);
   const ratio = zoom / viewport.zoom;
   return {
     ...viewport,
@@ -45,19 +71,24 @@ export function zoomToStep(
   };
 }
 
+export function zoomToStep(
+  viewport: Viewport,
+  requestedZoom: number,
+  point: ScreenPoint,
+): Viewport {
+  return zoomAt(viewport, snapZoom(requestedZoom), point);
+}
+
+export function settleZoom(viewport: Viewport, point: ScreenPoint): Viewport {
+  return zoomToStep(viewport, viewport.zoom, point);
+}
+
 export function stepZoom(viewport: Viewport, direction: -1 | 1, point: ScreenPoint): Viewport {
-  const current = snapZoom(viewport.zoom);
-  const next =
-    current < 1
-      ? direction > 0
-        ? current * 2
-        : current / 2
-      : direction > 0
-        ? current + 1
-        : current === 1
-          ? 1 / 2
-          : current - 1;
-  return zoomToStep(viewport, next, point);
+  const index = Math.min(
+    ZOOM_STEPS.length - 1,
+    Math.max(0, nearestStepIndex(viewport.zoom) + direction),
+  );
+  return zoomAt(viewport, ZOOM_STEPS[index]!, point);
 }
 
 export function fitViewport(
@@ -73,7 +104,8 @@ export function fitViewport(
   const availableWidth = Math.max(1, viewport.cssWidth - edges.left - edges.right);
   const availableHeight = Math.max(1, viewport.cssHeight - edges.top - edges.bottom);
   const rawZoom = Math.min(availableWidth / documentWidth, availableHeight / documentHeight);
-  const zoom = clampZoom(rawZoom >= 1 ? Math.floor(rawZoom) : 2 ** Math.floor(Math.log2(rawZoom)));
+  let zoom = MIN_ZOOM;
+  for (const step of ZOOM_STEPS) if (step <= rawZoom) zoom = step;
   return {
     ...viewport,
     zoom,

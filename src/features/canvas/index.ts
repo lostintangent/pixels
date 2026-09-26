@@ -8,9 +8,11 @@ export type {
 export {
   MIN_ZOOM,
   MAX_ZOOM,
+  ZOOM_STEPS,
   clampZoom,
   snapZoom,
   stepZoom,
+  settleZoom,
   zoomToStep,
   screenToDocument,
   documentToScreen,
@@ -18,3 +20,5 @@ export {
   fitViewport,
 } from './core/viewport';
 export { createCanvasRenderer } from './render/renderer';
+export { CanvasSurface } from './ui/CanvasSurface';
+export type { CanvasInput, CanvasPointerSample, CanvasSurfaceProps } from './ui/CanvasSurface';
