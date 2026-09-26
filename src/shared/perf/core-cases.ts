@@ -6,6 +6,17 @@ import type { PerfCase } from './harness';
 const INK = packRgba(18, 111, 202);
 const WALL = packRgba(25, 25, 25);
 
+function paintStroke(
+  document: ReturnType<typeof createBitmapDocument>,
+  history: ReturnType<typeof createDocumentHistory>,
+  size: number,
+): void {
+  const stroke = beginStroke(document, { color: INK, size, pixelPerfect: size === 1 }, history);
+  stroke.extend({ x: 10, y: 300 });
+  for (let x = 11; x <= 1010; x++) stroke.extend({ x, y: 300 + ((x >> 3) & 1) });
+  stroke.end();
+}
+
 function strokeCase(size: number, targetP95Ms: number): PerfCase {
   const document = createBitmapDocument(`stroke-${size}`, 1024, 1024);
   const history = createDocumentHistory();
@@ -19,10 +30,7 @@ function strokeCase(size: number, targetP95Ms: number): PerfCase {
       history.clear();
     },
     run() {
-      const stroke = beginStroke(document, { color: INK, size, pixelPerfect: size === 1 }, history);
-      stroke.extend({ x: 10, y: 300 });
-      for (let x = 11; x <= 1010; x++) stroke.extend({ x, y: 300 + ((x >> 3) & 1) });
-      stroke.end();
+      paintStroke(document, history, size);
     },
   };
 }
@@ -72,47 +80,76 @@ function mazeFillCase(): PerfCase {
   };
 }
 
-function undoRedoCase(side: number, targetP95Ms: number): PerfCase {
-  const document = createBitmapDocument(`undo-${side}`, side, side);
+function tileStrokeUndoRedoCase(): PerfCase {
+  const document = createBitmapDocument('undo-stroke', 1024, 1024);
   const history = createDocumentHistory();
   return {
-    name: `undo + redo full fill ${side}²`,
-    targetP95Ms,
-    samples: side === 4096 ? 50 : 100,
-    batchSize: 1000,
+    name: 'undo + redo 16px stroke tiles 1024²',
+    targetP95Ms: 0.18,
+    samples: 100,
     prepare() {
       history.clear();
       document.pixels.fill(0);
-      floodFill(document, { at: { x: 0, y: 0 }, color: INK }, history);
+      paintStroke(document, history, 16);
+      if (history.usedBytes <= 0 || history.usedBytes >= document.pixels.byteLength)
+        throw new Error('Stroke fixture must use tile history');
     },
     reset() {},
     run() {
       history.undo(document);
       history.redo(document);
-      return document.pixels[0] === INK ? 1 : 0;
     },
   };
 }
 
-function selectionMoveCase(): PerfCase {
-  const document = createBitmapDocument('selection', 1024, 1024);
+function tileFillUndoRedoCase(): PerfCase {
+  const side = 4096;
+  const patch = 2048;
+  const document = createBitmapDocument('undo-fill', side, side);
   const history = createDocumentHistory();
-  const selection = beginSelection(document, history);
-  let x = 0;
+  const workspace = new FillWorkspace();
   return {
-    name: 'selection move 512², one step',
-    targetP95Ms: 0.000055,
-    samples: 200,
-    batchSize: 1000,
+    name: 'undo + redo 2048² tile fill on 4096²',
+    targetP95Ms: 13.5,
+    samples: 30,
     prepare() {
-      if (selection.floating) selection.cancel();
-      selection.lift({ x: 0, y: 0, width: 512, height: 512 });
+      history.clear();
+      document.pixels.fill(WALL);
+      for (let y = 0; y < patch; y++) document.pixels.fill(0, y * side, y * side + patch);
+      floodFill(document, { at: { x: 0, y: 0 }, color: INK }, history, workspace);
+      if (history.usedBytes !== patch * patch * 4)
+        throw new Error('Fill fixture must use tile history');
     },
     reset() {},
     run() {
-      x ^= 1;
-      selection.move({ x, y: 0 });
-      return selection.floating!.bounds.x;
+      history.undo(document);
+      history.redo(document);
+    },
+  };
+}
+
+function selectionGestureCase(): PerfCase {
+  const document = createBitmapDocument('selection', 1024, 1024);
+  const history = createDocumentHistory();
+  return {
+    name: 'selection lift + move + drop 512²',
+    targetP95Ms: 0.95,
+    samples: 100,
+    prepare() {
+      history.clear();
+      document.pixels.fill(0);
+      for (let y = 0; y < 512; y++)
+        document.pixels.fill(INK, y * document.width, y * document.width + 512);
+    },
+    reset() {
+      if (history.canUndo) history.undo(document);
+      history.clear();
+    },
+    run() {
+      const selection = beginSelection(document, history);
+      selection.lift({ x: 0, y: 0, width: 512, height: 512 });
+      selection.move({ x: 1, y: 0 });
+      selection.commit();
     },
   };
 }
@@ -123,7 +160,7 @@ export const corePerfCases: PerfCase[] = [
   uniformFillCase(1024, 1.8),
   mazeFillCase(),
   uniformFillCase(4096, 25.8),
-  undoRedoCase(1024, 0.00015),
-  undoRedoCase(4096, 0.00015),
-  selectionMoveCase(),
+  tileStrokeUndoRedoCase(),
+  tileFillUndoRedoCase(),
+  selectionGestureCase(),
 ];
