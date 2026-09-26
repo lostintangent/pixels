@@ -35,26 +35,12 @@ async function canvasBox(page: Page) {
   return box;
 }
 
-async function pixelAt(page: Page, x: number, y: number): Promise<number[]> {
-  return page.evaluate(
-    ([screenX, screenY]) => {
-      const canvas = document.querySelector<HTMLCanvasElement>(
-        '[role="application"][aria-label="Canvas"] canvas',
-      )!;
-      const box = canvas.getBoundingClientRect();
-      return [
-        ...canvas
-          .getContext('2d')!
-          .getImageData(
-            Math.floor((screenX - box.left) * devicePixelRatio),
-            Math.floor((screenY - box.top) * devicePixelRatio),
-            1,
-            1,
-          ).data,
-      ];
-    },
-    [x, y] as const,
-  );
+async function visualAt(page: Page, x: number, y: number): Promise<Buffer> {
+  return page.screenshot({
+    clip: { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 },
+    animations: 'disabled',
+    scale: 'device',
+  });
 }
 
 async function prepareDocument(
@@ -108,7 +94,7 @@ async function prepareDocument(
   await afterPaint(page);
 }
 
-async function drawStroke(context: BrowserContext, page: Page, profile: Profile): Promise<void> {
+async function strokePath(page: Page, profile: Profile) {
   const box = await canvasBox(page);
   const centerX = box.x + box.width / 2;
   const centerY = box.y + box.height / 2;
@@ -118,9 +104,16 @@ async function drawStroke(context: BrowserContext, page: Page, profile: Profile)
     x: centerX - amplitudeX + (2 * amplitudeX * sample) / 119,
     y: centerY - amplitudeY + (2 * amplitudeY * sample) / 119,
   });
-  const first = point(0);
-  const before = await pixelAt(page, first.x, first.y);
-  if (before[3] === 0) throw new Error(`${profile.name} stroke starts outside the 8× document`);
+  return { first: point(0), point };
+}
+
+async function drawStroke(
+  context: BrowserContext,
+  page: Page,
+  profile: Profile,
+  path: Awaited<ReturnType<typeof strokePath>>,
+): Promise<void> {
+  const { first, point } = path;
   if (profile.name === 'phone') {
     const session = await context.newCDPSession(page);
     try {
@@ -150,13 +143,6 @@ async function drawStroke(context: BrowserContext, page: Page, profile: Profile)
     await page.mouse.up();
   }
   await afterPaint(page);
-  const after = await pixelAt(page, first.x, first.y);
-  if (after.every((channel, index) => channel === before[index])) {
-    const center = await pixelAt(page, centerX, centerY);
-    throw new Error(
-      `${profile.name} stroke did not land pixels at ${first.x.toFixed(1)},${first.y.toFixed(1)}: ${before.join(',')} -> ${after.join(',')}; center ${center.join(',')}`,
-    );
-  }
 }
 
 async function panZoom(context: BrowserContext, page: Page, profile: Profile): Promise<void> {
@@ -258,17 +244,30 @@ export async function runEditorInput(
         for (const scenario of ['stroke', 'pan'] as const) {
           const blocks: TraceSummary[] = [];
           for (let block = 0; block < 3; block++) {
-            blocks.push(
-              await captureTrace(context, page, () =>
-                scenario === 'stroke'
-                  ? drawStroke(context, page, profile)
-                  : panZoom(context, page, profile),
-              ),
-            );
             if (scenario === 'stroke') {
+              const path = await strokePath(page, profile);
+              blocks.push(
+                await captureTrace(context, page, () => drawStroke(context, page, profile, path)),
+              );
               await page.keyboard.press('Meta+z');
               await afterPaint(page);
+            } else {
+              blocks.push(await captureTrace(context, page, () => panZoom(context, page, profile)));
             }
+          }
+          if (scenario === 'stroke') {
+            // Verify the same real input path after tracing. Screenshot capture
+            // never changes the app's 2D canvas readback mode during a block.
+            const path = await strokePath(page, profile);
+            const before = await visualAt(page, path.first.x, path.first.y);
+            await drawStroke(context, page, profile, path);
+            const after = await visualAt(page, path.first.x, path.first.y);
+            if (after.equals(before))
+              throw new Error(
+                `${profile.name} stroke did not change the displayed pixels at ${path.first.x.toFixed(1)},${path.first.y.toFixed(1)}`,
+              );
+            await page.keyboard.press('Meta+z');
+            await afterPaint(page);
           }
           if (errors.length) throw new Error(errors.join(', '));
           const { passed, details } = summarizeBlocks(blocks, scenario === 'stroke' ? 4 : 3);

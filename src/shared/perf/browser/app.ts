@@ -1,11 +1,12 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import { loadavg } from 'node:os';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Browser, Page } from 'playwright';
 import { runEditorInput } from './editor';
 
 const root = resolve(import.meta.dirname, '../../../../');
-const output = resolve(root, 'dist');
 const loadBudgetMs = 500;
 const initialJsBudgetKiB = 170;
 const initialCssBudgetKiB = 40;
@@ -20,12 +21,15 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)]!;
 }
 
-async function buildApp(): Promise<void> {
-  const process = Bun.spawn(['bunx', 'vp', 'build', '--manifest'], {
-    cwd: root,
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
+async function buildApp(output: string): Promise<void> {
+  const process = Bun.spawn(
+    ['bunx', 'vp', 'build', '--manifest', '--outDir', output, '--emptyOutDir'],
+    {
+      cwd: root,
+      stdout: 'inherit',
+      stderr: 'inherit',
+    },
+  );
   if ((await process.exited) !== 0) throw new Error('Production app build failed');
 }
 
@@ -51,7 +55,7 @@ async function waitForPreview(port: number): Promise<void> {
   throw new Error('vp preview did not start within 5 seconds');
 }
 
-async function gzipAssets(paths: string[]): Promise<number> {
+async function gzipAssets(output: string, paths: string[]): Promise<number> {
   let bytes = 0;
   for (const path of new Set(paths)) {
     const filename = resolve(output, path);
@@ -72,7 +76,7 @@ interface ManifestChunk {
   isEntry?: boolean;
 }
 
-async function initialAssets(): Promise<{ js: string[]; css: string[] }> {
+async function initialAssets(output: string): Promise<{ js: string[]; css: string[] }> {
   const manifest = (await Bun.file(resolve(output, '.vite/manifest.json')).json()) as Record<
     string,
     ManifestChunk
@@ -122,47 +126,35 @@ async function loadAndStroke(page: Page, url: string): Promise<LoadResult> {
   if (!box) throw new Error('Canvas has no bounding box');
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
-  const before = await page.evaluate(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>(
-      '[role="application"][aria-label="Canvas"] canvas',
-    )!;
-    return [
-      ...canvas.getContext('2d')!.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data,
-    ];
-  });
+  const clip = { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 };
+  const before = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
   await page.mouse.move(x, y);
   await page.mouse.down();
-  await page.waitForFunction(
-    (prior) => {
-      const canvas = document.querySelector<HTMLCanvasElement>(
-        '[role="application"][aria-label="Canvas"] canvas',
-      )!;
-      const now = canvas
-        .getContext('2d')!
-        .getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data;
-      if (now.some((channel, index) => channel !== prior[index])) {
-        Object.assign(window, { __pixelsFirstStrokeAt: performance.now() });
-        return true;
-      }
-      return false;
-    },
-    before,
-    { timeout: 2_000 },
-  );
   await page.mouse.up();
+  await page.mouse.move(0, 0);
+  const deadline = Date.now() + 2_000;
+  while (true) {
+    const after = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+    if (!after.equals(before)) break;
+    if (Date.now() >= deadline)
+      throw new Error('First pointer stroke did not change displayed pixels');
+    await Bun.sleep(16);
+  }
+  // This timestamp is an upper bound that includes compositor capture latency.
+  const strokeAt = await page.evaluate(() => performance.now());
   if (errors.length) throw new Error(`App load error: ${errors.join(', ')}`);
-  return page.evaluate(() => {
+  return page.evaluate((ms) => {
     const resources = performance
       .getEntriesByType('resource')
       .filter((entry) =>
         new URL(entry.name).pathname.endsWith('.js'),
       ) as PerformanceResourceTiming[];
     return {
-      ms: (window as unknown as { __pixelsFirstStrokeAt: number }).__pixelsFirstStrokeAt,
+      ms,
       js: resources.map((entry) => new URL(entry.name).pathname),
       transferBytes: resources.reduce((sum, entry) => sum + entry.transferSize, 0),
     };
-  });
+  }, strokeAt);
 }
 
 export async function runAppPerf(
@@ -170,69 +162,93 @@ export async function runAppPerf(
   repeat: number,
   calibrate: boolean,
 ): Promise<boolean> {
-  await buildApp();
-  const port = await previewPort();
-  const preview = Bun.spawn(
-    ['bunx', 'vp', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
-    { cwd: root, stdout: 'ignore', stderr: 'inherit' },
-  );
+  const output = await mkdtemp(join(tmpdir(), 'pixels-app-perf-'));
   let failed = false;
   try {
-    await waitForPreview(port);
-    const assets = await initialAssets();
-    const initialJsKiB = (await gzipAssets(assets.js)) / 1024;
-    const initialCssKiB = (await gzipAssets(assets.css)) / 1024;
-    for (let run = 0; run < repeat; run++) {
-      const coldBlocks: number[] = [];
-      const warmBlocks: number[] = [];
-      const paths = new Set<string>();
-      let coldTransferBytes = 0;
-      let warmTransferBytes = 0;
-      for (let block = 0; block < 3; block++) {
-        const coldSamples: number[] = [];
-        const warmSamples: number[] = [];
-        for (let sample = 0; sample < 3; sample++) {
-          const context = await browser.newContext({
-            viewport: { width: 1440, height: 900 },
-            deviceScaleFactor: 2,
-            reducedMotion: 'reduce',
-          });
-          for (const cache of ['cold', 'warm'] as const) {
-            const page = await context.newPage();
-            const result = await loadAndStroke(
-              page,
-              `http://127.0.0.1:${port}/d/load-${run}-${block}-${sample}-${cache}`,
-            );
-            (cache === 'cold' ? coldSamples : warmSamples).push(result.ms);
-            if (cache === 'cold') coldTransferBytes += result.transferBytes;
-            else warmTransferBytes += result.transferBytes;
-            for (const path of result.js) paths.add(path);
-            await page.close();
-          }
-          await context.close();
-        }
-        coldBlocks.push(p95(coldSamples));
-        warmBlocks.push(p95(warmSamples));
+    await buildApp(output);
+    const port = await previewPort();
+    const preview = Bun.spawn(
+      [
+        'bunx',
+        'vp',
+        'preview',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(port),
+        '--strictPort',
+        '--outDir',
+        output,
+      ],
+      { cwd: root, stdout: 'ignore', stderr: 'inherit' },
+    );
+    try {
+      await waitForPreview(port);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      // The server's first navigation can include one-time file and route setup.
+      const warmup = await browser.newContext();
+      try {
+        const page = await warmup.newPage();
+        await page.goto(`${baseUrl}/`, { waitUntil: 'load' });
+      } finally {
+        await warmup.close();
       }
-      const coldP95 = median(coldBlocks);
-      const warmP95 = median(warmBlocks);
-      const passed =
-        coldP95 < loadBudgetMs &&
-        warmP95 < loadBudgetMs &&
-        initialJsKiB <= initialJsBudgetKiB &&
-        initialCssKiB <= initialCssBudgetKiB;
-      if (!passed) failed = true;
-      console.log(
-        `${passed ? 'PASS' : 'FAIL'} real editor load ${run + 1}/${repeat}: cold first stroke p95 ${coldP95.toFixed(1)} ms [${coldBlocks.map((value) => value.toFixed(1)).join(', ')}], warm ${warmP95.toFixed(1)} ms [${warmBlocks.map((value) => value.toFixed(1)).join(', ')}], initial JS ${initialJsKiB.toFixed(1)} KiB gzip (${assets.js.length} static file(s)), CSS ${initialCssKiB.toFixed(1)} KiB gzip, ${paths.size} JS file(s) fetched by stroke, JS transfer cold ${(coldTransferBytes / 9 / 1024).toFixed(1)} KiB / warm ${(warmTransferBytes / 9 / 1024).toFixed(1)} KiB, targets p95 < ${loadBudgetMs} ms, JS ≤ ${initialJsBudgetKiB} KiB, CSS ≤ ${initialCssBudgetKiB} KiB, loadavg ${loadavg()
-          .map((value) => value.toFixed(2))
-          .join('/')}`,
-      );
+      const assets = await initialAssets(output);
+      const initialJsKiB = (await gzipAssets(output, assets.js)) / 1024;
+      const initialCssKiB = (await gzipAssets(output, assets.css)) / 1024;
+      for (let run = 0; run < repeat; run++) {
+        const coldBlocks: number[] = [];
+        const warmBlocks: number[] = [];
+        const paths = new Set<string>();
+        let coldTransferBytes = 0;
+        let warmTransferBytes = 0;
+        for (let block = 0; block < 3; block++) {
+          const coldSamples: number[] = [];
+          const warmSamples: number[] = [];
+          for (let sample = 0; sample < 3; sample++) {
+            const context = await browser.newContext({
+              viewport: { width: 1440, height: 900 },
+              deviceScaleFactor: 2,
+              reducedMotion: 'reduce',
+            });
+            for (const cache of ['cold', 'warm'] as const) {
+              const page = await context.newPage();
+              const result = await loadAndStroke(
+                page,
+                `http://127.0.0.1:${port}/d/load-${run}-${block}-${sample}-${cache}`,
+              );
+              (cache === 'cold' ? coldSamples : warmSamples).push(result.ms);
+              if (cache === 'cold') coldTransferBytes += result.transferBytes;
+              else warmTransferBytes += result.transferBytes;
+              for (const path of result.js) paths.add(path);
+              await page.close();
+            }
+            await context.close();
+          }
+          coldBlocks.push(p95(coldSamples));
+          warmBlocks.push(p95(warmSamples));
+        }
+        const coldP95 = median(coldBlocks);
+        const warmP95 = median(warmBlocks);
+        const passed =
+          coldP95 < loadBudgetMs &&
+          warmP95 < loadBudgetMs &&
+          initialJsKiB <= initialJsBudgetKiB &&
+          initialCssKiB <= initialCssBudgetKiB;
+        if (!passed) failed = true;
+        console.log(
+          `${passed ? 'PASS' : 'FAIL'} real editor load ${run + 1}/${repeat}: cold first stroke p95 ${coldP95.toFixed(1)} ms [${coldBlocks.map((value) => value.toFixed(1)).join(', ')}], warm ${warmP95.toFixed(1)} ms [${warmBlocks.map((value) => value.toFixed(1)).join(', ')}], initial JS ${initialJsKiB.toFixed(1)} KiB gzip (${assets.js.length} static file(s)), CSS ${initialCssKiB.toFixed(1)} KiB gzip, ${paths.size} JS file(s) fetched by stroke, JS transfer cold ${(coldTransferBytes / 9 / 1024).toFixed(1)} KiB / warm ${(warmTransferBytes / 9 / 1024).toFixed(1)} KiB, targets p95 < ${loadBudgetMs} ms, JS ≤ ${initialJsBudgetKiB} KiB, CSS ≤ ${initialCssBudgetKiB} KiB, loadavg ${loadavg()
+            .map((value) => value.toFixed(2))
+            .join('/')}`,
+        );
+      }
+      if (!(await runEditorInput(browser, baseUrl, repeat, calibrate))) failed = true;
+    } finally {
+      preview.kill();
+      await preview.exited;
     }
-    if (!(await runEditorInput(browser, `http://127.0.0.1:${port}`, repeat, calibrate)))
-      failed = true;
   } finally {
-    preview.kill();
-    await preview.exited;
+    await rm(output, { recursive: true, force: true });
   }
   return !failed || calibrate;
 }

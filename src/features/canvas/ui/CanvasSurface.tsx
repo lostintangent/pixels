@@ -88,14 +88,26 @@ export function CanvasSurface({
       overlay.subscribe((next) => renderer.setOverlay(next)),
     ];
 
+    const pointers = new Map<number, ScreenPoint>();
+    let activeOrigin: { left: number; top: number } | null = null;
+    const refreshOrigin = () => {
+      const { left, top } = host.getBoundingClientRect();
+      activeOrigin = { left, top };
+    };
+    const refreshActiveOrigin = () => {
+      if (pointers.size > 0) refreshOrigin();
+    };
     const resize = new ResizeObserver(([entry]) => {
       if (!entry) return;
       const { width, height } = entry.contentRect;
       latest.current.input.resize(Math.round(width), Math.round(height), devicePixelRatio || 1);
+      refreshActiveOrigin();
     });
     resize.observe(host);
+    window.addEventListener('scroll', refreshActiveOrigin, true);
+    window.visualViewport?.addEventListener('scroll', refreshActiveOrigin);
+    window.visualViewport?.addEventListener('resize', refreshActiveOrigin);
 
-    const pointers = new Map<number, ScreenPoint>();
     let mode: Mode = { kind: 'idle' };
     let penSeen = false;
     let spaceHeld = false;
@@ -106,7 +118,7 @@ export function CanvasSurface({
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
     const local = (event: { clientX: number; clientY: number }): ScreenPoint => {
-      const rect = host.getBoundingClientRect();
+      const rect = activeOrigin ?? host.getBoundingClientRect();
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
     const sample = (event: PointerEvent): CanvasPointerSample => ({
@@ -198,6 +210,7 @@ export function CanvasSurface({
 
     function onPointerDown(event: PointerEvent): void {
       if (event.button === 2) return;
+      if (pointers.size === 0) refreshOrigin();
       host.setPointerCapture(event.pointerId);
       host.focus({ preventScroll: true });
       pointers.set(event.pointerId, local(event));
@@ -266,6 +279,7 @@ export function CanvasSurface({
 
     function onPointerUp(event: PointerEvent): void {
       if (!pointers.delete(event.pointerId)) return;
+      if (pointers.size === 0) activeOrigin = null;
       if (mode.kind === 'pinch') {
         if (pointers.size > 0) {
           // Lifting one finger ends the pinch, so the last finger can't start a stroke.
@@ -384,6 +398,9 @@ export function CanvasSurface({
     return () => {
       stopSettle();
       resize.disconnect();
+      window.removeEventListener('scroll', refreshActiveOrigin, true);
+      window.visualViewport?.removeEventListener('scroll', refreshActiveOrigin);
+      window.visualViewport?.removeEventListener('resize', refreshActiveOrigin);
       for (const subscription of subscriptions) subscription.unsubscribe();
       renderer.dispose();
       host.removeEventListener('pointerdown', onPointerDown);
