@@ -6,7 +6,7 @@ import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { createBitmapDocument } from '../../../document';
 import type { BitmapDocument, PackedColor } from '../../../document';
-import { exportPng, ImportError, importPng, saveDocument } from '../../../files';
+import { createDocumentId, exportPng, ImportError, importPng, saveDocument } from '../../../files';
 import type { DocumentId, DocumentStore } from '../../../files';
 import { TRANSPARENT } from '../../../palette';
 import type { EditorSession, Layout } from '../../session/session';
@@ -62,7 +62,7 @@ export function FileActionsProvider({
       show(document.id);
     };
     const decode = (file: Blob, name?: string) =>
-      importPng(file, crypto.randomUUID(), name ?? nameOf(file));
+      importPng(file, createDocumentId(), name ?? nameOf(file));
 
     const openFile = (file: Blob, name?: string) => {
       decode(file, name)
@@ -91,7 +91,7 @@ export function FileActionsProvider({
     return {
       store,
       newCanvas(width, height, background) {
-        const document = createBitmapDocument(crypto.randomUUID(), width, height);
+        const document = createBitmapDocument(createDocumentId(), width, height);
         if (background !== TRANSPARENT) document.pixels.fill(background);
         keep(document).catch((error: unknown) => fail(error, 'The new canvas couldn’t be saved.'));
       },

@@ -27,7 +27,7 @@
     "react-dom": "^19.3.0"
   },
   "scripts": {
-    "dev": "vp dev --host 0.0.0.0",
+    "dev": "vp dev",
     "build": "vp build",
     "check": "vp check",
     "lint": "vp lint",
@@ -41,5 +41,8 @@
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0"
+  },
+  "patchedDependencies": {
+    "@stylexjs/babel-plugin@0.19.1": "patches/@stylexjs%2Fbabel-plugin@0.19.1.patch"
   }
 }

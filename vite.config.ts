@@ -5,6 +5,8 @@ import { Features } from 'lightningcss';
 import { astryxMessages } from './src/shared/build/astryxMessages';
 
 export default defineConfig({
+  // Reachable from other devices over Tailscale. `vp preview` inherits both settings.
+  server: { host: true, allowedHosts: ['.ts.net'] },
   lint: {
     plugins: ['oxc', 'typescript', 'unicorn'],
     categories: { correctness: 'warn' },

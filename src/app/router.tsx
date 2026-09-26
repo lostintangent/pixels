@@ -6,7 +6,12 @@ import {
   redirect,
 } from '@tanstack/react-router';
 import { EditorShell } from '../features/editor';
-import { loadDocument, loadMostRecentOrNew, type DocumentStore } from '../features/files';
+import {
+  createDocumentId,
+  loadDocument,
+  loadMostRecentOrNew,
+  type DocumentStore,
+} from '../features/files';
 import { createBitmapDocument, type BitmapDocument } from '../features/document';
 
 interface RouterContext {
@@ -19,9 +24,7 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   loader: async ({ context }) => {
-    const { document } = await loadMostRecentOrNew(context.documentStore, () =>
-      crypto.randomUUID(),
-    );
+    const { document } = await loadMostRecentOrNew(context.documentStore, createDocumentId);
     throw redirect({ to: '/d/$docId', params: { docId: document.id }, replace: true });
   },
 });

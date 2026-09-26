@@ -14,6 +14,7 @@ export type {
   TileSnapshot,
 } from './core/contracts';
 export { ImportError, TILE_SIZE } from './core/contracts';
+export { createDocumentId } from './core/documentId';
 
 export { importPng } from './import';
 export { exportPng } from './export';

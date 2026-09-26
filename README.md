@@ -11,6 +11,8 @@ bun run dev
 
 Open the URL printed by Vite (usually <http://localhost:5173>). Both `/` and `/d/$docId` are routed by TanStack Router.
 
+The dev and preview servers listen on all interfaces and accept any `*.ts.net` host, so another device on your tailnet can open `http://<machine>.<tailnet>.ts.net:5173`. Over plain HTTP the phone share sheet is unavailable, so Export downloads the PNG instead.
+
 ## Quality gates
 
 ```sh
