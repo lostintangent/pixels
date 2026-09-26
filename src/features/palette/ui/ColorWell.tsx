@@ -11,7 +11,10 @@ export interface ColorWellProps {
   secondary: PackedColor;
   onEdit: (slot: SwatchSlot) => void;
   onSwap: () => void;
-  /** 44px for touch layouts. */
+  /**
+   * `lg` is one 44px touch target that edits the primary. Three targets can't share 44px, so
+   * the sheet it opens carries the slot choice and swap.
+   */
   size?: 'md' | 'lg';
   ref?: Ref<HTMLDivElement>;
 }
@@ -25,43 +28,57 @@ export function ColorWell({
   size = 'md',
   ref,
 }: ColorWellProps) {
-  const large = size === 'lg';
+  if (size === 'lg') {
+    return (
+      <div ref={ref} {...stylex.props(styles.well, styles.wellLarge)}>
+        <button
+          type="button"
+          aria-label={`Colors, primary ${formatColor(primary)}, secondary ${formatColor(secondary)}`}
+          onClick={() => onEdit('primary')}
+          {...stylex.props(styles.target)}
+        >
+          <span
+            {...stylex.props(
+              styles.chip,
+              styles.chipLarge,
+              styles.secondary,
+              styles.fill(toCss(secondary)),
+            )}
+          />
+          <span
+            {...stylex.props(
+              styles.chip,
+              styles.chipLarge,
+              styles.primary,
+              styles.fill(toCss(primary)),
+            )}
+          />
+        </button>
+      </div>
+    );
+  }
   return (
-    <div
-      ref={ref}
-      onPointerEnter={preloadColorPicker}
-      {...stylex.props(styles.well, large && styles.wellLarge)}
-    >
+    <div ref={ref} onPointerEnter={preloadColorPicker} {...stylex.props(styles.well)}>
       <button
         type="button"
         aria-label={`Secondary color, ${formatColor(secondary)}`}
         onClick={() => onEdit('secondary')}
-        {...stylex.props(
-          styles.chip,
-          large && styles.chipLarge,
-          styles.secondary,
-          styles.fill(toCss(secondary)),
-        )}
+        {...stylex.props(styles.chip, styles.secondary, styles.fill(toCss(secondary)))}
       />
       <button
         type="button"
         aria-label={`Primary color, ${formatColor(primary)}`}
         onClick={() => onEdit('primary')}
-        {...stylex.props(
-          styles.chip,
-          large && styles.chipLarge,
-          styles.primary,
-          styles.fill(toCss(primary)),
-        )}
+        {...stylex.props(styles.chip, styles.primary, styles.fill(toCss(primary)))}
       />
       <button
         type="button"
         aria-label="Swap colors"
         title="Swap colors  ·  X"
         onClick={onSwap}
-        {...stylex.props(styles.swap, large && styles.swapLarge)}
+        {...stylex.props(styles.swap)}
       >
-        <SwapGlyph size={large ? 12 : 10} />
+        <SwapGlyph size={10} />
       </button>
     </div>
   );
@@ -88,6 +105,25 @@ const chipFocus = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4
 const styles = stylex.create({
   well: { position: 'relative', width: 36, height: 36, flexShrink: 0, marginBlock: 2 },
   wellLarge: { width: 44, height: 44, marginBlock: 0 },
+  // The whole well is the button. Chips draw inside it and press together.
+  target: {
+    position: 'absolute',
+    inset: 0,
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: 10,
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    outline: 'none',
+    WebkitTapHighlightColor: 'transparent',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colorVars['--color-text-primary']}`,
+    },
+    transform: { default: null, ':active': 'scale(0.94)' },
+    transitionProperty: 'transform',
+    transitionDuration: durationVars['--duration-fast'],
+  },
   chip: {
     position: 'absolute',
     width: 20,
@@ -128,6 +164,4 @@ const styles = stylex.create({
       ':focus-visible': `2px solid ${colorVars['--color-text-primary']}`,
     },
   },
-  // Expand the hit area for fingers without growing the glyph.
-  swapLarge: { width: 16, height: 16 },
 });

@@ -264,11 +264,11 @@ function DesktopTools({ fade }: { fade: Fade }) {
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
   const [editing, setEditing] = useState<ColorSlot | null>(null);
-  const well = useRef<HTMLDivElement>(null);
+  const rail = useRef<HTMLElement>(null);
 
   return (
     <>
-      <Island as="nav" axis="y" aria-label="Tools" xstyle={[styles.rail, fade]}>
+      <Island ref={rail} as="nav" axis="y" aria-label="Tools" xstyle={[styles.rail, fade]}>
         <ToolRail
           tool={tool}
           onSelect={(next) => session.run({ type: 'tool', tool: next })}
@@ -277,7 +277,6 @@ function DesktopTools({ fade }: { fade: Fade }) {
         />
         <IslandDivider axis="y" />
         <ColorWell
-          ref={well}
           primary={primary}
           secondary={secondary}
           onEdit={(slot) => setEditing((current) => (current === slot ? null : slot))}
@@ -285,7 +284,7 @@ function DesktopTools({ fade }: { fade: Fade }) {
         />
       </Island>
       <ColorPickerPopover
-        anchorRef={well}
+        anchorRef={rail}
         isOpen={editing !== null}
         onOpenChange={(open) => {
           if (!open) setEditing(null);
@@ -305,9 +304,11 @@ function DesktopColors({ fade }: { fade: Fade }) {
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
   const recent = useEditorState((state) => state.recent);
+  const panel = useRef<HTMLElement>(null);
   return (
-    <Island as="aside" aria-label="Colors" xstyle={[styles.panel, fade]}>
+    <Island ref={panel} as="aside" aria-label="Colors" xstyle={[styles.panel, fade]}>
       <ColorPanel
+        anchorRef={panel}
         palette={DEFAULT_PALETTE}
         recent={recent}
         recentSlots={RECENT_LIMIT}

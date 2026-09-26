@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import type { PackedColor } from '../../document';
 import { ColorPickerPopover, preloadColorPicker } from './deferred';
 import { Swatches } from './Swatches';
@@ -13,6 +14,8 @@ export interface ColorPanelProps {
   primary: PackedColor;
   secondary: PackedColor;
   onChoose: (color: PackedColor, slot: SwatchSlot) => void;
+  /** What the custom picker opens beside. Defaults to the panel itself. */
+  anchorRef?: RefObject<HTMLElement | null>;
 }
 
 /** Desktop color panel: palette and recents always visible, the picker on demand. */
@@ -23,6 +26,7 @@ export function ColorPanel({
   primary,
   secondary,
   onChoose,
+  anchorRef,
 }: ColorPanelProps) {
   const [picking, setPicking] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
@@ -60,7 +64,7 @@ export function ColorPanel({
         onChoose={onChoose}
       />
       <ColorPickerPopover
-        anchorRef={anchor}
+        anchorRef={anchorRef ?? anchor}
         isOpen={picking}
         onOpenChange={setPicking}
         title="Primary color"

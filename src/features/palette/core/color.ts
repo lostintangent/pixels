@@ -48,6 +48,25 @@ export function parseHex(input: string): PackedColor | null {
   return packRgba((value >> 16) & 255, (value >> 8) & 255, value & 255);
 }
 
+/**
+ * What a hex field's text means while someone types. Six digits can only be one color, so they
+ * apply live. Three digits are also the start of six, so they wait for Enter or blur. A prefix of
+ * a valid entry is still in progress, not an error.
+ */
+export type HexDraft =
+  | { kind: 'complete'; color: PackedColor }
+  | { kind: 'short'; color: PackedColor }
+  | { kind: 'partial' }
+  | { kind: 'invalid' };
+
+export function readHexDraft(input: string): HexDraft {
+  const digits = input.trim().replace(/^#/, '');
+  if (!/^[0-9a-f]{0,6}$/i.test(digits)) return { kind: 'invalid' };
+  const color = parseHex(digits);
+  if (color === null) return { kind: 'partial' };
+  return digits.length === 6 ? { kind: 'complete', color } : { kind: 'short', color };
+}
+
 export function toHsv(color: PackedColor): Hsv {
   const r = red(color) / 255;
   const g = green(color) / 255;

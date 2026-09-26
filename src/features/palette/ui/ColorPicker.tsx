@@ -4,7 +4,7 @@ import { colorVars, radiusVars, spacingVars } from '@astryxdesign/core/theme/tok
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { PackedColor } from '../../document';
-import { formatColor, fromHsv, parseHex, toCss, toHsvKeepingHue } from '../core/color';
+import { formatColor, fromHsv, readHexDraft, toCss, toHsvKeepingHue } from '../core/color';
 import type { Hsv } from '../core/color';
 
 export interface ColorPickerProps {
@@ -16,15 +16,21 @@ export interface ColorPickerProps {
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-/** Calls `onPoint` with normalized coordinates for a pointer drag, including the first press. */
-function dragHandler(onPoint: (x: number, y: number) => void) {
+// The hue thumb stays inside its rail, so its travel is inset by its radius on both ends.
+const HUE_THUMB = 16;
+
+/**
+ * Calls `onPoint` with normalized coordinates for a pointer drag, including the first press.
+ * `inset` shrinks the horizontal travel to match a thumb that stays inside its track.
+ */
+function dragHandler(onPoint: (x: number, y: number) => void, inset = 0) {
   return (event: ReactPointerEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     const rect = element.getBoundingClientRect();
     element.setPointerCapture(event.pointerId);
     const move = (next: PointerEvent | ReactPointerEvent) =>
       onPoint(
-        clamp01((next.clientX - rect.left) / rect.width),
+        clamp01((next.clientX - rect.left - inset) / (rect.width - inset * 2)),
         clamp01((next.clientY - rect.top) / rect.height),
       );
     move(event);
@@ -63,7 +69,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
 
   const { h, s, v } = hsv;
   const onField = dragHandler((x, y) => commit({ h, s: x, v: 1 - y }));
-  const onHue = dragHandler((x) => commit({ h: Math.min(359.9, x * 360), s, v }));
+  const onHue = dragHandler((x) => commit({ h: Math.min(359.9, x * 360), s, v }), HUE_THUMB / 2);
 
   const onFieldKey = (event: KeyboardEvent) => {
     const step = event.shiftKey ? 0.1 : 0.01;
@@ -87,8 +93,21 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
     commit({ h: (h + delta + 360) % 360, s, v });
   };
 
-  const parsed = parseHex(draft);
-  const invalid = draft.trim().length > 0 && parsed === null && draft !== formatColor(color);
+  const apply = (next: PackedColor) => {
+    emitted.current = next;
+    setHsv((previous) => toHsvKeepingHue(next, previous));
+    onChange(next);
+  };
+  // Three digits and a same-color entry don't change `color`, so the draft is normalized here.
+  const commitDraft = () => {
+    const read = readHexDraft(draft);
+    if (read.kind === 'complete' || read.kind === 'short') {
+      if (read.color !== color) apply(read.color);
+      setDraft(formatColor(read.color));
+    } else if (read.kind === 'partial') setDraft(formatColor(color));
+  };
+
+  const invalid = draft !== formatColor(color) && readHexDraft(draft).kind === 'invalid';
   const css = toCss(color);
 
   return (
@@ -124,7 +143,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
           {...stylex.props(
             styles.thumb,
             styles.hueThumb,
-            styles.at(h / 360, 0.5),
+            styles.hueAt(h / 360),
             styles.fill(`hsl(${h} 100% 50%)`),
           )}
         />
@@ -138,14 +157,14 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
             value={draft}
             onChange={(value: string) => {
               setDraft(value);
-              const next = parseHex(value);
-              if (next !== null) {
-                emitted.current = next;
-                setHsv((previous) => toHsvKeepingHue(next, previous));
-                onChange(next);
-              }
+              const read = readHexDraft(value);
+              if (read.kind === 'complete' && read.color !== color) apply(read.color);
             }}
-            onBlur={() => setDraft(formatColor(color))}
+            onEnter={commitDraft}
+            onBlur={() => {
+              if (readHexDraft(draft).kind === 'invalid') setDraft(formatColor(color));
+              else commitDraft();
+            }}
             status={invalid ? { type: 'error', message: 'Use 3 or 6 hex digits' } : undefined}
             statusVariant="tooltip"
           />
@@ -195,7 +214,11 @@ const styles = stylex.create({
       [stylex.when.ancestor(':focus-visible')]: thumbFocus,
     },
   },
-  hueThumb: { width: 16, height: 16 },
+  hueThumb: { width: HUE_THUMB, height: HUE_THUMB },
+  hueAt: (x: number) => ({
+    left: `calc(${HUE_THUMB / 2}px + (100% - ${HUE_THUMB}px) * ${x})`,
+    top: '50%',
+  }),
   at: (x: number, y: number) => ({ left: `${x * 100}%`, top: `${y * 100}%` }),
   fill: (css: string) => ({ backgroundColor: css }),
   hexRow: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-2'] },

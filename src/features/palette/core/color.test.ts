@@ -4,6 +4,7 @@ import {
   formatColor,
   fromHsv,
   parseHex,
+  readHexDraft,
   toCss,
   toHex,
   toHsv,
@@ -22,6 +23,30 @@ describe('hex', () => {
   test('rejects anything else', () => {
     for (const input of ['', '#', '#12345', '#1234567', 'ggg', '#e8553dff'])
       expect(parseHex(input)).toBeNull();
+  });
+
+  test('a six digit draft applies live', () => {
+    expect(readHexDraft('#2c4cb0')).toEqual({
+      kind: 'complete',
+      color: packRgba(0x2c, 0x4c, 0xb0),
+    });
+    expect(readHexDraft('2C4CB0')).toEqual({ kind: 'complete', color: packRgba(0x2c, 0x4c, 0xb0) });
+  });
+
+  test('a three digit draft waits, since it may be the start of six', () => {
+    expect(readHexDraft('#2c4')).toEqual({ kind: 'short', color: packRgba(0x22, 0xcc, 0x44) });
+  });
+
+  test('a prefix of a valid entry is in progress, not an error', () => {
+    for (const input of ['', '#', '2', '#2c', '#2c4c', '2c4cb']) {
+      expect(readHexDraft(input)).toEqual({ kind: 'partial' });
+    }
+  });
+
+  test('non-hex characters and extra digits are errors', () => {
+    for (const input of ['#2g', 'red', '#2c4cb0f', '##2c4']) {
+      expect(readHexDraft(input)).toEqual({ kind: 'invalid' });
+    }
   });
 
   test('round-trips through hex and formats for display', () => {
