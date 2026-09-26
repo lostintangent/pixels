@@ -1,2 +1,27 @@
-/** File IO is intentionally outside the pixel hot path. */
-export type DocumentId = string;
+/** File IO is intentionally outside the pixel hot path: PNG import/export, IndexedDB persistence,
+ *  autosave, and the recent documents list. Everything here can run in `bun test` without a DOM. */
+export type {
+  AutosaveClock,
+  AutosaveOptions,
+  AutosaveStatus,
+  DocumentId,
+  DocumentSnapshot,
+  DocumentStore,
+  DocumentSummary,
+  ImportErrorReason,
+  LoadedDocument,
+  TileCoord,
+  TileSnapshot,
+} from './core/contracts';
+export { ImportError, TILE_SIZE } from './core/contracts';
+
+export { importPng } from './import';
+export { exportPng } from './export';
+
+export { createDocumentStore } from './storage/documentStore';
+
+export type { AttachAutosaveOptions, Autosave } from './runtime/autosaveRuntime';
+export { attachAutosave } from './runtime/autosaveRuntime';
+
+export type { RecentOrNewResult } from './loaders';
+export { loadDocument, loadMostRecentOrNew } from './loaders';
