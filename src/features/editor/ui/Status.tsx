@@ -30,8 +30,8 @@ export function StatusPill() {
       position.current.textContent = `${point.x}, ${point.y}`;
       const color = getPixel(session.bitmap.state, point);
       const visible = color !== null && alpha(color) > 0;
-      chip.current.style.opacity = visible ? '1' : '0';
-      if (visible) chip.current.style.backgroundColor = toCss(color);
+      // A transparent pixel keeps the chip as an empty ring, so the readout never shifts.
+      chip.current.style.backgroundColor = visible ? toCss(color) : 'transparent';
       hex.current.textContent = visible ? formatColor(color) : 'Transparent';
     };
     render();
@@ -106,8 +106,9 @@ const styles = stylex.create({
     fontSize: 13,
     fontVariantNumeric: 'tabular-nums',
     color: colorVars['--color-text-secondary'],
-    backgroundColor: `color-mix(in srgb, ${colorVars['--color-background-surface']} 72%, transparent)`,
-    backdropFilter: 'blur(12px)',
+    // Solid like the islands: a backdrop blur would re-filter the live canvas on every frame.
+    backgroundColor: colorVars['--color-background-surface'],
+    boxShadow: pixelVars.islandShadow,
     pointerEvents: 'none',
     contain: 'layout paint',
     opacity: { default: 1, ':is([data-idle=true])': 0 },
