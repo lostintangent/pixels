@@ -8,6 +8,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "fake-indexeddb": "^6.2.5",
+    "lightningcss": "^1.33.0",
     "typescript": "~5.9.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0",
     "vite-plus": "1.0.0-rc.0"
@@ -20,6 +21,7 @@
     "@tanstack/react-router": "^1.170.39",
     "@tanstack/react-store": "^0.11.1",
     "@tanstack/store": "^0.11.1",
+    "lucide-react": "^1.48.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

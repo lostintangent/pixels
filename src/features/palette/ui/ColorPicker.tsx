@@ -1,0 +1,210 @@
+import * as stylex from '@stylexjs/stylex';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { colorVars, radiusVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
+import { useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
+import type { PackedColor } from '../../document';
+import { formatColor, fromHsv, parseHex, toCss, toHsvKeepingHue } from '../core/color';
+import type { Hsv } from '../core/color';
+
+export interface ColorPickerProps {
+  color: PackedColor;
+  onChange: (color: PackedColor) => void;
+  /** Taller field for touch. */
+  size?: 'md' | 'lg';
+}
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+/** Calls `onPoint` with normalized coordinates for a pointer drag, including the first press. */
+function dragHandler(onPoint: (x: number, y: number) => void) {
+  return (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    const rect = element.getBoundingClientRect();
+    element.setPointerCapture(event.pointerId);
+    const move = (next: PointerEvent | ReactPointerEvent) =>
+      onPoint(
+        clamp01((next.clientX - rect.left) / rect.width),
+        clamp01((next.clientY - rect.top) / rect.height),
+      );
+    move(event);
+    const stop = () => {
+      element.removeEventListener('pointermove', move);
+      element.removeEventListener('pointerup', stop);
+      element.removeEventListener('pointercancel', stop);
+    };
+    element.addEventListener('pointermove', move);
+    element.addEventListener('pointerup', stop);
+    element.addEventListener('pointercancel', stop);
+  };
+}
+
+/** Saturation and value field, hue rail, and hex entry. */
+export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) {
+  // Hue lives here so dragging through greys and black doesn't lose it.
+  const [hsv, setHsv] = useState<Hsv>(() => toHsvKeepingHue(color, { h: 0, s: 0, v: 0 }));
+  const [draft, setDraft] = useState(() => formatColor(color));
+  const emitted = useRef(color);
+
+  useEffect(() => {
+    if (color !== emitted.current) {
+      setHsv((previous) => toHsvKeepingHue(color, previous));
+      emitted.current = color;
+    }
+    setDraft(formatColor(color));
+  }, [color]);
+
+  const commit = (next: Hsv) => {
+    setHsv(next);
+    const packed = fromHsv(next);
+    emitted.current = packed;
+    onChange(packed);
+  };
+
+  const { h, s, v } = hsv;
+  const onField = dragHandler((x, y) => commit({ h, s: x, v: 1 - y }));
+  const onHue = dragHandler((x) => commit({ h: Math.min(359.9, x * 360), s, v }));
+
+  const onFieldKey = (event: KeyboardEvent) => {
+    const step = event.shiftKey ? 0.1 : 0.01;
+    const delta = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, step],
+      ArrowDown: [0, -step],
+    }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    commit({ h, s: clamp01(s + delta[0]!), v: clamp01(v + delta[1]!) });
+  };
+  const onHueKey = (event: KeyboardEvent) => {
+    const step = event.shiftKey ? 10 : 1;
+    const delta = { ArrowLeft: -step, ArrowDown: -step, ArrowRight: step, ArrowUp: step }[
+      event.key
+    ];
+    if (delta === undefined) return;
+    event.preventDefault();
+    commit({ h: (h + delta + 360) % 360, s, v });
+  };
+
+  const parsed = parseHex(draft);
+  const invalid = draft.trim().length > 0 && parsed === null && draft !== formatColor(color);
+  const css = toCss(color);
+
+  return (
+    <div {...stylex.props(styles.picker)}>
+      <div
+        role="slider"
+        tabIndex={0}
+        aria-label="Saturation and brightness"
+        aria-valuetext={`Saturation ${Math.round(s * 100)}%, brightness ${Math.round(v * 100)}%`}
+        onPointerDown={onField}
+        onKeyDown={onFieldKey}
+        {...stylex.props(
+          stylex.defaultMarker(),
+          styles.field,
+          size === 'lg' && styles.fieldLarge,
+          styles.hueBase(h),
+        )}
+      >
+        <div {...stylex.props(styles.thumb, styles.at(s, 1 - v), styles.fill(css))} />
+      </div>
+      <div
+        role="slider"
+        tabIndex={0}
+        aria-label="Hue"
+        aria-valuemin={0}
+        aria-valuemax={360}
+        aria-valuenow={Math.round(h)}
+        onPointerDown={onHue}
+        onKeyDown={onHueKey}
+        {...stylex.props(stylex.defaultMarker(), styles.hue)}
+      >
+        <div
+          {...stylex.props(
+            styles.thumb,
+            styles.hueThumb,
+            styles.at(h / 360, 0.5),
+            styles.fill(`hsl(${h} 100% 50%)`),
+          )}
+        />
+      </div>
+      <div {...stylex.props(styles.hexRow)}>
+        <div aria-hidden {...stylex.props(styles.current, styles.fill(css))} />
+        <div {...stylex.props(styles.hexField)}>
+          <TextInput
+            label="Hex color"
+            isLabelHidden
+            value={draft}
+            onChange={(value: string) => {
+              setDraft(value);
+              const next = parseHex(value);
+              if (next !== null) {
+                emitted.current = next;
+                setHsv((previous) => toHsvKeepingHue(next, previous));
+                onChange(next);
+              }
+            }}
+            onBlur={() => setDraft(formatColor(color))}
+            status={invalid ? { type: 'error', message: 'Use 3 or 6 hex digits' } : undefined}
+            statusVariant="tooltip"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const thumbRing = '0 0 0 2px #fff, 0 0 0 3px #0000004d, 0 2px 6px #00000059';
+const thumbFocus = `0 0 0 2px #fff, 0 0 0 4px ${colorVars['--color-text-primary']}, 0 2px 6px #00000059`;
+
+const styles = stylex.create({
+  picker: { display: 'flex', flexDirection: 'column', gap: spacingVars['--spacing-2'] },
+  field: {
+    position: 'relative',
+    height: 136,
+    borderRadius: 10,
+    cursor: 'crosshair',
+    touchAction: 'none',
+    outline: 'none',
+    backgroundImage:
+      'linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent)',
+    boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff14)',
+  },
+  fieldLarge: { height: 148 },
+  hueBase: (hue: number) => ({ backgroundColor: `hsl(${hue} 100% 50%)` }),
+  hue: {
+    position: 'relative',
+    height: 12,
+    borderRadius: radiusVars['--radius-full'],
+    cursor: 'pointer',
+    touchAction: 'none',
+    outline: 'none',
+    backgroundImage:
+      'linear-gradient(to right, #f00, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00)',
+  },
+  thumb: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: '50%',
+    transform: 'translate(-50%, -50%)',
+    pointerEvents: 'none',
+    boxShadow: {
+      default: thumbRing,
+      [stylex.when.ancestor(':focus-visible')]: thumbFocus,
+    },
+  },
+  hueThumb: { width: 16, height: 16 },
+  at: (x: number, y: number) => ({ left: `${x * 100}%`, top: `${y * 100}%` }),
+  fill: (css: string) => ({ backgroundColor: css }),
+  hexRow: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-2'] },
+  hexField: { flex: 1, minWidth: 0 },
+  current: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    flexShrink: 0,
+    boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff1f)',
+  },
+});

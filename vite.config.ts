@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite-plus';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
+import { Features } from 'lightningcss';
 
 export default defineConfig({
   lint: {
@@ -24,7 +25,12 @@ export default defineConfig({
     ignorePatterns: ['node_modules', 'dist', '.playwright-cli', 'bun.lock'],
   },
   plugins: [
-    stylex({ devMode: 'full', useCSSLayers: true }),
+    stylex({
+      devMode: 'full',
+      useCSSLayers: true,
+      // Astryx themes already require native light-dark(); the fallback breaks custom tokens.
+      lightningcssOptions: { exclude: Features.LightDark },
+    }),
     react(),
     {
       name: 'stylex-dev-html',
