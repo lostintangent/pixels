@@ -8,11 +8,13 @@ import { useEditor, useEditorState } from './EditorContext';
 import { pixelVars } from './tokens.stylex';
 
 /**
- * Pointer position and the color beneath it. It updates at pointer rate, so it
- * writes to the DOM directly instead of re-rendering.
+ * Pointer position and the color beneath it. It updates at pointer rate, so it writes to the DOM
+ * directly instead of re-rendering, into fixed-size contained slots: a per-move text change lays
+ * out only its own slot and never dirties the layout the canvas reads its pointer geometry from.
  */
 export function StatusPill() {
   const session = useEditor();
+  const side = useEditorState((state) => Math.max(state.document.width, state.document.height));
   const root = useRef<HTMLDivElement>(null);
   const position = useRef<HTMLElement>(null);
   const chip = useRef<HTMLSpanElement>(null);
@@ -39,9 +41,9 @@ export function StatusPill() {
 
   return (
     <div ref={root} data-idle="true" aria-hidden {...stylex.props(styles.pill)}>
-      <b ref={position} {...stylex.props(styles.position)} />
+      <b ref={position} {...stylex.props(styles.slot, styles.position(digits(side - 1)))} />
       <span ref={chip} {...stylex.props(styles.chip)} />
-      <span ref={hex} {...stylex.props(styles.hex)} />
+      <span ref={hex} {...stylex.props(styles.slot, styles.hex)} />
     </div>
   );
 }
@@ -69,6 +71,8 @@ export function DocumentMeta() {
     </span>
   );
 }
+
+const digits = (value: number) => String(value).length;
 
 const SLOW_SAVE_MS = 400;
 
@@ -105,6 +109,7 @@ const styles = stylex.create({
     backgroundColor: `color-mix(in srgb, ${colorVars['--color-background-surface']} 72%, transparent)`,
     backdropFilter: 'blur(12px)',
     pointerEvents: 'none',
+    contain: 'layout paint',
     opacity: { default: 1, ':is([data-idle=true])': 0 },
     transitionProperty: 'opacity',
     transitionDuration: {
@@ -112,19 +117,29 @@ const styles = stylex.create({
       '@media (prefers-reduced-motion: reduce)': '0s',
     },
   },
-  position: {
+  // A relayout boundary: its size never depends on the text written into it.
+  slot: {
+    display: 'block',
+    contain: 'strict',
+    blockSize: 16,
+    lineHeight: '16px',
+    whiteSpace: 'nowrap',
+  },
+  // Tabular digits are 1ch each. The widest position is two of the largest coordinate plus ", ".
+  position: (places: number) => ({
+    inlineSize: `calc(${places * 2}ch + 0.8em)`,
     fontWeight: 500,
     color: colorVars['--color-text-primary'],
-    minWidth: 48,
-    display: 'inline-block',
-  },
+  }),
   chip: {
+    flexShrink: 0,
     width: 10,
     height: 10,
     borderRadius: 3,
     boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
   },
-  hex: { minWidth: 76 },
+  // Fits "Transparent", the longest readout.
+  hex: { inlineSize: 76 },
   meta: {
     display: 'flex',
     alignItems: 'center',

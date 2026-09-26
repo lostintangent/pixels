@@ -1,11 +1,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from '@tanstack/react-router';
-import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import { useAppearance } from '../features/editor';
 import { createDocumentStore } from '../features/files';
 import { createAppRouter } from './router';
+import { AppTheme } from './theme';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing #root');
@@ -21,8 +21,8 @@ createRoot(root).render(
 
 function Root() {
   return (
-    <Theme theme={neutralTheme} mode={useAppearance()}>
+    <AppTheme theme={neutralTheme} mode={useAppearance()}>
       <RouterProvider router={router} />
-    </Theme>
+    </AppTheme>
   );
 }

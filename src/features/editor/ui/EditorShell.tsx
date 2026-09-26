@@ -1,4 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
+import type { StyleXStyles } from '@stylexjs/stylex';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
 import {
@@ -8,7 +9,6 @@ import {
   sizeVars,
   spacingVars,
 } from '@astryxdesign/core/theme/tokens.stylex';
-import { ToastViewport } from '@astryxdesign/core/Toast';
 import type { ToastViewportProps } from '@astryxdesign/core/Toast';
 import { getRouteApi } from '@tanstack/react-router';
 import { useSelector } from '@tanstack/react-store';
@@ -42,8 +42,10 @@ import { FileActionsProvider, useFileActions } from './files/FileActions';
 import { useAutosave } from './files/useAutosave';
 import { useClipboard } from './files/useClipboard';
 import { Island, IslandDivider } from './Island';
-import { DocMenu, ZoomMenu } from './Menus';
+import { DocMenu, ZoomMenu } from './menus';
+import { prefetchWhenIdle } from './prefetch';
 import { DocumentMeta, StatusPill } from './Status';
+import { ToastHost } from './toasts';
 import { pixelVars } from './tokens.stylex';
 import { ToolOptions } from './ToolOptions';
 import { ToolRail } from './ToolRail';
@@ -88,8 +90,9 @@ export function EditorShell() {
   const layout = useLayout();
   // Kept current while editing, since the next document mounts before the previous one unmounts.
   const preferences = useRef(DEFAULT_TOOL_PREFERENCES);
+  useEffect(prefetchWhenIdle, []);
   return (
-    <ToastViewport position="bottomEnd" inset={TOAST_INSETS[layout]} maxVisible={3}>
+    <ToastHost inset={TOAST_INSETS[layout]}>
       <Editor
         key={document.id}
         document={document}
@@ -98,7 +101,7 @@ export function EditorShell() {
         layout={layout}
         preferences={preferences}
       />
-    </ToastViewport>
+    </ToastHost>
   );
 }
 
@@ -224,15 +227,14 @@ function Canvas({ session }: { session: EditorSession }) {
   );
 }
 
+/*
+ * The chrome reads only whether it is hidden. Each island selects the state it shows, so the
+ * change a stroke makes (history, save status, recent colors) re-renders only what displays it.
+ */
+type Fade = StyleXStyles;
+
 function DesktopChrome() {
-  const session = useEditor();
   const hidden = useEditorState((state) => state.chromeHidden);
-  const tool = useEditorState((state) => state.tool);
-  const primary = useEditorState((state) => state.primary);
-  const secondary = useEditorState((state) => state.secondary);
-  const recent = useEditorState((state) => state.recent);
-  const [editing, setEditing] = useState<ColorSlot | null>(null);
-  const well = useRef<HTMLDivElement>(null);
   const fade = [styles.chrome, hidden && styles.hidden];
 
   return (
@@ -249,6 +251,23 @@ function DesktopChrome() {
         <IslandDivider />
         <ZoomControls />
       </Island>
+      <DesktopTools fade={fade} />
+      <DesktopColors fade={fade} />
+      <StatusPill />
+    </>
+  );
+}
+
+function DesktopTools({ fade }: { fade: Fade }) {
+  const session = useEditor();
+  const tool = useEditorState((state) => state.tool);
+  const primary = useEditorState((state) => state.primary);
+  const secondary = useEditorState((state) => state.secondary);
+  const [editing, setEditing] = useState<ColorSlot | null>(null);
+  const well = useRef<HTMLDivElement>(null);
+
+  return (
+    <>
       <Island as="nav" axis="y" aria-label="Tools" xstyle={[styles.rail, fade]}>
         <ToolRail
           tool={tool}
@@ -277,29 +296,32 @@ function DesktopChrome() {
         placement="end"
         alignment="end"
       />
-      <Island as="aside" aria-label="Colors" xstyle={[styles.panel, fade]}>
-        <ColorPanel
-          palette={DEFAULT_PALETTE}
-          recent={recent}
-          recentSlots={RECENT_LIMIT}
-          primary={primary}
-          secondary={secondary}
-          onChoose={(color, slot) => session.chooseColor(color, slot)}
-        />
-      </Island>
-      <StatusPill />
     </>
   );
 }
 
-function PhoneChrome() {
+function DesktopColors({ fade }: { fade: Fade }) {
   const session = useEditor();
-  const hidden = useEditorState((state) => state.chromeHidden);
-  const tool = useEditorState((state) => state.tool);
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
   const recent = useEditorState((state) => state.recent);
-  const isSheetOpen = useEditorState((state) => state.panel === 'colors');
+  return (
+    <Island as="aside" aria-label="Colors" xstyle={[styles.panel, fade]}>
+      <ColorPanel
+        palette={DEFAULT_PALETTE}
+        recent={recent}
+        recentSlots={RECENT_LIMIT}
+        primary={primary}
+        secondary={secondary}
+        onChoose={(color, slot) => session.chooseColor(color, slot)}
+      />
+    </Island>
+  );
+}
+
+function PhoneChrome() {
+  const hidden = useEditorState((state) => state.chromeHidden);
+  // Which color the sheet edits, chosen by the dock's well.
   const [editing, setEditing] = useState<ColorSlot>('primary');
   const fade = [styles.chrome, hidden && styles.hidden];
 
@@ -317,43 +339,70 @@ function PhoneChrome() {
           <HistoryButtons hasTooltips={false} />
         </Island>
       </div>
-      <Island aria-label="Tools" axis="y" xstyle={[styles.dock, fade]}>
-        <div {...stylex.props(styles.dockOptions)}>
-          <ToolOptions layout="phone" />
-        </div>
-        <div {...stylex.props(styles.dockTools)}>
-          <ToolRail
-            tool={tool}
-            onSelect={(next) => session.run({ type: 'tool', tool: next })}
-            orientation="horizontal"
-            hasTooltips={false}
-          />
-          <ColorWell
-            size="lg"
-            primary={primary}
-            secondary={secondary}
-            onEdit={(slot) => {
-              setEditing(slot);
-              session.setPanel('colors');
-            }}
-            onSwap={() => session.run({ type: 'swap-colors' })}
-          />
-        </div>
-      </Island>
-      <ColorSheet
-        isOpen={isSheetOpen}
-        onOpenChange={(open) => session.setPanel(open ? 'colors' : null)}
-        editing={editing}
-        onEditingChange={setEditing}
-        palette={DEFAULT_PALETTE}
-        recent={recent}
-        recentSlots={RECENT_LIMIT}
-        primary={primary}
-        secondary={secondary}
-        onChoose={(color, slot) => session.chooseColor(color, slot)}
-        onSwap={() => session.run({ type: 'swap-colors' })}
-      />
+      <PhoneDock fade={fade} onEdit={setEditing} />
+      <PhoneColors editing={editing} onEditingChange={setEditing} />
     </>
+  );
+}
+
+function PhoneDock({ fade, onEdit }: { fade: Fade; onEdit: (slot: ColorSlot) => void }) {
+  const session = useEditor();
+  const tool = useEditorState((state) => state.tool);
+  const primary = useEditorState((state) => state.primary);
+  const secondary = useEditorState((state) => state.secondary);
+  return (
+    <Island aria-label="Tools" axis="y" xstyle={[styles.dock, fade]}>
+      <div {...stylex.props(styles.dockOptions)}>
+        <ToolOptions layout="phone" />
+      </div>
+      <div {...stylex.props(styles.dockTools)}>
+        <ToolRail
+          tool={tool}
+          onSelect={(next) => session.run({ type: 'tool', tool: next })}
+          orientation="horizontal"
+          hasTooltips={false}
+        />
+        <ColorWell
+          size="lg"
+          primary={primary}
+          secondary={secondary}
+          onEdit={(slot) => {
+            onEdit(slot);
+            session.setPanel('colors');
+          }}
+          onSwap={() => session.run({ type: 'swap-colors' })}
+        />
+      </div>
+    </Island>
+  );
+}
+
+function PhoneColors({
+  editing,
+  onEditingChange,
+}: {
+  editing: ColorSlot;
+  onEditingChange: (slot: ColorSlot) => void;
+}) {
+  const session = useEditor();
+  const primary = useEditorState((state) => state.primary);
+  const secondary = useEditorState((state) => state.secondary);
+  const recent = useEditorState((state) => state.recent);
+  const isOpen = useEditorState((state) => state.panel === 'colors');
+  return (
+    <ColorSheet
+      isOpen={isOpen}
+      onOpenChange={(open) => session.setPanel(open ? 'colors' : null)}
+      editing={editing}
+      onEditingChange={onEditingChange}
+      palette={DEFAULT_PALETTE}
+      recent={recent}
+      recentSlots={RECENT_LIMIT}
+      primary={primary}
+      secondary={secondary}
+      onChoose={(color, slot) => session.chooseColor(color, slot)}
+      onSwap={() => session.run({ type: 'swap-colors' })}
+    />
   );
 }
 

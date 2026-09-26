@@ -1,6 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useToast } from '@astryxdesign/core/Toast';
 import { CircleAlert } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { createContext, useContext, useMemo } from 'react';
@@ -11,6 +10,7 @@ import { exportPng, ImportError, importPng, saveDocument } from '../../../files'
 import type { DocumentId, DocumentStore } from '../../../files';
 import { TRANSPARENT } from '../../../palette';
 import type { EditorSession, Layout } from '../../session/session';
+import { useToast } from '../toasts';
 
 /** Everything the chrome can do with files. Failures surface as toasts, never as throws. */
 export interface FileActions {

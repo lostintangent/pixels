@@ -9,7 +9,7 @@ export type DeferredProps<P> = P & {
 export interface Deferred<P> {
   (props: DeferredProps<P>): ReactNode;
   /** Starts loading the chunk early, for example when the user shows intent. */
-  preload(): void;
+  preload: () => void;
 }
 
 /**

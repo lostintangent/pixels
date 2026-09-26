@@ -20,17 +20,18 @@ import {
   Scan,
   Sun,
 } from 'lucide-react';
+import { useEffect, useEffectEvent } from 'react';
 import type { ReactElement } from 'react';
-import { snapZoom } from '../../canvas';
-import { formatZoom, GRID_MIN_ZOOM } from '../core/zoom';
-import { setAppearance, useAppearance } from '../session/appearance';
-import type { Appearance } from '../session/appearance';
-import type { Layout } from '../session/session';
-import { preloadDialogs } from './dialogs';
-import { useEditor, useEditorState } from './EditorContext';
-import { useFileActions } from './files/FileActions';
-import { formatEdited, useRecents } from './files/useRecents';
-import type { RecentDocument } from './files/useRecents';
+import { snapZoom } from '../../../canvas';
+import { GRID_MIN_ZOOM } from '../../core/zoom';
+import { setAppearance, useAppearance } from '../../session/appearance';
+import type { Appearance } from '../../session/appearance';
+import { preloadDialogs } from '../dialogs';
+import { useEditor, useEditorState } from '../EditorContext';
+import { useFileActions } from '../files/FileActions';
+import { formatEdited, useRecents } from '../files/useRecents';
+import type { RecentDocument } from '../files/useRecents';
+import type { MenuSurfaceProps } from './index';
 
 const icon = (Glyph: typeof Check) => <Glyph size={16} strokeWidth={1.75} aria-hidden />;
 const checked = (on: boolean): ReactElement | undefined => (on ? icon(Check) : undefined);
@@ -41,13 +42,17 @@ const APPEARANCE_ICON: Record<Appearance, typeof Check> = {
 };
 
 /**
+ * The menus behind the chrome's triggers. This module loads at idle or on first intent, so
+ * item lists, recents, and their icons never weigh on the first paint.
+ */
+
+/**
  * The document menu: file actions and app appearance behind the document's name.
  * Recent documents and appearance fly out so the top level stays one short, scannable list.
  */
-export function DocMenu({ layout }: { layout: Layout }) {
+export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   const session = useEditor();
   const files = useFileActions();
-  const name = useEditorState((state) => state.document.name);
   const id = useSelector(session.bitmap, (document) => document.id);
   const { recents, refresh } = useRecents(files.store, id);
   const mode = useAppearance();
@@ -114,32 +119,29 @@ export function DocMenu({ layout }: { layout: Layout }) {
     },
   ];
 
+  // Runs however the menu opened, including a press handed over from the stand-in trigger.
+  const opened = useEffectEvent(() => {
+    refresh();
+    preloadDialogs();
+  });
+  useEffect(() => {
+    if (isMenuOpen) opened();
+  }, [isMenuOpen]);
+
   return (
     <DropdownMenu
-      button={{
-        label: name,
-        variant: 'ghost',
-        icon: <Logo />,
-        width: '100%',
-        children: <span {...stylex.props(styles.name)}>{name}</span>,
-      }}
+      {...trigger}
+      isMenuOpen={isMenuOpen}
       items={items}
       presentation={phone ? 'bottom-sheet' : 'popover'}
       menuWidth={264}
-      onOpenChange={(open) => {
-        if (!open) return;
-        refresh();
-        preloadDialogs();
-      }}
     />
   );
 }
 
 /** Zoom level as the trigger, with fit, actual size, and the grid behind it. */
-export function ZoomMenu({ layout }: { layout: Layout }) {
+export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   const session = useEditor();
-  // Every rest state sits on a ladder step. Mid-gesture, the label names the step the zoom
-  // will settle to, so a pinch re-renders only when it crosses one.
   const zoom = useSelector(session.viewport, (view) => snapZoom(view.zoom));
   const grid = useEditorState((state) => state.gridEnabled);
   const phone = layout === 'phone';
@@ -185,8 +187,8 @@ export function ZoomMenu({ layout }: { layout: Layout }) {
 
   return (
     <DropdownMenu
-      button={{ label: formatZoom(zoom), variant: 'ghost' }}
-      hasChevron={false}
+      {...trigger}
+      isMenuOpen={isMenuOpen}
       items={items}
       menuWidth={220}
       alignment={phone ? 'center' : 'end'}
@@ -195,28 +197,7 @@ export function ZoomMenu({ layout }: { layout: Layout }) {
   );
 }
 
-/** Four chunky pixels: the app mark, drawn in the product's own medium. */
-function Logo() {
-  return (
-    <span aria-hidden {...stylex.props(styles.logo)}>
-      {['#e8553d', '#ffd08a', '#1f8a8a', '#2c4cb0'].map((color) => (
-        <i key={color} {...stylex.props(styles.logoPixel, styles.color(color))} />
-      ))}
-    </span>
-  );
-}
-
 const styles = stylex.create({
-  name: {
-    minWidth: 0,
-    maxWidth: 240,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  logo: { display: 'grid', gridTemplateColumns: 'repeat(2, 8px)', gap: 1, marginInlineEnd: 2 },
-  logoPixel: { display: 'block', width: 8, height: 8, borderRadius: 1.5 },
-  color: (color: string) => ({ backgroundColor: color }),
   thumb: {
     display: 'grid',
     placeItems: 'center',

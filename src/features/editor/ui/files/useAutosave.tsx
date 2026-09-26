@@ -1,9 +1,9 @@
 import { Button } from '@astryxdesign/core/Button';
-import { useToast } from '@astryxdesign/core/Toast';
 import { useEffect } from 'react';
 import { attachAutosave } from '../../../files';
 import type { Autosave, DocumentStore } from '../../../files';
 import type { EditorSession } from '../../session/session';
+import { useToast } from '../toasts';
 
 /**
  * Keeps the live document persisted. A resize swaps in a new document with a new tile grid, so

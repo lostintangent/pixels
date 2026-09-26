@@ -23,7 +23,8 @@ export default class MessageFormat {
     return this.#message.replace(ARGUMENT, (_, name: string, type?: string) => {
       const value = values[name];
       if (type === 'number') return new Intl.NumberFormat(this.#locale).format(Number(value));
-      return value === undefined || value === null ? '' : String(value);
+      if (typeof value === 'string') return value;
+      return typeof value === 'number' || typeof value === 'boolean' ? String(value) : '';
     });
   }
 }
