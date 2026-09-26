@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useRef, useState } from 'react';
 import type { PackedColor } from '../../document';
-import { ColorPickerPopover } from './ColorPickerPopover';
+import { ColorPickerPopover, preloadColorPicker } from './deferred';
 import { Swatches } from './Swatches';
 import type { SwatchSlot } from './Swatches';
 
@@ -36,6 +36,8 @@ export function ColorPanel({
           aria-expanded={picking}
           title="Custom color"
           onClick={() => setPicking((open) => !open)}
+          onPointerEnter={preloadColorPicker}
+          onFocus={preloadColorPicker}
           {...stylex.props(styles.custom, picking && styles.customOpen)}
         />
       </div>

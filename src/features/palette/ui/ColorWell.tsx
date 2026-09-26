@@ -3,6 +3,7 @@ import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex'
 import type { Ref } from 'react';
 import type { PackedColor } from '../../document';
 import { formatColor, toCss } from '../core/color';
+import { preloadColorPicker } from './deferred';
 import type { SwatchSlot } from './Swatches';
 
 export interface ColorWellProps {
@@ -26,7 +27,11 @@ export function ColorWell({
 }: ColorWellProps) {
   const large = size === 'lg';
   return (
-    <div ref={ref} {...stylex.props(styles.well, large && styles.wellLarge)}>
+    <div
+      ref={ref}
+      onPointerEnter={preloadColorPicker}
+      {...stylex.props(styles.well, large && styles.wellLarge)}
+    >
       <button
         type="button"
         aria-label={`Secondary color, ${formatColor(secondary)}`}

@@ -25,6 +25,7 @@ import { formatZoom, GRID_MIN_ZOOM } from '../core/zoom';
 import { setAppearance, useAppearance } from '../session/appearance';
 import type { Appearance } from '../session/appearance';
 import type { Layout } from '../session/session';
+import { preloadDialogs } from './dialogs';
 import { useEditor, useEditorState } from './EditorContext';
 import { useFileActions } from './files/FileActions';
 import { formatEdited, useRecents } from './files/useRecents';
@@ -114,11 +115,21 @@ export function DocMenu({ layout }: { layout: Layout }) {
 
   return (
     <DropdownMenu
-      button={{ label: name, variant: 'ghost', icon: <Logo /> }}
+      button={{
+        label: name,
+        variant: 'ghost',
+        icon: <Logo />,
+        width: '100%',
+        children: <span {...stylex.props(styles.name)}>{name}</span>,
+      }}
       items={items}
       presentation={phone ? 'bottom-sheet' : 'popover'}
       menuWidth={264}
-      onOpenChange={(open) => open && refresh()}
+      onOpenChange={(open) => {
+        if (!open) return;
+        refresh();
+        preloadDialogs();
+      }}
     />
   );
 }
@@ -193,6 +204,13 @@ function Logo() {
 }
 
 const styles = stylex.create({
+  name: {
+    minWidth: 0,
+    maxWidth: 240,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
   logo: { display: 'grid', gridTemplateColumns: 'repeat(2, 8px)', gap: 1, marginInlineEnd: 2 },
   logoPixel: { display: 'block', width: 8, height: 8, borderRadius: 1.5 },
   color: (color: string) => ({ backgroundColor: color }),

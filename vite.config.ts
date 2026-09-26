@@ -2,6 +2,7 @@ import { defineConfig } from 'vite-plus';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
 import { Features } from 'lightningcss';
+import { astryxMessages } from './src/shared/build/astryxMessages';
 
 export default defineConfig({
   lint: {
@@ -25,6 +26,7 @@ export default defineConfig({
     ignorePatterns: ['node_modules', 'dist', '.playwright-cli', 'bun.lock'],
   },
   plugins: [
+    astryxMessages(),
     stylex({
       devMode: 'full',
       useCSSLayers: true,

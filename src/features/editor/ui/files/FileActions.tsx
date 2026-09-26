@@ -1,4 +1,7 @@
+import * as stylex from '@stylexjs/stylex';
+import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useToast } from '@astryxdesign/core/Toast';
+import { CircleAlert } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
@@ -46,10 +49,11 @@ export function FileActionsProvider({
 
   const actions = useMemo<FileActions>(() => {
     const show = (id: DocumentId) => void navigate({ to: '/d/$docId', params: { docId: id } });
+    // A bad file is a small, recoverable mistake, so it gets a calm toast. Red is saved for "Not saved".
     const fail = (error: unknown, fallback: string) =>
       showToast({
-        type: 'error',
-        body: error instanceof ImportError ? error.message : fallback,
+        body: <Problem>{error instanceof ImportError ? error.message : fallback}</Problem>,
+        autoHideDuration: 8000,
         uniqueID: 'file-error',
       });
     /** An explicit New or Open is an intent to keep, so it's stored before the route reads it. */
@@ -127,3 +131,17 @@ function nameOf(file: Blob): string {
   const name = file instanceof File ? file.name.replace(/\.png$/i, '').trim() : '';
   return name || 'Untitled';
 }
+
+function Problem({ children }: { children: ReactNode }) {
+  return (
+    <span {...stylex.props(styles.problem)}>
+      <CircleAlert size={16} strokeWidth={2} aria-hidden {...stylex.props(styles.glyph)} />
+      {children}
+    </span>
+  );
+}
+
+const styles = stylex.create({
+  problem: { display: 'flex', alignItems: 'flex-start', gap: spacingVars['--spacing-2'] },
+  glyph: { flexShrink: 0, marginBlockStart: 2, color: colorVars['--color-error'] },
+});

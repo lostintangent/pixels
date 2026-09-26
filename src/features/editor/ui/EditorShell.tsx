@@ -35,9 +35,7 @@ import { useColorScheme } from '../session/appearance';
 import type { ColorScheme } from '../session/appearance';
 import { createEditorSession } from '../session/session';
 import type { EditorSession, Layout } from '../session/session';
-import { ExportDialog } from './dialogs/ExportDialog';
-import { NewCanvasDialog } from './dialogs/NewCanvasDialog';
-import { ResizeDialog } from './dialogs/ResizeDialog';
+import { ExportDialog, NewCanvasDialog, ResizeDialog } from './dialogs';
 import { EditorProvider, useEditor, useEditorState } from './EditorContext';
 import { DropOverlay } from './files/DropOverlay';
 import { FileActionsProvider, useFileActions } from './files/FileActions';
@@ -161,12 +159,14 @@ function Panels({ layout }: { layout: Layout }) {
   );
   useShortcuts(session, run);
   useClipboard(session, files);
+  const panel = useEditorState((state) => state.panel);
 
   return (
     <>
-      <NewCanvasDialog layout={layout} />
-      <ResizeDialog layout={layout} />
+      <NewCanvasDialog when={panel === 'new'} layout={layout} />
+      <ResizeDialog when={panel === 'resize'} layout={layout} />
       <ExportDialog
+        when={panel === 'export'}
         layout={layout}
         onExport={(fileName, scale) => {
           files.exportPng(fileName, scale);
@@ -305,15 +305,18 @@ function PhoneChrome() {
 
   return (
     <>
-      <Island as="header" xstyle={[styles.doc, styles.docPhone, fade]}>
-        <DocMenu layout="phone" />
-      </Island>
-      <Island xstyle={[styles.zoomPill, fade]}>
-        <ZoomMenu layout="phone" />
-      </Island>
-      <Island role="toolbar" aria-label="History" xstyle={[styles.actions, fade]}>
-        <HistoryButtons hasTooltips={false} />
-      </Island>
+      {/* One row, so a long title truncates instead of running under the zoom and history. */}
+      <div {...stylex.props(styles.phoneTop)}>
+        <Island as="header" xstyle={[styles.inRow, styles.docPhone, fade]}>
+          <DocMenu layout="phone" />
+        </Island>
+        <Island xstyle={[styles.inRow, fade]}>
+          <ZoomMenu layout="phone" />
+        </Island>
+        <Island role="toolbar" aria-label="History" xstyle={[styles.inRow, fade]}>
+          <HistoryButtons hasTooltips={false} />
+        </Island>
+      </div>
       <Island aria-label="Tools" axis="y" xstyle={[styles.dock, fade]}>
         <div {...stylex.props(styles.dockOptions)}>
           <ToolOptions layout="phone" />
@@ -466,7 +469,23 @@ const styles = stylex.create({
     paddingInlineEnd: spacingVars['--spacing-3'],
     gap: spacingVars['--spacing-1'],
   },
-  docPhone: { paddingInlineEnd: pixelVars.islandPad },
+  docPhone: {
+    flexShrink: 1,
+    minWidth: 0,
+    marginInlineEnd: 'auto',
+    paddingInlineEnd: pixelVars.islandPad,
+  },
+  phoneTop: {
+    position: 'absolute',
+    zIndex: 2,
+    top: pixelVars.safeTop,
+    left: pixelVars.edge,
+    right: pixelVars.edge,
+    display: 'flex',
+    gap: spacingVars['--spacing-2'],
+    pointerEvents: 'none',
+  },
+  inRow: { position: 'relative', flexShrink: 0, pointerEvents: 'auto' },
   options: {
     top: pixelVars.safeTop,
     left: '50%',
@@ -484,11 +503,6 @@ const styles = stylex.create({
     flexDirection: 'column',
     alignItems: 'stretch',
     gap: spacingVars['--spacing-3'],
-  },
-  zoomPill: {
-    top: pixelVars.safeTop,
-    left: '50%',
-    transform: 'translateX(-50%)',
   },
   dock: {
     left: pixelVars.edge,
