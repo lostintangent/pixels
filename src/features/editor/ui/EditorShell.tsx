@@ -385,7 +385,9 @@ function HistoryButtons({ hasTooltips }: { hasTooltips: boolean }) {
 
 function ZoomControls() {
   const session = useEditor();
-  const zoom = useSelector(session.viewport, (view) => view.zoom);
+  // Pinch changes zoom every frame, so read only the edges that change what renders.
+  const atMin = useSelector(session.viewport, (view) => view.zoom <= MIN_ZOOM);
+  const atMax = useSelector(session.viewport, (view) => view.zoom >= MAX_ZOOM);
   const grid = useEditorState((state) => state.gridEnabled);
   return (
     <>
@@ -394,7 +396,7 @@ function ZoomControls() {
         label="Zoom out"
         tooltip="Zoom out  ·  ⌘−"
         icon={<Minus size={18} />}
-        isDisabled={zoom <= MIN_ZOOM}
+        isDisabled={atMin}
         onClick={() => session.run({ type: 'zoom', direction: -1 })}
       />
       <ZoomMenu layout="desktop" />
@@ -403,7 +405,7 @@ function ZoomControls() {
         label="Zoom in"
         tooltip="Zoom in  ·  ⌘+"
         icon={<Plus size={18} />}
-        isDisabled={zoom >= MAX_ZOOM}
+        isDisabled={atMax}
         onClick={() => session.run({ type: 'zoom', direction: 1 })}
       />
       <IslandDivider />

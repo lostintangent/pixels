@@ -21,6 +21,7 @@ import {
   Sun,
 } from 'lucide-react';
 import type { ReactElement } from 'react';
+import { snapZoom } from '../../canvas';
 import { formatZoom, GRID_MIN_ZOOM } from '../core/zoom';
 import { setAppearance, useAppearance } from '../session/appearance';
 import type { Appearance } from '../session/appearance';
@@ -137,7 +138,9 @@ export function DocMenu({ layout }: { layout: Layout }) {
 /** Zoom level as the trigger, with fit, actual size, and the grid behind it. */
 export function ZoomMenu({ layout }: { layout: Layout }) {
   const session = useEditor();
-  const zoom = useSelector(session.viewport, (view) => view.zoom);
+  // Every rest state sits on a ladder step. Mid-gesture, the label names the step the zoom
+  // will settle to, so a pinch re-renders only when it crosses one.
+  const zoom = useSelector(session.viewport, (view) => snapZoom(view.zoom));
   const grid = useEditorState((state) => state.gridEnabled);
   const phone = layout === 'phone';
   const keys = (shortcut: string) => (phone ? undefined : <Kbd keys={shortcut} />);
