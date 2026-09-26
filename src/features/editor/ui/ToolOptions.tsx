@@ -12,13 +12,14 @@ import { useEditor, useEditorState } from './EditorContext';
 import { copyFromChrome } from './files/useClipboard';
 import { pixelVars } from './tokens.stylex';
 
+// Hints follow the pointer, not the layout: a tablet in the desktop layout taps.
 const HINTS = {
-  desktop: {
+  mouse: {
     fill: 'Click to fill touching pixels of one color',
     eyedropper: 'Click to pick a color  ·  Hold Alt from any tool',
     select: 'Drag to select  ·  Drag inside to move',
   },
-  phone: {
+  touch: {
     fill: 'Tap to fill touching pixels',
     eyedropper: 'Tap a pixel to pick its color',
     select: 'Drag to select, then drag inside to move',
@@ -113,14 +114,17 @@ export function ToolOptions({ layout }: { layout: Layout }) {
     );
   }
 
-  const hint = HINTS[layout][tool as keyof (typeof HINTS)['desktop']];
+  const kind = tool as keyof (typeof HINTS)['mouse'];
   return (
     <div key={tool} {...stylex.props(styles.body, phone && styles.fill)}>
       {!phone && <span {...stylex.props(styles.label)}>{toolInfo(tool).label}</span>}
-      <span {...stylex.props(styles.hint)}>{hint}</span>
+      {!phone && <span {...stylex.props(styles.hint, styles.mouseOnly)}>{HINTS.mouse[kind]}</span>}
+      <span {...stylex.props(styles.hint, !phone && styles.touchOnly)}>{HINTS.touch[kind]}</span>
     </div>
   );
 }
+
+const COARSE = '@media (pointer: coarse)';
 
 const fade = stylex.keyframes({
   from: { opacity: 0, transform: 'translateY(2px)' },
@@ -158,6 +162,8 @@ const styles = stylex.create({
     whiteSpace: 'nowrap',
   },
   muted: { color: colorVars['--color-text-secondary'], textAlign: 'left', minWidth: 0 },
-  keys: { display: 'flex', gap: 4 },
+  keys: { display: { default: 'flex', [COARSE]: 'none' }, gap: 4 },
+  mouseOnly: { display: { default: null, [COARSE]: 'none' } },
+  touchOnly: { display: { default: 'none', [COARSE]: 'block' } },
   divider: { width: 1, height: 20, marginInline: 2, backgroundColor: colorVars['--color-border'] },
 });

@@ -162,7 +162,9 @@ const styles = stylex.create({
     backgroundColor: colorVars['--color-background-muted'],
     boxShadow: {
       default: `inset 0 0 0 1px ${colorVars['--color-border']}`,
-      ':hover': `inset 0 0 0 1px ${colorVars['--color-border-emphasized']}`,
+      '@media (hover: hover)': {
+        ':hover': `inset 0 0 0 1px ${colorVars['--color-border-emphasized']}`,
+      },
       ':focus-visible': ring,
     },
     transitionProperty: 'box-shadow, background-color',
@@ -172,7 +174,9 @@ const styles = stylex.create({
     backgroundColor: colorVars['--color-background-surface'],
     boxShadow: {
       default: `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
-      ':hover': `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
+      '@media (hover: hover)': {
+        ':hover': `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
+      },
       ':focus-visible': ring,
     },
   },

@@ -281,6 +281,7 @@ function DesktopTools({ fade }: { fade: Fade }) {
           secondary={secondary}
           onEdit={(slot) => setEditing((current) => (current === slot ? null : slot))}
           onSwap={() => session.run({ type: 'swap-colors' })}
+          onPress={() => setEditing((current) => (current === null ? 'primary' : null))}
         />
       </Island>
       <ColorPickerPopover
@@ -294,6 +295,13 @@ function DesktopTools({ fade }: { fade: Fade }) {
         onChange={(color) => session.chooseColor(color, editing ?? 'primary')}
         placement="end"
         alignment="end"
+        slots={{
+          editing: editing ?? 'primary',
+          onEditingChange: setEditing,
+          primary,
+          secondary,
+          onSwap: () => session.run({ type: 'swap-colors' }),
+        }}
       />
     </>
   );
@@ -486,6 +494,10 @@ function useLayout(): Layout {
   return isPhone ? 'phone' : 'desktop';
 }
 
+const COARSE = '@media (pointer: coarse)';
+// Where touch-sized selection options stop fitting between the document and history islands.
+const NARROW = '@media (max-width: 1099px)';
+
 const islandHeight = `calc(${pixelVars.tool} + ${pixelVars.islandPad} * 2)`;
 
 const styles = stylex.create({
@@ -500,6 +512,9 @@ const styles = stylex.create({
     touchAction: 'none',
     WebkitTapHighlightColor: 'transparent',
     [radiusVars['--radius-element']]: '10px',
+    // Any coarse pointer gets 44px Astryx controls, including a tablet in the desktop layout.
+    [sizeVars['--size-element-md']]: { default: null, [COARSE]: '44px' },
+    [sizeVars['--size-element-lg']]: { default: null, [COARSE]: '44px' },
   },
   phone: {
     [pixelVars.tool]: '44px',
@@ -538,8 +553,10 @@ const styles = stylex.create({
     pointerEvents: 'none',
   },
   inRow: { position: 'relative', flexShrink: 0, pointerEvents: 'auto' },
+  // Centered on top while it clears the islands beside it, then at the bottom, under the thumb.
   options: {
-    top: pixelVars.safeTop,
+    top: { default: pixelVars.safeTop, [NARROW]: 'auto' },
+    bottom: { default: null, [NARROW]: pixelVars.safeBottom },
     left: '50%',
     transform: 'translateX(-50%)',
     minHeight: islandHeight,
@@ -550,7 +567,8 @@ const styles = stylex.create({
   panel: {
     top: `calc(${pixelVars.safeTop} + ${islandHeight} + ${spacingVars['--spacing-2']})`,
     right: pixelVars.edge,
-    width: 244,
+    // Eight 44px swatch pitches on touch.
+    width: { default: 244, [COARSE]: 370 },
     padding: spacingVars['--spacing-3'],
     flexDirection: 'column',
     alignItems: 'stretch',

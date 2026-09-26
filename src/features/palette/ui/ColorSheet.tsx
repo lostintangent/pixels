@@ -9,8 +9,9 @@ import {
 } from '@astryxdesign/core/theme/tokens.stylex';
 import { ArrowLeftRight } from 'lucide-react';
 import type { PackedColor } from '../../document';
-import { formatColor, toCss } from '../core/color';
+import { formatColor } from '../core/color';
 import { ColorPicker } from './ColorPicker';
+import { ColorSlots } from './ColorSlots';
 import { Swatches } from './Swatches';
 import type { SwatchSlot } from './Swatches';
 
@@ -48,26 +49,12 @@ export function ColorSheet({
     <BottomSheet isOpen={isOpen} onOpenChange={onOpenChange} label="Colors" height="hug">
       <div {...stylex.props(styles.sheet)}>
         <div {...stylex.props(styles.head)}>
-          <div role="radiogroup" aria-label="Color slot" {...stylex.props(styles.slots)}>
-            {(['primary', 'secondary'] as const).map((slot) => {
-              const color = slot === 'primary' ? primary : secondary;
-              return (
-                <button
-                  key={slot}
-                  type="button"
-                  role="radio"
-                  aria-checked={editing === slot}
-                  aria-label={`${slot === 'primary' ? 'Primary' : 'Secondary'}, ${formatColor(color)}`}
-                  onClick={() => onEditingChange(slot)}
-                  {...stylex.props(
-                    styles.slot,
-                    styles.fill(toCss(color)),
-                    editing === slot && styles.slotActive,
-                  )}
-                />
-              );
-            })}
-          </div>
+          <ColorSlots
+            editing={editing}
+            onEditingChange={onEditingChange}
+            primary={primary}
+            secondary={secondary}
+          />
           <div {...stylex.props(styles.title)}>
             <span>{editing === 'primary' ? 'Primary' : 'Secondary'}</span>
             <span {...stylex.props(styles.hex)}>{formatColor(current)}</span>
@@ -107,26 +94,6 @@ const styles = stylex.create({
     paddingBottom: spacingVars['--spacing-5'],
   },
   head: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-3'] },
-  slots: { display: 'flex', gap: 8 },
-  slot: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 0,
-    cursor: 'pointer',
-    outline: 'none',
-    boxShadow: {
-      default: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff1f)',
-      ':focus-visible': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-secondary']}`,
-    },
-  },
-  slotActive: {
-    boxShadow: {
-      default: `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`,
-      ':focus-visible': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`,
-    },
-  },
-  fill: (css: string) => ({ backgroundColor: css }),
   title: {
     flex: 1,
     display: 'flex',

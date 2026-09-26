@@ -1,10 +1,14 @@
 import * as stylex from '@stylexjs/stylex';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { Popover } from '@astryxdesign/core/Popover';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import type { ReactNode, Ref, RefObject } from 'react';
+import type { Ref, RefObject } from 'react';
+import { ArrowLeftRight } from 'lucide-react';
 import type { PackedColor } from '../../document';
 import { ColorPicker } from './ColorPicker';
+import { ColorSlots } from './ColorSlots';
+import type { ColorSlotsProps } from './ColorSlots';
 
 export interface ColorPickerPopoverProps {
   anchorRef: RefObject<HTMLElement | null>;
@@ -15,8 +19,11 @@ export interface ColorPickerPopoverProps {
   onChange: (color: PackedColor) => void;
   placement?: 'above' | 'below' | 'start' | 'end';
   alignment?: 'start' | 'center' | 'end';
-  /** Extra header controls, like a swap button. */
-  actions?: ReactNode;
+  /**
+   * Slot choice and swap, shown only under a coarse pointer. A touch well is one target, so the
+   * picker it opens carries the controls a mouse finds on the well itself.
+   */
+  slots?: ColorSlotsProps & { onSwap: () => void };
 }
 
 /**
@@ -34,7 +41,7 @@ export function ColorPickerPopover({
   onChange,
   placement = 'end',
   alignment = 'start',
-  actions,
+  slots,
 }: ColorPickerPopoverProps) {
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -62,8 +69,18 @@ export function ColorPickerPopover({
       content={
         <div ref={body} {...stylex.props(styles.body)}>
           <div {...stylex.props(styles.head)}>
-            <span {...stylex.props(styles.title)}>{title}</span>
-            {actions}
+            <span {...stylex.props(styles.title, slots && styles.titleWithSlots)}>{title}</span>
+            {slots && (
+              <div {...stylex.props(styles.slots)}>
+                <ColorSlots {...slots} />
+                <IconButton
+                  variant="ghost"
+                  label="Swap colors"
+                  icon={<ArrowLeftRight size={20} />}
+                  onClick={slots.onSwap}
+                />
+              </div>
+            )}
           </div>
           <ColorPicker color={color} onChange={onChange} />
         </div>
@@ -96,6 +113,8 @@ function Anchor({
   return null;
 }
 
+const COARSE = '@media (pointer: coarse)';
+
 const styles = stylex.create({
   body: {
     display: 'flex',
@@ -109,5 +128,13 @@ const styles = stylex.create({
     fontWeight: 600,
     letterSpacing: '0.02em',
     color: colorVars['--color-text-secondary'],
+  },
+  // The checked chip names the slot, and the popover's label still carries the title.
+  titleWithSlots: { display: { default: null, [COARSE]: 'none' } },
+  slots: {
+    display: { default: 'none', [COARSE]: 'flex' },
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 });

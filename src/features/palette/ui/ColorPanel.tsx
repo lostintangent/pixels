@@ -76,13 +76,15 @@ export function ColorPanel({
   );
 }
 
+const COARSE = '@media (pointer: coarse)';
+
 const styles = stylex.create({
   panel: { display: 'flex', flexDirection: 'column', gap: spacingVars['--spacing-2'] },
   label: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 20,
+    minHeight: { default: 20, [COARSE]: 32 },
     fontSize: 11,
     fontWeight: 600,
     letterSpacing: '0.02em',
@@ -91,8 +93,9 @@ const styles = stylex.create({
   },
   // A hue wheel reads as "any color" without another word of chrome.
   custom: {
-    width: 18,
-    height: 18,
+    position: 'relative',
+    width: { default: 18, [COARSE]: 24 },
+    height: { default: 18, [COARSE]: 24 },
     borderRadius: '50%',
     borderWidth: 0,
     padding: 0,
@@ -102,8 +105,16 @@ const styles = stylex.create({
       'radial-gradient(circle, #fff 0 22%, transparent 60%), conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
     boxShadow: {
       default: 'inset 0 0 0 1px #0000001f',
-      ':hover': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 3px ${colorVars['--color-border-emphasized']}`,
+      '@media (hover: hover)': {
+        ':hover': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 3px ${colorVars['--color-border-emphasized']}`,
+      },
       ':focus-visible': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`,
+    },
+    // A 44px touch target around the small wheel, reaching into the panel's padding and gap.
+    '::before': {
+      content: { default: null, [COARSE]: "''" },
+      position: 'absolute',
+      inset: -10,
     },
   },
   customOpen: {

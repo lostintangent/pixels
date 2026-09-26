@@ -57,7 +57,7 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   const { recents, refresh } = useRecents(files.store, id);
   const mode = useAppearance();
   const phone = layout === 'phone';
-  const keys = (shortcut: string) => (phone ? undefined : <Kbd keys={shortcut} />);
+  const keys = (shortcut: string) => (phone ? undefined : <Shortcut keys={shortcut} />);
   const appearance = (
     value: Appearance,
     label: string,
@@ -145,7 +145,7 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   const zoom = useSelector(session.viewport, (view) => snapZoom(view.zoom));
   const grid = useEditorState((state) => state.gridEnabled);
   const phone = layout === 'phone';
-  const keys = (shortcut: string) => (phone ? undefined : <Kbd keys={shortcut} />);
+  const keys = (shortcut: string) => (phone ? undefined : <Shortcut keys={shortcut} />);
 
   const items: DropdownMenuOption[] = [
     {
@@ -198,6 +198,7 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
 }
 
 const styles = stylex.create({
+  shortcut: { display: { default: 'contents', '@media (pointer: coarse)': 'none' } },
   thumb: {
     display: 'grid',
     placeItems: 'center',
@@ -218,6 +219,15 @@ const styles = stylex.create({
     imageRendering: 'pixelated',
   },
 });
+
+/** A menu row's shortcut. Hidden on touch, where it's noise beside a 44px row. */
+function Shortcut({ keys }: { keys: string }) {
+  return (
+    <span {...stylex.props(styles.shortcut)}>
+      <Kbd keys={keys} />
+    </span>
+  );
+}
 
 /** The stored thumbnail at icon size, crisp and on a checker so transparency reads. */
 function Thumbnail({ recent }: { recent: RecentDocument }) {

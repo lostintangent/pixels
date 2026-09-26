@@ -141,12 +141,15 @@ function AnchorPicker({
   );
 }
 
+// Cells on a 44px pitch for touch.
+const COARSE = '@media (pointer: coarse)';
+
 const styles = stylex.create({
   anchorRow: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-4'] },
   anchorHint: { flex: 1 },
   anchors: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, 28px)',
+    gridTemplateColumns: { default: 'repeat(3, 28px)', [COARSE]: 'repeat(3, 40px)' },
     gap: 4,
     padding: 4,
     width: 'max-content',
@@ -155,8 +158,8 @@ const styles = stylex.create({
     boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
   },
   anchor: {
-    width: 28,
-    height: 28,
+    width: { default: 28, [COARSE]: 40 },
+    height: { default: 28, [COARSE]: 40 },
     display: 'grid',
     placeItems: 'center',
     padding: 0,
@@ -165,7 +168,10 @@ const styles = stylex.create({
     cursor: 'pointer',
     outline: 'none',
     color: colorVars['--color-text-secondary'],
-    backgroundColor: { default: 'transparent', ':hover': colorVars['--color-overlay-hover'] },
+    backgroundColor: {
+      default: 'transparent',
+      '@media (hover: hover)': { ':hover': colorVars['--color-overlay-hover'] },
+    },
     boxShadow: {
       default: null,
       ':focus-visible': `0 0 0 2px ${colorVars['--color-text-primary']}`,
@@ -175,7 +181,7 @@ const styles = stylex.create({
     color: colorVars['--color-on-accent'],
     backgroundColor: {
       default: colorVars['--color-accent'],
-      ':hover': colorVars['--color-accent'],
+      '@media (hover: hover)': { ':hover': colorVars['--color-accent'] },
     },
   },
   anchorDot: {

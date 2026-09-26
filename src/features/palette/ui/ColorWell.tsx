@@ -11,9 +11,11 @@ export interface ColorWellProps {
   secondary: PackedColor;
   onEdit: (slot: SwatchSlot) => void;
   onSwap: () => void;
+  /** A press on the single touch target. Defaults to editing the primary. */
+  onPress?: () => void;
   /**
-   * `lg` is one 44px touch target that edits the primary. Three targets can't share 44px, so
-   * the sheet it opens carries the slot choice and swap.
+   * `lg` is one 44px touch target. Three targets can't share 44px, so whatever it opens carries
+   * the slot choice and swap. `md` becomes the same single target under a coarse pointer.
    */
   size?: 'md' | 'lg';
   ref?: Ref<HTMLDivElement>;
@@ -25,6 +27,7 @@ export function ColorWell({
   secondary,
   onEdit,
   onSwap,
+  onPress = () => onEdit('primary'),
   size = 'md',
   ref,
 }: ColorWellProps) {
@@ -34,7 +37,7 @@ export function ColorWell({
         <button
           type="button"
           aria-label={`Colors, primary ${formatColor(primary)}, secondary ${formatColor(secondary)}`}
-          onClick={() => onEdit('primary')}
+          onClick={onPress}
           {...stylex.props(styles.target)}
         >
           <span
@@ -80,6 +83,14 @@ export function ColorWell({
       >
         <SwapGlyph size={10} />
       </button>
+      {/* Touch only: one target over the chips. Keyboard and screen readers keep the three. */}
+      <button
+        type="button"
+        aria-hidden
+        tabIndex={-1}
+        onClick={onPress}
+        {...stylex.props(styles.target, styles.cover)}
+      />
     </div>
   );
 }
@@ -99,12 +110,25 @@ function SwapGlyph({ size }: { size: number }) {
   );
 }
 
+const COARSE = '@media (pointer: coarse)';
+
 const chipRing = `0 0 0 1.5px ${colorVars['--color-background-surface']}, 0 0 0 2.5px ${colorVars['--color-border-emphasized']}`;
 const chipFocus = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`;
 
 const styles = stylex.create({
-  well: { position: 'relative', width: 36, height: 36, flexShrink: 0, marginBlock: 2 },
-  wellLarge: { width: 44, height: 44, marginBlock: 0 },
+  well: {
+    position: 'relative',
+    width: { default: 36, [COARSE]: 44 },
+    height: { default: 36, [COARSE]: 44 },
+    flexShrink: 0,
+    marginBlock: { default: 2, [COARSE]: 0 },
+    // :active reaches the well from the cover, so the chips press together.
+    transform: { default: null, [COARSE]: { ':active': 'scale(0.94)' } },
+    transitionProperty: 'transform',
+    transitionDuration: durationVars['--duration-fast'],
+  },
+  // Its button presses, so the well doesn't.
+  wellLarge: { width: 44, height: 44, marginBlock: 0, transform: null },
   // The whole well is the button. Chips draw inside it and press together.
   target: {
     position: 'absolute',
@@ -124,11 +148,16 @@ const styles = stylex.create({
     transitionProperty: 'transform',
     transitionDuration: durationVars['--duration-fast'],
   },
+  cover: {
+    display: { default: 'none', [COARSE]: 'block' },
+    zIndex: 2,
+    transform: null,
+  },
   chip: {
     position: 'absolute',
-    width: 20,
-    height: 20,
-    borderRadius: 6,
+    width: { default: 20, [COARSE]: 26 },
+    height: { default: 20, [COARSE]: 26 },
+    borderRadius: { default: 6, [COARSE]: 7 },
     borderWidth: 0,
     padding: 0,
     cursor: 'pointer',
@@ -143,6 +172,7 @@ const styles = stylex.create({
   secondary: { right: 2, bottom: 2 },
   fill: (css: string) => ({ backgroundColor: css }),
   swap: {
+    display: { default: 'grid', [COARSE]: 'none' },
     position: 'absolute',
     right: 0,
     top: 0,
@@ -151,13 +181,12 @@ const styles = stylex.create({
     padding: 0,
     borderWidth: 0,
     borderRadius: 4,
-    display: 'grid',
     placeItems: 'center',
     cursor: 'pointer',
     backgroundColor: 'transparent',
     color: {
       default: colorVars['--color-text-secondary'],
-      ':hover': colorVars['--color-text-primary'],
+      '@media (hover: hover)': { ':hover': colorVars['--color-text-primary'] },
     },
     outline: {
       default: 'none',

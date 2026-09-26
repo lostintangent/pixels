@@ -19,6 +19,7 @@ export interface SwatchesProps {
 }
 
 const COLUMNS = 8;
+const COARSE = '@media (pointer: coarse)';
 
 /** A grid of color chips with roving focus. Click sets primary; right click sets secondary. */
 export function Swatches({
@@ -111,16 +112,19 @@ const focusRing = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4
 const styles = stylex.create({
   grid: {
     display: 'grid',
-    gridTemplateColumns: `repeat(${COLUMNS}, 24px)`,
+    gridTemplateColumns: {
+      default: `repeat(${COLUMNS}, 24px)`,
+      [COARSE]: `repeat(${COLUMNS}, 38px)`,
+    },
     justifyContent: 'space-between',
-    rowGap: 4,
+    rowGap: { default: 4, [COARSE]: 6 },
   },
   gridLarge: { gridTemplateColumns: `repeat(${COLUMNS}, 38px)`, rowGap: 8 },
   swatch: {
     position: 'relative',
-    width: 24,
-    height: 24,
-    borderRadius: 6,
+    width: { default: 24, [COARSE]: 38 },
+    height: { default: 24, [COARSE]: 38 },
+    borderRadius: { default: 6, [COARSE]: 9 },
     borderWidth: 0,
     padding: 0,
     cursor: 'pointer',
@@ -131,8 +135,14 @@ const styles = stylex.create({
     },
     transform: {
       default: null,
-      ':hover': 'scale(1.08)',
+      '@media (hover: hover)': { ':hover': 'scale(1.08)' },
       ':active': 'scale(0.96)',
+    },
+    // On touch the target spans the gap too, so the 44px pitch is all hit area.
+    '::before': {
+      content: { default: null, [COARSE]: "''" },
+      position: 'absolute',
+      inset: -3,
     },
     transitionProperty: 'box-shadow, transform',
     transitionDuration: durationVars['--duration-fast'],
@@ -157,6 +167,6 @@ const styles = stylex.create({
     cursor: 'default',
     backgroundColor: 'transparent',
     boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
-    transform: { default: null, ':hover': null, ':active': null },
+    transform: { default: null, '@media (hover: hover)': { ':hover': null }, ':active': null },
   },
 });

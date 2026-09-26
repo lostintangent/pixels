@@ -52,7 +52,7 @@ export function ZoomMenu({ layout }: { layout: Layout }) {
     <DeferredMenu
       surface="ZoomMenu"
       layout={layout}
-      button={{ label: formatZoom(zoom), variant: 'ghost' }}
+      button={{ label: formatZoom(zoom), variant: 'ghost', xstyle: styles.zoom }}
       hasChevron={false}
     />
   );
@@ -177,6 +177,8 @@ const styles = stylex.create({
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
+  // Short levels like 1× would otherwise fall under a touch target.
+  zoom: { minWidth: { default: null, '@media (pointer: coarse)': 44 } },
   logo: { display: 'grid', gridTemplateColumns: 'repeat(2, 8px)', gap: 1, marginInlineEnd: 2 },
   logoPixel: { display: 'block', width: 8, height: 8, borderRadius: 1.5 },
   color: (color: string) => ({ backgroundColor: color }),

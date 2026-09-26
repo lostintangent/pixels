@@ -9,3 +9,20 @@ body,
   height: 100%;
   margin: 0;
 }
+
+/*
+ * Any coarse pointer gets 44px targets, whatever the layout. These Astryx parts expose no style
+ * hook, so their theme classes carry the rule: menu rows are 32px, and the slider's 24px control
+ * takes presses across a 44px band.
+ */
+@media (pointer: coarse) {
+  .astryx-dropdown-menu-item {
+    min-height: 44px;
+  }
+
+  .astryx-slider-control.horizontal::before {
+    content: '';
+    position: absolute;
+    inset: -10px 0;
+  }
+}

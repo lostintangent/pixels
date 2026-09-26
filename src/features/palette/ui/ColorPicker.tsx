@@ -174,11 +174,17 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
   );
 }
 
+const COARSE = '@media (pointer: coarse)';
+
 const thumbRing = '0 0 0 2px #fff, 0 0 0 3px #0000004d, 0 2px 6px #00000059';
 const thumbFocus = `0 0 0 2px #fff, 0 0 0 4px ${colorVars['--color-text-primary']}, 0 2px 6px #00000059`;
 
 const styles = stylex.create({
-  picker: { display: 'flex', flexDirection: 'column', gap: spacingVars['--spacing-2'] },
+  picker: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: { default: spacingVars['--spacing-2'], [COARSE]: 16 },
+  },
   field: {
     position: 'relative',
     height: 136,
@@ -201,6 +207,13 @@ const styles = stylex.create({
     outline: 'none',
     backgroundImage:
       'linear-gradient(to right, #f00, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00)',
+    // On touch the thin rail takes presses across a 44px band that fills the gaps around it.
+    '::before': {
+      content: { default: null, [COARSE]: "''" },
+      position: 'absolute',
+      insetInline: 0,
+      insetBlock: -16,
+    },
   },
   thumb: {
     position: 'absolute',
@@ -224,8 +237,8 @@ const styles = stylex.create({
   hexRow: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-2'] },
   hexField: { flex: 1, minWidth: 0 },
   current: {
-    width: 32,
-    height: 32,
+    width: { default: 32, [COARSE]: 44 },
+    height: { default: 32, [COARSE]: 44 },
     borderRadius: 8,
     flexShrink: 0,
     boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff1f)',

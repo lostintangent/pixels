@@ -113,9 +113,10 @@ const styles = stylex.create({
     borderRadius: 10,
     cursor: 'pointer',
     color: colorVars['--color-text-primary'],
+    // Hover only where it exists, so a tap never leaves a tool looking hovered.
     backgroundColor: {
       default: 'transparent',
-      ':hover': colorVars['--color-overlay-hover'],
+      '@media (hover: hover)': { ':hover': colorVars['--color-overlay-hover'] },
     },
     outline: {
       default: 'none',
@@ -131,7 +132,7 @@ const styles = stylex.create({
     color: colorVars['--color-on-accent'],
     backgroundColor: {
       default: colorVars['--color-accent'],
-      ':hover': colorVars['--color-accent'],
+      '@media (hover: hover)': { ':hover': colorVars['--color-accent'] },
     },
   },
 });
