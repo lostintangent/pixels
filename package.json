@@ -9,6 +9,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "fake-indexeddb": "^6.2.5",
     "lightningcss": "^1.33.0",
+    "playwright": "^1.58.0",
     "typescript": "~5.9.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0",
     "vite-plus": "1.0.0-rc.0"
@@ -32,7 +33,8 @@
     "lint": "vp lint",
     "fmt": "vp fmt",
     "test": "bun test",
-    "perf": "bun src/shared/perf/run.ts"
+    "perf": "bun src/shared/perf/run.ts",
+    "perf:browser": "bun src/shared/perf/browser/run.ts"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0"

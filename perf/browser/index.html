@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pixels browser perf fixture</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #9da5ad;
+      }
+      #stage {
+        position: relative;
+        width: 1440px;
+        height: 900px;
+        overflow: hidden;
+      }
+      canvas {
+        position: absolute;
+        inset: 0;
+        width: 1440px;
+        height: 900px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><canvas id="viewport"></canvas><canvas id="overlay"></canvas></div>
+    <script type="module" src="../../src/features/canvas/perf/fixture.ts"></script>
+  </body>
+</html>

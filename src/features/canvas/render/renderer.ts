@@ -173,7 +173,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     );
   }
 
-  function drawGrid(bitmap: BitmapDocument, view: Viewport): void {
+  function drawGrid(ctx: CanvasRenderingContext2D, bitmap: BitmapDocument, view: Viewport): void {
     if (overlay.grid === 'off' || (overlay.grid === 'auto' && view.zoom < 8)) return;
     const left = Math.max(0, Math.floor(-view.panX / view.zoom));
     const right = Math.min(bitmap.width, Math.ceil((view.cssWidth - view.panX) / view.zoom));
@@ -181,24 +181,24 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     const bottom = Math.min(bitmap.height, Math.ceil((view.cssHeight - view.panY) / view.zoom));
     if (left > right || top > bottom) return;
     for (let major = 0; major < 2; major++) {
-      overlayCtx.beginPath();
-      overlayCtx.strokeStyle = major
+      ctx.beginPath();
+      ctx.strokeStyle = major
         ? (overlay.colors?.gridMajor ?? 'rgba(0,0,0,.32)')
         : (overlay.colors?.gridMinor ?? 'rgba(0,0,0,.12)');
-      overlayCtx.lineWidth = 1;
+      ctx.lineWidth = 1;
       for (let x = left; x <= right; x++) {
         if ((x % 8 === 0) !== Boolean(major)) continue;
         const screenX = Math.round(view.panX + x * view.zoom) + 0.5;
-        overlayCtx.moveTo(screenX, view.panY + top * view.zoom);
-        overlayCtx.lineTo(screenX, view.panY + bottom * view.zoom);
+        ctx.moveTo(screenX, view.panY + top * view.zoom);
+        ctx.lineTo(screenX, view.panY + bottom * view.zoom);
       }
       for (let y = top; y <= bottom; y++) {
         if ((y % 8 === 0) !== Boolean(major)) continue;
         const screenY = Math.round(view.panY + y * view.zoom) + 0.5;
-        overlayCtx.moveTo(view.panX + left * view.zoom, screenY);
-        overlayCtx.lineTo(view.panX + right * view.zoom, screenY);
+        ctx.moveTo(view.panX + left * view.zoom, screenY);
+        ctx.lineTo(view.panX + right * view.zoom, screenY);
       }
-      overlayCtx.stroke();
+      ctx.stroke();
     }
   }
 
@@ -230,6 +230,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         bitmap.height * view.zoom,
       );
       viewportCtx.restore();
+      drawGrid(viewportCtx, bitmap, view);
       viewportDirty = false;
     }
     if (!overlayDirty) return;
@@ -237,7 +238,6 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     overlayCtx.clearRect(0, 0, surface.overlayCanvas.width, surface.overlayCanvas.height);
     overlayCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
     if (overlay.preview) drawPreview(view, overlay.preview);
-    drawGrid(bitmap, view);
     if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, phase);
     if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, phase);
     overlayDirty = false;
@@ -268,7 +268,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     },
     setViewport(next) {
       viewport = next;
-      viewportDirty = overlayDirty = true;
+      viewportDirty = true;
+      if (overlay.preview || overlay.marquee || overlay.cursor) overlayDirty = true;
       schedule();
     },
     setOverlay(next) {
@@ -280,6 +281,12 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         checkerB = b;
         viewportDirty = true;
       }
+      if (
+        next.grid !== overlay.grid ||
+        next.colors?.gridMinor !== overlay.colors?.gridMinor ||
+        next.colors?.gridMajor !== overlay.colors?.gridMajor
+      )
+        viewportDirty = true;
       overlay = next;
       overlayDirty = true;
       if ((!next.marquee || next.reducedMotion || systemReducedMotion) && timer) {

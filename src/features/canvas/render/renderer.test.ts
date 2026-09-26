@@ -105,7 +105,7 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
     const draws = viewportCanvas.context.drawCount;
     const uploads = documentCanvas.context.putImages.length;
     renderer.setOverlay({
-      grid: 'off',
+      grid: 'auto',
       cursor: { x: 1, y: 1, width: 1, height: 1 },
       marquee: null,
       preview: null,
