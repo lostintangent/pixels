@@ -12,8 +12,15 @@ function importedPath(context, node) {
   };
 }
 
+/** `model.ts` is a feature's optional framework-free entry, so cores can import it without UI. */
+const PUBLIC_ENTRIES = ['index', 'model'];
+
 const publicFeatureImports = defineRule({
-  meta: { messages: { privateImport: 'Import another feature through its public index.ts.' } },
+  meta: {
+    messages: {
+      privateImport: 'Import another feature through its public index.ts or model.ts.',
+    },
+  },
   create(context) {
     const check = (node) => {
       const imported = importedPath(context, node);
@@ -25,8 +32,10 @@ const publicFeatureImports = defineRule({
         0,
         imported.target.indexOf(`/features/${feature}`) + `/features/${feature}`.length,
       );
-      if (imported.target !== publicRoot && imported.target !== `${publicRoot}/index`)
-        context.report({ node, messageId: 'privateImport' });
+      const isPublic =
+        imported.target === publicRoot ||
+        PUBLIC_ENTRIES.some((entry) => imported.target === `${publicRoot}/${entry}`);
+      if (!isPublic) context.report({ node, messageId: 'privateImport' });
     };
     return { ImportDeclaration: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
   },

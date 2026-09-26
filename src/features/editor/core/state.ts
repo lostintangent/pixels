@@ -1,6 +1,6 @@
 import type { PackedColor, PixelRect } from '../../document';
-import { DEFAULT_PALETTE, rememberColor } from '../../palette';
-import type { PaletteState } from '../../palette';
+import { DEFAULT_PALETTE, rememberColor } from '../../palette/model';
+import type { PaletteState } from '../../palette/model';
 import type { ToolKind } from '../../tools';
 import { stepBrushSize } from './brush';
 

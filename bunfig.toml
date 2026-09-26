@@ -1,2 +1,0 @@
-[test]
-preload = ["./src/shared/test/stylex.ts"]
