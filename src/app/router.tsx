@@ -1,24 +1,27 @@
 import {
-  createRootRoute,
+  createRootRouteWithContext,
   createRoute,
   createRouter,
   Outlet,
   redirect,
 } from '@tanstack/react-router';
 import { EditorShell } from '../features/editor';
-import { createDocumentStore, loadDocument, loadMostRecentOrNew } from '../features/files';
+import { loadDocument, loadMostRecentOrNew, type DocumentStore } from '../features/files';
 import { createBitmapDocument, type BitmapDocument } from '../features/document';
 
-/** One store for the app's lifetime; every route loader below shares it. */
-const documentStore = createDocumentStore();
+interface RouterContext {
+  documentStore: DocumentStore;
+}
 
-const rootRoute = createRootRoute({ component: () => <Outlet /> });
+const rootRoute = createRootRouteWithContext<RouterContext>()({ component: () => <Outlet /> });
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  loader: async () => {
-    const { document } = await loadMostRecentOrNew(documentStore, () => crypto.randomUUID());
+  loader: async ({ context }) => {
+    const { document } = await loadMostRecentOrNew(context.documentStore, () =>
+      crypto.randomUUID(),
+    );
     throw redirect({ to: '/d/$docId', params: { docId: document.id }, replace: true });
   },
 });
@@ -30,22 +33,26 @@ const documentRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/d/$docId',
   staleTime: Infinity, // never revalidate a document that may be mid-edit
-  loader: async ({ params }): Promise<{ document: BitmapDocument; isNew: boolean }> => {
-    const document = await loadDocument(documentStore, params.docId);
+  gcTime: 0, // always re-read on revisit, since a document may have changed size or content elsewhere
+  loader: async ({ context, params }): Promise<{ document: BitmapDocument; isNew: boolean }> => {
+    const document = await loadDocument(context.documentStore, params.docId);
     if (document) return { document, isNew: false };
     return { document: createBitmapDocument(params.docId, 64, 64), isNew: true };
   },
   component: EditorShell,
 });
 
-export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, documentRoute]),
-});
+export function createAppRouter(documentStore: DocumentStore) {
+  return createRouter({
+    routeTree: rootRoute.addChildren([indexRoute, documentRoute]),
+    context: { documentStore },
+  });
+}
+
+export type AppRouter = ReturnType<typeof createAppRouter>;
 
 declare module '@tanstack/react-router' {
   interface Register {
-    router: typeof router;
+    router: AppRouter;
   }
 }
-
-export { documentStore };

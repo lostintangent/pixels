@@ -4,10 +4,14 @@ import { RouterProvider } from '@tanstack/react-router';
 import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import { useAppearance } from '../features/editor';
-import { router } from './router';
+import { createDocumentStore } from '../features/files';
+import { createAppRouter } from './router';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing #root');
+
+/** One store for the app's lifetime; every route loader shares it via router context. */
+const router = createAppRouter(createDocumentStore());
 
 createRoot(root).render(
   <React.StrictMode>

@@ -6,7 +6,7 @@ import type {
   DocumentStore,
   DocumentSummary,
 } from '../core/contracts';
-import { attachAutosave } from './autosaveRuntime';
+import { attachAutosave, saveDocument } from './autosaveRuntime';
 
 interface PendingTimer {
   id: number;
@@ -167,5 +167,43 @@ describe('attachAutosave', () => {
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     await advance(1000);
     expect(store.saves).toHaveLength(0);
+  });
+
+  test('dispose flushes any dirty tiles instead of dropping them', async () => {
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+    document.pixels[0] = packRgba(4, 5, 6, 255);
+    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+    autosave.dispose(); // long before the 5s debounce would ever fire on its own
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let the real encode + store.save settle
+    expect(store.saves).toHaveLength(1);
+    expect(store.saves[0]!.fullResave).toBe(false);
+  });
+
+  test('a second dispose is a no-op', async () => {
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+    document.pixels[0] = packRgba(4, 5, 6, 255);
+    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+    autosave.dispose();
+    autosave.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.saves).toHaveLength(1);
+  });
+});
+
+describe('saveDocument', () => {
+  test('performs one immediate full save, independent of any autosave subscription', async () => {
+    const document = createBitmapDocument('doc', 16, 16, 'Fresh');
+    document.pixels[0] = packRgba(1, 2, 3, 255);
+    const store = createFakeStore();
+    await saveDocument(document, store);
+    expect(store.saves).toHaveLength(1);
+    expect(store.saves[0]!.fullResave).toBe(true);
+    expect(store.saves[0]!.name).toBe('Fresh');
   });
 });

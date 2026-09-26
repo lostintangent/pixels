@@ -1,13 +1,38 @@
 import type { BitmapDocument } from '../../document';
 import { createAutosaveScheduler } from '../core/autosave';
 import type { AutosaveOptions, DocumentStore, TileCoord } from '../core/contracts';
-import { encodePng } from '../core/png';
+import { trackPendingSave } from '../core/pendingSaves';
 import { snapshotDocument } from '../core/snapshot';
 import { tilesForRect } from '../core/tiles';
+import { encodePngOffMainThread } from './pngWorkerClient';
+
+/**
+ * A single, immediate full save, independent of any live `attachAutosave` subscription. For a
+ * one-shot persist-then-navigate flow (New canvas, Open PNG) where there's no ongoing edit
+ * session to debounce. Registered as a pending save, so a `loadDocument` for the same id started
+ * right after can't race it.
+ */
+export function saveDocument(document: BitmapDocument, store: DocumentStore): Promise<void> {
+  const save = saveDocumentNow(document, store);
+  trackPendingSave(document.id, save);
+  return save;
+}
+
+async function saveDocumentNow(document: BitmapDocument, store: DocumentStore): Promise<void> {
+  const snapshot = snapshotDocument(document, [], true);
+  const thumbnail = await encodePngOffMainThread(
+    snapshot.thumbnailPixels.width,
+    snapshot.thumbnailPixels.height,
+    snapshot.thumbnailPixels.pixels,
+  );
+  await store.save(snapshot, thumbnail);
+}
 
 export interface Autosave {
   /** Forces an immediate save attempt, bypassing the debounce. Safe to call again after a failure. */
   flush(): Promise<void>;
+  /** Unsubscribes and flushes any dirty tiles one last time, so leaving a document never drops an
+   *  edit; a `loadDocument` for the same id started right after waits for that flush to commit. */
   dispose(): void;
 }
 
@@ -52,7 +77,7 @@ export function attachAutosave(
     onStatus('saving');
     try {
       const snapshot = snapshotDocument(document, coords, fullResave);
-      const thumbnail = await encodePng(
+      const thumbnail = await encodePngOffMainThread(
         snapshot.thumbnailPixels.width,
         snapshot.thumbnailPixels.height,
         snapshot.thumbnailPixels.pixels,
@@ -68,8 +93,15 @@ export function attachAutosave(
     }
   }
 
+  /** Every save attempt, whatever triggers it, is registered so a same-id load can wait for it. */
+  function runFlush(): Promise<void> {
+    const save = flush();
+    trackPendingSave(document.id, save);
+    return save;
+  }
+
   const scheduler = createAutosaveScheduler(() => {
-    flush().catch(() => {
+    runFlush().catch(() => {
       /* status already reported via onStatus; a scheduled flush must not throw unhandled */
     });
   }, options);
@@ -78,7 +110,7 @@ export function attachAutosave(
 
   function flushNow(): void {
     scheduler.cancel();
-    flush().catch(() => {});
+    runFlush().catch(() => {});
   }
   const hasWindow = typeof window !== 'undefined';
   if (hasWindow) {
@@ -87,15 +119,19 @@ export function attachAutosave(
   }
 
   return {
-    flush,
+    flush: runFlush,
     dispose() {
-      disposed = true;
+      if (disposed) return;
       unsubscribe();
       scheduler.cancel();
       if (hasWindow) {
         window.removeEventListener('pagehide', flushNow);
         window.removeEventListener('visibilitychange', flushNow);
       }
+      // Read `disposed` inside flush() is still false at this call, so this final flush runs;
+      // only after capturing it do we block any further explicit `.flush()` calls.
+      runFlush().catch(() => {});
+      disposed = true;
     },
   };
 }

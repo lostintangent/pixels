@@ -21,7 +21,7 @@ export { exportPng } from './export';
 export { createDocumentStore } from './storage/documentStore';
 
 export type { AttachAutosaveOptions, Autosave } from './runtime/autosaveRuntime';
-export { attachAutosave } from './runtime/autosaveRuntime';
+export { attachAutosave, saveDocument } from './runtime/autosaveRuntime';
 
 export type { RecentOrNewResult } from './loaders';
 export { loadDocument, loadMostRecentOrNew } from './loaders';
