@@ -1,6 +1,7 @@
 import { loadavg } from 'node:os';
 import { measure } from './harness';
 import { corePerfCases } from './core-cases';
+import { filesPerfCases } from './files-cases';
 
 const repeatIndex = process.argv.indexOf('--repeat');
 const repeat = repeatIndex >= 0 ? Number(process.argv[repeatIndex + 1]) : 1;
@@ -13,10 +14,11 @@ console.log(
     .map((value) => value.toFixed(2))
     .join('/')}`,
 );
+const allCases = [...corePerfCases, ...filesPerfCases];
 for (let run = 0; run < repeat; run++) {
   console.log(`Run ${run + 1}/${repeat}`);
-  for (const perfCase of corePerfCases) {
-    const result = measure(perfCase);
+  for (const perfCase of allCases) {
+    const result = await measure(perfCase);
     if (!result.passed) failed = true;
     const status = result.passed ? 'PASS' : 'FAIL';
     console.log(

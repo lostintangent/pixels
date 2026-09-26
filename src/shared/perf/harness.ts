@@ -4,7 +4,10 @@ export interface PerfCase {
   samples: number;
   prepare(): void;
   reset(): void;
-  run(): void;
+  /** Most cases are pure, synchronous typed-array work. A case whose real cost is inherently
+   *  asynchronous (e.g. `encodePng`'s `CompressionStream` deflate) may return a promise instead;
+   *  `measure` only awaits it when one comes back, so synchronous cases keep their exact timing. */
+  run(): void | Promise<unknown>;
 }
 
 export interface PerfResult {
@@ -21,14 +24,23 @@ function percentile(sorted: number[], fraction: number): number {
   return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)]!;
 }
 
-export function measure(perfCase: PerfCase): PerfResult {
+function isPromise(value: unknown): value is Promise<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Promise<unknown>).then === 'function'
+  );
+}
+
+export async function measure(perfCase: PerfCase): Promise<PerfResult> {
   Bun.gc(true);
   perfCase.prepare();
   const warmupEnd = performance.now() + 250;
   let warmupCount = 0;
   while (performance.now() < warmupEnd || warmupCount < 20) {
     perfCase.reset();
-    perfCase.run();
+    const warmupResult = perfCase.run();
+    if (isPromise(warmupResult)) await warmupResult;
     warmupCount++;
   }
   const blockP95Ms: [number, number, number] = [0, 0, 0];
@@ -40,7 +52,8 @@ export function measure(perfCase: PerfCase): PerfResult {
     for (let i = 0; i < times.length; i++) {
       perfCase.reset();
       const start = performance.now();
-      perfCase.run();
+      const result = perfCase.run();
+      if (isPromise(result)) await result;
       times[i] = performance.now() - start;
     }
     times.sort((a, b) => a - b);
