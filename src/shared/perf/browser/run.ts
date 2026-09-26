@@ -1,7 +1,9 @@
 import { loadavg } from 'node:os';
 import { resolve } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
-import { summarizeTrace, type TraceEvent, type TraceSummary } from './trace';
+import { runAppPerf } from './app';
+import { captureTrace } from './capture';
+import type { TraceSummary } from './trace';
 
 const repeatIndex = process.argv.indexOf('--repeat');
 const repeat = repeatIndex < 0 ? 1 : Number(process.argv[repeatIndex + 1]);
@@ -48,24 +50,7 @@ async function traceScenario(
     (isMaze) => window.__pixelsPerf!.reset(isMaze ? 'maze' : 'blank'),
     scenario === 'maze',
   );
-  const session = await context.newCDPSession(page);
-  const events: TraceEvent[] = [];
-  let dataLoss = false;
-  session.on('Tracing.dataCollected', ({ value }) =>
-    events.push(...(value as unknown as TraceEvent[])),
-  );
-  const complete = new Promise<void>((resolve, reject) => {
-    session.once('Tracing.tracingComplete', ({ dataLossOccurred }) => {
-      dataLoss = Boolean(dataLossOccurred);
-      if (dataLoss) reject(new Error('Chrome trace lost data'));
-      else resolve();
-    });
-  });
-  await session.send('Tracing.start', {
-    categories: 'devtools.timeline,disabled-by-default-devtools.timeline.frame,cc,toplevel',
-    transferMode: 'ReportEvents',
-  });
-  try {
+  return captureTrace(context, page, async () => {
     await page.evaluate((kind) => {
       const api = window.__pixelsPerf!;
       return kind === 'stroke'
@@ -74,12 +59,7 @@ async function traceScenario(
           ? api.runPanZoom()
           : api.runMazeFill();
     }, scenario);
-  } finally {
-    await session.send('Tracing.end');
-  }
-  await complete;
-  await session.detach();
-  return summarizeTrace(events);
+  });
 }
 
 await buildFixture();
@@ -180,6 +160,7 @@ try {
     await context.close();
   }
   if (failed && !calibrate) process.exitCode = 1;
+  if (!(await runAppPerf(browser, repeat, calibrate))) process.exitCode = 1;
 } finally {
   await browser.close();
   await server.stop(true);
