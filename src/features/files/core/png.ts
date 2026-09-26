@@ -95,7 +95,24 @@ async function deflateZlib(rows: Generator<Uint8Array>): Promise<Uint8Array> {
       total += value.length;
     }
   })();
-  for (const row of rows) await writer.write(row as unknown as BufferSource); // lib.dom types BufferSource as ArrayBuffer-only; our chunks are always plain-buffer Uint8Arrays
+  // Batch rows into ~1 MiB writes: one `write()` per scanline measurably dominates encode time
+  // (thousands of awaited stream calls for a large document), while batching keeps peak memory
+  // bounded regardless of image size, preserving the point of streaming in the first place.
+  const BATCH_BYTES = 1 << 20;
+  let batch = new Uint8Array(BATCH_BYTES);
+  let batchLength = 0;
+  for (const row of rows) {
+    if (batchLength + row.length > batch.length) {
+      await writer.write(batch.subarray(0, batchLength) as unknown as BufferSource);
+      batchLength = 0;
+      if (row.length > batch.length) batch = new Uint8Array(row.length); // grow for an unusually wide row
+    }
+    batch.set(row, batchLength);
+    batchLength += row.length;
+  }
+  if (batchLength > 0) {
+    await writer.write(batch.subarray(0, batchLength) as unknown as BufferSource);
+  }
   await writer.close();
   await pump;
   const out = new Uint8Array(total);
