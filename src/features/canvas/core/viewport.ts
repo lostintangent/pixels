@@ -84,11 +84,16 @@ export function settleZoom(viewport: Viewport, point: ScreenPoint): Viewport {
 }
 
 export function stepZoom(viewport: Viewport, direction: -1 | 1, point: ScreenPoint): Viewport {
-  const index = Math.min(
-    ZOOM_STEPS.length - 1,
-    Math.max(0, nearestStepIndex(viewport.zoom) + direction),
-  );
-  return zoomAt(viewport, ZOOM_STEPS[index]!, point);
+  const zoom = clampZoom(viewport.zoom);
+  if (direction > 0) {
+    for (const step of ZOOM_STEPS) if (step > zoom) return zoomAt(viewport, step, point);
+    return zoomAt(viewport, MAX_ZOOM, point);
+  }
+  for (let index = ZOOM_STEPS.length - 1; index >= 0; index--) {
+    const step = ZOOM_STEPS[index]!;
+    if (step < zoom) return zoomAt(viewport, step, point);
+  }
+  return zoomAt(viewport, MIN_ZOOM, point);
 }
 
 export function fitViewport(
@@ -104,8 +109,12 @@ export function fitViewport(
   const availableWidth = Math.max(1, viewport.cssWidth - edges.left - edges.right);
   const availableHeight = Math.max(1, viewport.cssHeight - edges.top - edges.bottom);
   const rawZoom = Math.min(availableWidth / documentWidth, availableHeight / documentHeight);
-  let zoom = MIN_ZOOM;
-  for (const step of ZOOM_STEPS) if (step <= rawZoom) zoom = step;
+  let zoom: number;
+  if (rawZoom >= 1) zoom = clampZoom(Math.floor(rawZoom));
+  else {
+    zoom = MIN_ZOOM;
+    for (const step of ZOOM_STEPS) if (step <= rawZoom) zoom = step;
+  }
   return {
     ...viewport,
     zoom,

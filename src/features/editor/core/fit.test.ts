@@ -27,7 +27,7 @@ describe('fitAroundIslands', () => {
 
   test('moves beside an island only when centering would still overlap it', () => {
     const fit = fitAroundIslands(view(1180, 820), 64, 64, FRAME, [panel(1180, 370, 397)]);
-    expect(fit).toMatchObject({ zoom: 8, panX: 173, panY: 162 });
+    expect(fit).toMatchObject({ zoom: 10, panX: 109, panY: 98 });
   });
 
   test('reserves the island column for a wide document that would run under it', () => {

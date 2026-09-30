@@ -79,9 +79,15 @@ export function CanvasSurface({
     renderer.setDocument(document.state);
     renderer.setViewport(viewport.state);
     renderer.setOverlay(overlay.state);
+    let viewWrittenBySurface: Viewport | null = null;
+    let cancelExternalSettle: (() => void) | null = null;
     const subscriptions = [
       document.subscribe((next) => renderer.setDocument(next)),
-      viewport.subscribe((next) => renderer.setViewport(next)),
+      viewport.subscribe((next) => {
+        // Fit and other session commands supersede an in-flight pinch settle.
+        if (next !== viewWrittenBySurface) cancelExternalSettle?.();
+        renderer.setViewport(next);
+      }),
       overlay.subscribe((next) => renderer.setOverlay(next)),
     ];
 
@@ -134,7 +140,10 @@ export function CanvasSurface({
       point: local(event),
       time: event.timeStamp,
     });
-    const setView = (next: Viewport) => viewport.setState(() => next);
+    const setView = (next: Viewport) => {
+      viewWrittenBySurface = next;
+      viewport.setState(() => next);
+    };
 
     function updateCursor(): void {
       if (gesture.mode.kind === 'pan') host.style.cursor = 'grabbing';
@@ -166,6 +175,7 @@ export function CanvasSurface({
       clearTimeout(settleTimer);
       settlePending = null;
     }
+    cancelExternalSettle = stopSettle;
 
     /** Jumps a settle in flight to its end, so a new gesture starts from a ladder zoom. */
     function finishSettle(): void {

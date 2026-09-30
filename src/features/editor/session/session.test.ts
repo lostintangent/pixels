@@ -163,7 +163,7 @@ test('an island measured after the first fit refits only an untouched view', () 
   const document = createBitmapDocument('fit', 64, 64);
   const session = createEditorSession({ document, save: null });
   session.setViewportSize(820, 1180, 2);
-  expect(session.viewport.state).toMatchObject({ zoom: 8, panX: 154, panY: 342 });
+  expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 90, panY: 278 });
 
   const panel = { left: 434, top: 16, right: 804, bottom: 397 };
   session.setIslands([panel]);
@@ -173,7 +173,21 @@ test('an island measured after the first fit refits only an untouched view', () 
   session.setIslands([]);
   expect(session.viewport.state).toMatchObject({ zoom: 6, panX: 10 });
   session.run({ type: 'zoom-fit' });
-  expect(session.viewport.state).toMatchObject({ zoom: 8, panX: 154 });
+  expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 90 });
+});
+
+test('an untouched fit refits on resize while a manually changed view keeps its zoom', () => {
+  const document = createBitmapDocument('fit', 16, 16);
+  const session = createEditorSession({ document, save: null });
+  session.setLayout('phone');
+  session.setViewportSize(390, 844, 3);
+  expect(session.viewport.state.zoom).toBe(22);
+  session.setViewportSize(360, 844, 3);
+  expect(session.viewport.state.zoom).toBe(20);
+  session.run({ type: 'zoom', direction: -1 });
+  expect(session.viewport.state.zoom).toBe(16);
+  session.setViewportSize(390, 844, 3);
+  expect(session.viewport.state.zoom).toBe(16);
 });
 
 test('a touch eyedropper tracks the drag, then returns to the previous tool on lift', () => {

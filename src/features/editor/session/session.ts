@@ -486,6 +486,7 @@ export function createEditorSession({
         view.devicePixelRatio === devicePixelRatio
       )
         return;
+      const untouchedFit = fitted && view === lastFit;
       // Keep the canvas anchored to its center while the window resizes.
       const dx = view.cssWidth ? (width - view.cssWidth) / 2 : 0;
       const dy = view.cssHeight ? (height - view.cssHeight) / 2 : 0;
@@ -497,7 +498,7 @@ export function createEditorSession({
         panX: Math.round(view.panX + dx),
         panY: Math.round(view.panY + dy),
       }));
-      if (!fitted || refitOnResize) {
+      if (!fitted || refitOnResize || untouchedFit) {
         refitOnResize = false;
         fit();
       }

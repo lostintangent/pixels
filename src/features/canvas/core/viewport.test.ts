@@ -37,9 +37,20 @@ test('zoom keeps the screen anchor fixed and clamps to supported range', () => {
 
 test('fit centers a document within the padded viewport', () => {
   const fitted = fitViewport(viewport, 100, 50, 20);
-  expect(fitted.zoom).toBe(6);
-  expect(fitted.panX).toBe(100);
-  expect(fitted.panY).toBe(150);
+  expect(fitted.zoom).toBe(7);
+  expect(fitted.panX).toBe(50);
+  expect(fitted.panY).toBe(125);
+});
+
+test('fit uses the largest whole-pixel zoom for small sprites', () => {
+  const phone = { ...viewport, cssWidth: 390, cssHeight: 844 };
+  const phoneFrame = { top: 72, right: 16, bottom: 148, left: 16 };
+  expect(fitViewport(phone, 16, 16, phoneFrame).zoom).toBe(22);
+  expect(fitViewport(phone, 32, 32, phoneFrame).zoom).toBe(11);
+  const desktopFrame = { top: 72, right: 76, bottom: 56, left: 76 };
+  expect(
+    fitViewport({ ...viewport, cssWidth: 1440, cssHeight: 900 }, 16, 16, desktopFrame).zoom,
+  ).toBe(48);
 });
 
 test('fit picks the largest power-of-two downscale that fits a large document', () => {
@@ -51,9 +62,9 @@ test('fit picks the largest power-of-two downscale that fits a large document', 
 
 test('asymmetric insets center the art in the actual free region', () => {
   const fitted = fitViewport(viewport, 100, 50, { top: 72, right: 76, bottom: 272, left: 56 });
-  expect(fitted.zoom).toBe(4);
-  expect(fitted.panX).toBe(190);
-  expect(fitted.panY).toBe(100);
+  expect(fitted.zoom).toBe(5);
+  expect(fitted.panX).toBe(140);
+  expect(fitted.panY).toBe(75);
 });
 
 test('step zoom shares the same integer and power-of-two ladder', () => {
@@ -65,4 +76,15 @@ test('step zoom shares the same integer and power-of-two ladder', () => {
   const pinched = zoomAt(one, 7.2, anchor);
   expect(pinched.zoom).toBe(7.2);
   expect(settleZoom(pinched, anchor).zoom).toBe(8);
+});
+
+test('off-ladder zoom steps to the next step in either direction', () => {
+  const anchor = { x: 100, y: 120 };
+  const fitted = { ...viewport, zoom: 22 };
+  const before = screenToDocument(fitted, anchor);
+  expect(stepZoom(fitted, 1, anchor).zoom).toBe(24);
+  expect(stepZoom(fitted, -1, anchor).zoom).toBe(16);
+  expect(screenToDocument(stepZoom(fitted, 1, anchor), anchor)).toEqual(before);
+  expect(stepZoom({ ...viewport, zoom: 7.2 }, 1, anchor).zoom).toBe(8);
+  expect(stepZoom({ ...viewport, zoom: 7.2 }, -1, anchor).zoom).toBe(6);
 });
