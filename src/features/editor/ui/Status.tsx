@@ -21,24 +21,29 @@ export function StatusPill() {
   const hex = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
+    if (!position.current || !hex.current) return;
+    // Each slot keeps one Text node whose data is rewritten. Assigning textContent would swap in a
+    // new node, rebuilding layout objects and dirtying layout from the document root on every move.
+    const positionText = textOf(position.current);
+    const hexText = textOf(hex.current);
     // Only what changed is written, so a stroke in one color repaints just the position slot.
     const shown = { idle: 'true', position: '', chip: '', hex: '' };
     const render = () => {
       const point = session.pointer.state;
       const node = root.current;
-      if (!node || !position.current || !chip.current || !hex.current) return;
+      if (!node || !chip.current) return;
       const idle = point ? 'false' : 'true';
       if (shown.idle !== idle) node.dataset.idle = shown.idle = idle;
       if (!point) return;
       const at = `${point.x}, ${point.y}`;
-      if (shown.position !== at) position.current.textContent = shown.position = at;
+      if (shown.position !== at) positionText.data = shown.position = at;
       const color = getPixel(session.bitmap.state, point);
       const visible = color !== null && alpha(color) > 0;
       // A transparent pixel keeps the chip as an empty ring, so the readout never shifts.
       const fill = visible ? toCss(color) : 'transparent';
       if (shown.chip !== fill) chip.current.style.backgroundColor = shown.chip = fill;
       const label = visible ? formatColor(color) : 'Transparent';
-      if (shown.hex !== label) hex.current.textContent = shown.hex = label;
+      if (shown.hex !== label) hexText.data = shown.hex = label;
     };
     render();
     const pointer = session.pointer.subscribe(render);
@@ -98,6 +103,10 @@ export function DocumentMeta() {
 
 const digits = (value: number) => String(value).length;
 
+// React renders these slots empty, so the Text node is ours. Reused across effect re-runs.
+const textOf = (slot: HTMLElement): Text =>
+  slot.firstChild instanceof Text ? slot.firstChild : slot.appendChild(document.createTextNode(''));
+
 const contains = (rect: PixelRect, point: PixelPoint) =>
   point.x >= rect.x &&
   point.y >= rect.y &&
@@ -147,19 +156,20 @@ const styles = stylex.create({
   },
   // Its own compositing layer, so a readout change re-rasters only this strip of text and never
   // the surface and soft shadow behind it.
+  // A line of inline blocks rather than a flex row: Chromium never treats a flex or grid item as a
+  // relayout boundary, so a contained slot in a flex row still dirtied layout from the document.
   readout: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: spacingVars['--spacing-2'],
+    display: 'block',
+    lineHeight: '16px',
+    whiteSpace: 'nowrap',
     willChange: 'transform',
   },
   // A relayout boundary: its size never depends on the text written into it.
   slot: {
-    display: 'block',
+    display: 'inline-block',
+    verticalAlign: 'top',
     contain: 'strict',
     blockSize: 16,
-    lineHeight: '16px',
-    whiteSpace: 'nowrap',
   },
   // Tabular digits are 1ch each. The widest position is two of the largest coordinate plus ", ".
   position: (places: number) => ({
@@ -168,7 +178,10 @@ const styles = stylex.create({
     color: colorVars['--color-text-primary'],
   }),
   chip: {
-    flexShrink: 0,
+    display: 'inline-block',
+    verticalAlign: 'top',
+    marginBlockStart: 3,
+    marginInline: spacingVars['--spacing-2'],
     width: 10,
     height: 10,
     borderRadius: 3,
