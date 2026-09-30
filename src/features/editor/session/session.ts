@@ -72,7 +72,8 @@ const FRAMES: Record<Layout, ViewportInsets> = {
 };
 
 type Gesture =
-  | { kind: 'stroke'; session: StrokeSession; last: PixelPoint; color: PackedColor }
+  /** `recent` is what the stroke adds to recent colors. Erasing adds nothing. */
+  | { kind: 'stroke'; session: StrokeSession; last: PixelPoint; recent: PackedColor | null }
   | { kind: 'line'; preview: LinePreview; color: PackedColor }
   | { kind: 'marquee'; anchor: PixelPoint }
   | { kind: 'move'; grab: PixelPoint }
@@ -585,7 +586,12 @@ export function createEditorSession({
       }
       const stroke = beginStroke(document(), brush, history);
       stroke.extend(cell);
-      gesture = { kind: 'stroke', session: stroke, last: cell, color };
+      gesture = {
+        kind: 'stroke',
+        session: stroke,
+        last: cell,
+        recent: tool === 'eraser' ? null : color,
+      };
     },
 
     extendGesture(inputs) {
@@ -627,9 +633,12 @@ export function createEditorSession({
       gesture = null;
       if (!current) return;
       switch (current.kind) {
-        case 'stroke':
-          if (current.session.end()) update((s) => recordPaintedColor(s, current.color));
+        case 'stroke': {
+          const { recent } = current;
+          if (current.session.end() && recent !== null)
+            update((s) => recordPaintedColor(s, recent));
           break;
+        }
         case 'line':
           if (current.preview.commit()) update((s) => recordPaintedColor(s, current.color));
           setOverlay({ preview: null });

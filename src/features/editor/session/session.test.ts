@@ -136,6 +136,20 @@ test('opening export commits a floating move before the preview snapshots pixels
   expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
 });
 
+test('painting adds its color to recents but erasing adds nothing', () => {
+  const document = createBitmapDocument('recent', 2, 1);
+  const preferences = { ...DEFAULT_TOOL_PREFERENCES, primary: A, recent: [] };
+  const session = createEditorSession({ document, save: null, preferences });
+  session.beginGesture(input(0, 0));
+  session.endGesture();
+  expect(session.state.state.recent).toEqual([A]);
+  session.run({ type: 'tool', tool: 'eraser' });
+  session.beginGesture(input(0, 0));
+  session.endGesture();
+  expect(Array.from(document.pixels)).toEqual([0, 0]);
+  expect(session.state.state.recent).toEqual([A]);
+});
+
 test('a session opened with the grid off draws no grid', () => {
   const document = createBitmapDocument('grid', 4, 4);
   const preferences = { ...DEFAULT_TOOL_PREFERENCES, gridEnabled: false };
