@@ -198,7 +198,7 @@ function Canvas({ session }: { session: EditorSession }) {
   const input = useMemo<CanvasInput>(
     () => ({
       hover: (sample) => session.hover(sample && sample.point, sample?.alt),
-      begin: (sample) => session.beginGesture(sample),
+      begin: (sample, pointer) => session.beginGesture(sample, pointer),
       extend: (samples) => session.extendGesture(samples),
       end: () => session.endGesture(),
       cancel: () => session.cancelGesture(),

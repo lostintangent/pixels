@@ -4,6 +4,7 @@ import { screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
 import type {
   OverlayPreview,
   OverlayState,
+  PointerKind,
   ScreenPoint,
   Viewport,
   ViewportInsets,
@@ -34,6 +35,7 @@ import { usesBrush } from '../core/tools';
 import type { EditorCommand, SelectionAction } from '../core/shortcuts';
 import {
   chooseColor,
+  finishPick,
   initialEditorState,
   openPanel,
   recordPaintedColor,
@@ -77,7 +79,9 @@ type Gesture =
   | { kind: 'line'; preview: LinePreview; color: PackedColor }
   | { kind: 'marquee'; anchor: PixelPoint }
   | { kind: 'move'; grab: PixelPoint }
-  | { kind: 'pick' };
+  | { kind: 'pick'; pointer: PointerKind; before: PackedColor }
+  // A fill lands on press, so the rest of the gesture only waits for the lift.
+  | { kind: 'fill' };
 
 export interface EditorSession {
   readonly state: Store<EditorState>;
@@ -107,7 +111,8 @@ export interface EditorSession {
   toDocument(point: ScreenPoint): PixelPoint;
   /** Alt previews the temporary eyedropper's single pixel instead of the brush. */
   hover(point: PixelPoint | null, alt?: boolean): void;
-  beginGesture(input: GestureInput): void;
+  /** A mouse unless told otherwise. Touch and pen make an eyedropper pick one-shot. */
+  beginGesture(input: GestureInput, pointer?: PointerKind): void;
   extendGesture(inputs: readonly GestureInput[]): void;
   endGesture(): void;
   /** Rolls the gesture back as if it never happened, for a touch that turns into a pinch. */
@@ -538,13 +543,13 @@ export function createEditorSession({
       setOverlay({ cursor: paints ? cursor : null });
     },
 
-    beginGesture({ point, alt }) {
+    beginGesture({ point, alt }, pointer = 'mouse') {
       if (gesture) return;
       const cell = { x: Math.floor(point.x), y: Math.floor(point.y) };
       const { tool, brushSize, primary } = state.state;
       if (tool === 'eyedropper' || (alt && tool !== 'select')) {
+        gesture = { kind: 'pick', pointer, before: primary };
         pickColor(cell);
-        gesture = { kind: 'pick' };
         return;
       }
       if (tool === 'select') {
@@ -573,7 +578,7 @@ export function createEditorSession({
           update((current) => recordPaintedColor(current, color));
           syncHistory();
         }
-        gesture = { kind: 'pick' };
+        gesture = { kind: 'fill' };
         return;
       }
       const brush = { color, size: brushSize, pixelPerfect: brushSize === 1 };
@@ -625,6 +630,8 @@ export function createEditorSession({
         case 'pick':
           if (state.state.tool === 'eyedropper') pickColor(cell);
           return;
+        case 'fill':
+          return;
       }
     },
 
@@ -649,8 +656,11 @@ export function createEditorSession({
           if (rect && rect.width * rect.height <= 1) setSelection(null);
           break;
         }
-        case 'move':
         case 'pick':
+          update((s) => finishPick(s, current.pointer));
+          break;
+        case 'move':
+        case 'fill':
           break;
       }
       syncHistory();
@@ -671,8 +681,14 @@ export function createEditorSession({
         case 'marquee':
           setSelection(null);
           break;
+        case 'pick': {
+          // A touch that becomes a pinch shouldn't leave its first finger's color behind.
+          const { before } = current;
+          update((s) => chooseColor(s, before, 'primary'));
+          break;
+        }
         case 'move':
-        case 'pick':
+        case 'fill':
           break;
       }
       syncHistory();

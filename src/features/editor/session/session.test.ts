@@ -175,3 +175,40 @@ test('an island measured after the first fit refits only an untouched view', () 
   session.run({ type: 'zoom-fit' });
   expect(session.viewport.state).toMatchObject({ zoom: 8, panX: 154 });
 });
+
+test('a touch eyedropper tracks the drag, then returns to the previous tool on lift', () => {
+  const document = createBitmapDocument('pick', 2, 1);
+  document.pixels.set([A, B]);
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'fill' });
+  session.run({ type: 'tool', tool: 'eyedropper' });
+  session.beginGesture(input(0, 0), 'touch');
+  expect(session.state.state.primary).toBe(A);
+  session.extendGesture([input(1, 0)]);
+  expect(session.state.state.primary).toBe(B);
+  expect(session.state.state.tool).toBe('eyedropper');
+  session.endGesture();
+  expect(session.state.state).toMatchObject({ primary: B, tool: 'fill' });
+});
+
+test('a mouse eyedropper stays active after a pick', () => {
+  const document = createBitmapDocument('pick', 1, 1);
+  document.pixels[0] = A;
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'eyedropper' });
+  session.beginGesture(input(0, 0));
+  session.endGesture();
+  expect(session.state.state).toMatchObject({ primary: A, tool: 'eyedropper' });
+});
+
+test('a touch pick that turns into a pinch keeps the tool and the earlier color', () => {
+  const document = createBitmapDocument('pick', 1, 1);
+  document.pixels[0] = A;
+  const session = createEditorSession({ document, save: null });
+  const before = session.state.state.primary;
+  session.run({ type: 'tool', tool: 'eyedropper' });
+  session.beginGesture(input(0, 0), 'touch');
+  expect(session.state.state.primary).toBe(A);
+  session.cancelGesture();
+  expect(session.state.state).toMatchObject({ primary: before, tool: 'eyedropper' });
+});

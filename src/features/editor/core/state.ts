@@ -1,3 +1,4 @@
+import type { PointerKind } from '../../canvas/model';
 import type { PackedColor, PixelRect } from '../../document';
 import { DEFAULT_PALETTE, rememberColor } from '../../palette/model';
 import type { PaletteState } from '../../palette/model';
@@ -18,6 +19,8 @@ export interface DocumentSummary {
 /** Everything React renders. Pointer-rate state (hover, viewport pan) lives elsewhere. */
 export interface EditorState extends PaletteState {
   tool: ToolKind;
+  /** The tool before this one, where a one-shot eyedropper returns. Null after a reload. */
+  previousTool: ToolKind | null;
   brushSize: number;
   gridEnabled: boolean;
   chromeHidden: boolean;
@@ -55,6 +58,7 @@ export function initialEditorState(
 ): EditorState {
   return {
     ...toolPreferences(preferences),
+    previousTool: null,
     chromeHidden: false,
     panel: null,
     selection: null,
@@ -72,7 +76,17 @@ export function toolPreferences(state: ToolPreferences): ToolPreferences {
 }
 
 export function selectTool(state: EditorState, tool: ToolKind): EditorState {
-  return state.tool === tool ? state : { ...state, tool };
+  return state.tool === tool ? state : { ...state, tool, previousTool: state.tool };
+}
+
+/**
+ * Where an eyedropper pick leaves you. A mouse keeps the eyedropper, since Alt already covers
+ * quick picks there. Touch and pen have no Alt, so a pick is one-shot and hands you back the
+ * tool you came from, or the pencil when there isn't one.
+ */
+export function finishPick(state: EditorState, pointer: PointerKind): EditorState {
+  if (pointer === 'mouse' || state.tool !== 'eyedropper') return state;
+  return selectTool(state, state.previousTool ?? 'pencil');
 }
 
 export function stepBrush(state: EditorState, direction: -1 | 1): EditorState {

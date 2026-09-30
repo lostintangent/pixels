@@ -1,4 +1,5 @@
 export type { DocumentPoint, ScreenPoint, Viewport, ViewportInsets } from './core/contracts';
+export type { PointerKind } from './core/gestures';
 export type {
   CanvasRenderer,
   OverlayPreview,

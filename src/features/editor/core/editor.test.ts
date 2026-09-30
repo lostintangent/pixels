@@ -5,6 +5,7 @@ import { resolveShortcut } from './shortcuts';
 import type { KeyPress } from './shortcuts';
 import {
   chooseColor,
+  finishPick,
   initialEditorState,
   recordPaintedColor,
   selectTool,
@@ -162,6 +163,31 @@ describe('editor state', () => {
     expect(next.recent).toEqual([]);
     const swapped = swapColors(next);
     expect([swapped.primary, swapped.secondary]).toEqual([next.secondary, red]);
+  });
+
+  test('a mouse pick keeps the eyedropper', () => {
+    const picking = selectTool(selectTool(base, 'fill'), 'eyedropper');
+    expect(finishPick(picking, 'mouse')).toBe(picking);
+  });
+
+  test('a touch or pen pick returns to the tool before the eyedropper', () => {
+    const picking = selectTool(selectTool(base, 'fill'), 'eyedropper');
+    expect(finishPick(picking, 'touch').tool).toBe('fill');
+    expect(finishPick(picking, 'pen').tool).toBe('fill');
+  });
+
+  test('a one-shot pick falls back to the pencil when there was no earlier tool', () => {
+    const reloaded = initialEditorState({ name: 'Untitled', width: 8, height: 8 }, null, {
+      ...toolPreferences(base),
+      tool: 'eyedropper',
+    });
+    expect(reloaded.previousTool).toBeNull();
+    expect(finishPick(reloaded, 'touch').tool).toBe('pencil');
+  });
+
+  test('finishing a temporary pick leaves other tools alone', () => {
+    const drawing = selectTool(base, 'line');
+    expect(finishPick(drawing, 'touch')).toBe(drawing);
   });
 
   test('records painted colors as recents', () => {

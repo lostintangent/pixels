@@ -45,6 +45,12 @@ export function ColorSheet({
 }: ColorSheetProps) {
   const current = editing === 'primary' ? primary : secondary;
   const choose = (color: PackedColor) => onChoose(color, editing);
+  // A swatch is a finished choice, so the sheet gets out of the way of the canvas. The picker
+  // and hex field are for fine-tuning and keep it open.
+  const chooseAndClose = (color: PackedColor) => {
+    choose(color);
+    onOpenChange(false);
+  };
   return (
     <BottomSheet isOpen={isOpen} onOpenChange={onOpenChange} label="Colors" height="hug">
       <div {...stylex.props(styles.sheet)}>
@@ -69,14 +75,20 @@ export function ColorSheet({
         </div>
         <ColorPicker color={current} onChange={choose} size="lg" />
         <div {...stylex.props(styles.label)}>Palette</div>
-        <Swatches label="Palette" colors={palette} primary={current} onChoose={choose} size="lg" />
+        <Swatches
+          label="Palette"
+          colors={palette}
+          primary={current}
+          onChoose={chooseAndClose}
+          size="lg"
+        />
         <div {...stylex.props(styles.label)}>Recent</div>
         <Swatches
           label="Recent colors"
           colors={recent}
           slots={recentSlots}
           primary={current}
-          onChoose={choose}
+          onChoose={chooseAndClose}
           size="lg"
         />
       </div>

@@ -6,6 +6,7 @@ import type { DocumentPoint, ScreenPoint, Viewport } from '../core/contracts';
 import {
   type GestureEvent,
   type GesturePointer,
+  type PointerKind,
   initialGestureState,
   isNavigating,
   stepGesture,
@@ -26,7 +27,8 @@ export interface CanvasPointerSample {
 export interface CanvasInput {
   /** The point under a mouse or pen that isn't navigating, with Alt for a temporary eyedropper. */
   hover(sample: CanvasPointerSample | null): void;
-  begin(sample: CanvasPointerSample): void;
+  /** Which kind of pointer started it, since touch and pen can't hold modifier keys. */
+  begin(sample: CanvasPointerSample, pointer: PointerKind): void;
   extend(samples: readonly CanvasPointerSample[]): void;
   end(): void;
   /** Rolls back the gesture, for a touch that turns into a pinch. */
@@ -128,8 +130,7 @@ export function CanvasSurface({
     });
     const pointer = (event: PointerEvent): GesturePointer => ({
       id: event.pointerId,
-      kind:
-        event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse',
+      kind: pointerKind(event),
       point: local(event),
       time: event.timeStamp,
     });
@@ -206,7 +207,7 @@ export function CanvasSurface({
       for (const command of step.commands) {
         switch (command.type) {
           case 'begin':
-            if (source) input.begin(sample(source));
+            if (source) input.begin(sample(source), pointerKind(source));
             break;
           case 'extend':
             if (source) {
@@ -462,3 +463,7 @@ const styles = stylex.create({
     pointerEvents: 'none',
   },
 });
+
+function pointerKind(event: PointerEvent): PointerKind {
+  return event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse';
+}
