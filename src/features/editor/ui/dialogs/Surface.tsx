@@ -6,8 +6,8 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Link2, Unlink2 } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { MAX_DOCUMENT_SIDE } from '../../../document';
+import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
+import { canStepSide, sideProblem } from '../../core/dimensions';
 import type { Layout } from '../../session/session';
 
 export interface SurfaceProps {
@@ -120,9 +120,8 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export function sideError(value: number): { type: 'error'; message: string } | undefined {
-  if (!Number.isInteger(value) || value < 1) return { type: 'error', message: 'At least 1 px' };
-  if (value > MAX_DOCUMENT_SIDE) return { type: 'error', message: `Up to ${MAX_DOCUMENT_SIDE} px` };
-  return undefined;
+  const message = sideProblem(value);
+  return message === null ? undefined : { type: 'error', message };
 }
 
 export interface DimensionsProps {
@@ -145,35 +144,58 @@ export function Dimensions({
   const Glyph = isLinked ? Link2 : Unlink2;
   return (
     <div {...stylex.props(styles.dimensions)}>
-      <NumberInput
-        label="Width"
-        value={width}
-        onChange={onWidthChange}
-        min={1}
-        max={MAX_DOCUMENT_SIDE}
-        formatValue={(value) => `${value} px`}
-        status={sideError(width)}
-        statusVariant="detached"
-      />
-      <IconButton
-        variant="ghost"
-        label={isLinked ? 'Unlink width and height' : 'Link width and height'}
-        tooltip={isLinked ? 'Unlink' : 'Link'}
-        icon={<Glyph size={18} />}
-        onClick={() => onLinkedChange(!isLinked)}
-      />
-      <NumberInput
-        label="Height"
-        value={height}
-        onChange={onHeightChange}
-        min={1}
-        max={MAX_DOCUMENT_SIDE}
-        formatValue={(value) => `${value} px`}
-        status={sideError(height)}
-        statusVariant="detached"
-      />
+      <SideInput label="Width" value={width} onChange={onWidthChange} />
+      <div {...stylex.props(styles.link)}>
+        <IconButton
+          variant="ghost"
+          label={isLinked ? 'Unlink width and height' : 'Link width and height'}
+          tooltip={isLinked ? 'Unlink' : 'Link'}
+          icon={<Glyph size={18} />}
+          onClick={() => onLinkedChange(!isLinked)}
+        />
+      </div>
+      <SideInput label="Height" value={height} onChange={onHeightChange} />
     </div>
   );
+}
+
+// No min or max: NumberInput would clamp silently, and a typo shouldn't become a 64 MiB canvas.
+function SideInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <NumberInput
+      label={label}
+      value={value}
+      onChange={onChange}
+      formatValue={(side) => `${side} px`}
+      status={sideError(value)}
+      statusVariant="detached"
+      onFocus={selectOnceEditable}
+      onKeyDown={keepStepsInRange}
+    />
+  );
+}
+
+// Focus swaps "64 px" for "64" on the next render, which drops the caret at the end.
+function selectOnceEditable(event: FocusEvent<HTMLInputElement>): void {
+  const input = event.currentTarget;
+  requestAnimationFrame(() => {
+    if (document.activeElement === input) input.select();
+  });
+}
+
+function keepStepsInRange(event: KeyboardEvent<HTMLInputElement>): void {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+  const text = event.currentTarget.value.trim();
+  if (!canStepSide(text === '' ? Number.NaN : Number(text), event.key === 'ArrowUp' ? 1 : -1))
+    event.preventDefault();
 }
 
 export function formatBytes(bytes: number): string {
@@ -231,7 +253,10 @@ const styles = stylex.create({
   dimensions: {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
-    alignItems: 'end',
+    // Top-aligned so an error under one side doesn't shift the other.
+    alignItems: 'start',
     gap: spacingVars['--spacing-2'],
   },
+  // The field label's line plus its gap, which puts the button on the input row.
+  link: { display: 'flex', marginTop: 24 },
 });
