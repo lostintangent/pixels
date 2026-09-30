@@ -9,6 +9,23 @@ const loadBudgetMs = 500;
 const initialJsBudgetKiB = 170;
 const initialCssBudgetKiB = 40;
 
+/** One core of steady work keeps background Chromium on the same performance tier. */
+async function withConditionedCpu<T>(run: () => Promise<T>): Promise<T> {
+  const worker = Bun.spawn(['yes'], { stdout: 'ignore', stderr: 'ignore' });
+  const stop = () => worker.kill();
+  process.once('exit', stop);
+  try {
+    await Bun.sleep(500);
+    if (worker.exitCode !== null) throw new Error('CPU conditioning worker exited early');
+    console.log(`CPU conditioning: one yes worker (pid ${worker.pid}) during real editor input`);
+    return await run();
+  } finally {
+    process.off('exit', stop);
+    stop();
+    await worker.exited;
+  }
+}
+
 function p95(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.ceil(sorted.length * 0.95) - 1]!;
@@ -125,6 +142,8 @@ export async function runAppPerf(
   browser: Browser,
   repeat: number,
   calibrate: boolean,
+  injectStrokeMs = 0,
+  conditionCpu = true,
 ): Promise<boolean> {
   let failed = false;
   return withProductionPreview({ manifest: true }, async ({ output, port, baseUrl }) => {
@@ -185,7 +204,12 @@ export async function runAppPerf(
           .join('/')}`,
       );
     }
-    if (!(await runEditorInput(browser, baseUrl, repeat, calibrate))) failed = true;
-    return !failed || calibrate;
+    if (!conditionCpu) console.log('CPU conditioning: disabled for diagnostic run');
+    const input = conditionCpu
+      ? await withConditionedCpu(() =>
+          runEditorInput(browser, baseUrl, repeat, calibrate, injectStrokeMs),
+        )
+      : await runEditorInput(browser, baseUrl, repeat, calibrate, injectStrokeMs);
+    return (!failed && input) || calibrate;
   });
 }

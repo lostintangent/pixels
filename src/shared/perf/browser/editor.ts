@@ -1,7 +1,10 @@
+import { mkdir } from 'node:fs/promises';
 import { loadavg } from 'node:os';
+import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { captureTrace } from './capture';
-import type { TraceSummary } from './trace';
+import type { TraceEvent, TraceSummary } from './trace';
 
 interface Profile {
   name: 'desktop' | 'phone';
@@ -239,6 +242,7 @@ export async function runEditorInput(
   baseUrl: string,
   repeat: number,
   calibrate: boolean,
+  injectStrokeMs = 0,
 ): Promise<boolean> {
   let failed = false;
   for (const profile of profiles) {
@@ -257,12 +261,39 @@ export async function runEditorInput(
         await prepareDocument(page, baseUrl, profile, run);
         for (const scenario of ['stroke', 'pan'] as const) {
           const blocks: TraceSummary[] = [];
+          const retainedTraces: TraceEvent[][] = [];
+          const retainTrace = process.env.PIXELS_PERF_TRACE_DIR
+            ? (events: TraceEvent[]) => retainedTraces.push(events)
+            : undefined;
           for (let block = 0; block < 3; block++) {
             if (scenario === 'stroke') {
               const path = await strokePath(page, profile);
-              const summary = await captureTrace(context, page, (markFirstInput) =>
-                drawStroke(context, page, profile, path, markFirstInput),
-              );
+              if (profile.name === 'desktop' && injectStrokeMs > 0)
+                await page.evaluate((ms) => {
+                  const busy = () => {
+                    const end = performance.now() + ms;
+                    while (performance.now() < end) {
+                      /* synthetic main-thread work */
+                    }
+                  };
+                  window.addEventListener('pointermove', busy, true);
+                  (window as Window & { __pixelsPerfStop?: () => void }).__pixelsPerfStop = () =>
+                    window.removeEventListener('pointermove', busy, true);
+                }, injectStrokeMs);
+              let summary: TraceSummary;
+              try {
+                summary = await captureTrace(
+                  context,
+                  page,
+                  (markFirstInput) => drawStroke(context, page, profile, path, markFirstInput),
+                  retainTrace,
+                );
+              } finally {
+                if (profile.name === 'desktop' && injectStrokeMs > 0)
+                  await page.evaluate(() =>
+                    (window as Window & { __pixelsPerfStop?: () => void }).__pixelsPerfStop?.(),
+                  );
+              }
               blocks.push(summary);
               console.log(
                 `stroke block ${profile.name} ${run + 1}/${repeat} ${block + 1}/3: on-time ${summary.onTimeFrames}/${summary.eligibleFrames}, states ${JSON.stringify(summary.presentationStates)}, misses ${JSON.stringify(summary.missedFrameRuns)}, before input ${JSON.stringify(summary.preInputMisses)}, main p95 ${summary.mainP95Ms.toFixed(3)} ms, pipeline p95 ${summary.pipelineP95Ms.toFixed(3)} ms, stages ${JSON.stringify(summary.stageP95Ms)}, loadavg ${loadavg()
@@ -273,8 +304,11 @@ export async function runEditorInput(
               await afterPaint(page);
             } else {
               blocks.push(
-                await captureTrace(context, page, (markFirstInput) =>
-                  panZoom(context, page, profile, markFirstInput),
+                await captureTrace(
+                  context,
+                  page,
+                  (markFirstInput) => panZoom(context, page, profile, markFirstInput),
+                  retainTrace,
                 ),
               );
             }
@@ -295,6 +329,24 @@ export async function runEditorInput(
           }
           if (errors.length) throw new Error(errors.join(', '));
           const { passed, details } = summarizeBlocks(blocks, scenario === 'stroke' ? 4 : 3);
+          if (!passed && process.env.PIXELS_PERF_TRACE_DIR) {
+            const worstBlock = blocks.reduce(
+              (worst, block, index) =>
+                block.eligibleFrames - block.onTimeFrames >
+                blocks[worst]!.eligibleFrames - blocks[worst]!.onTimeFrames
+                  ? index
+                  : worst,
+              0,
+            );
+            const directory = process.env.PIXELS_PERF_TRACE_DIR;
+            await mkdir(directory, { recursive: true });
+            const path = join(
+              directory,
+              `${profile.name}-${scenario}-${run + 1}-block-${worstBlock + 1}.json.gz`,
+            );
+            await Bun.write(path, gzipSync(JSON.stringify(retainedTraces[worstBlock])));
+            console.log(`Failed frame trace: ${path}`);
+          }
           if (!passed) failed = true;
           console.log(
             `${passed ? 'PASS' : 'FAIL'} real editor ${profile.name} ${profile.width}×${profile.height} @ ${profile.dpr}× ${scenario} ${run + 1}/${repeat}: ${details}, loadavg ${loadavg()

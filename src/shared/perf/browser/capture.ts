@@ -5,6 +5,7 @@ export async function captureTrace(
   context: BrowserContext,
   page: Page,
   action: (markFirstInput: () => Promise<void>) => Promise<void>,
+  onTrace?: (events: TraceEvent[]) => void,
 ): Promise<TraceSummary> {
   const session = await context.newCDPSession(page);
   const events: TraceEvent[] = [];
@@ -41,5 +42,6 @@ export async function captureTrace(
     )
   )
     throw new Error('Chrome trace has no first-input clock marker');
+  onTrace?.(events);
   return summarizeTrace(events);
 }

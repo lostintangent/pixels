@@ -54,6 +54,9 @@ function groupExists(pid: number): boolean {
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    // macOS can return EPERM for a group after every process owned by this
+    // harness has exited. No remaining process in it can be signaled by us.
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
     throw error;
   }
 }

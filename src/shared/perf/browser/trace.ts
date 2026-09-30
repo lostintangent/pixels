@@ -13,6 +13,7 @@ export interface TraceEvent {
       frame_sequence: number;
       layer_tree_host_id: number;
       state: string;
+      frame_type?: string;
       has_high_latency: boolean;
     };
     args?: { interval_us?: number };
@@ -79,8 +80,13 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
     const report = event.args?.frame_reporter;
     if (event.name === 'PipelineReporter' && event.ph === 'b' && report) {
       const key = `${report.frame_source}:${report.frame_sequence}:${report.layer_tree_host_id}`;
-      reports.set(key, report);
-      reportTimes.set(key, event.ts);
+      const existing = reports.get(key);
+      // A forked reporter tracks a second pipeline for the same display frame.
+      // Its partial/drop state must not replace the primary reporter's result.
+      if (!existing || (existing.frame_type === 'FORKED' && report.frame_type !== 'FORKED')) {
+        reports.set(key, report);
+        reportTimes.set(key, event.ts);
+      }
     }
     if (event.name === 'Scheduler::BeginFrame') {
       const interval = event.args?.args?.interval_us;
