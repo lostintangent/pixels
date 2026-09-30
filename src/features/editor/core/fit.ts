@@ -14,7 +14,8 @@ const ISLAND_GAP = 12;
 
 /**
  * Fits the document inside `frame` and keeps it truly centered unless that would put it under an
- * island. Then it steps down the zoom ladder, still centered, until the document clears. Moving
+ * island. Then it steps down by whole-number zooms above 1× and ladder steps below, still
+ * centered, until the document clears. Moving
  * beside the island's column is the last resort. So a tall window doesn't shove a document
  * sideways for a panel that sits entirely above it.
  */
@@ -40,7 +41,7 @@ export function fitAroundIslands(
   const center = frameCenter(view, frame);
   let zoom = centered.zoom;
   while (zoom > beside.zoom) {
-    zoom = stepZoom({ ...view, zoom }, -1, center).zoom;
+    zoom = zoom > 1 ? zoom - 1 : stepZoom({ ...view, zoom }, -1, center).zoom;
     const smaller = centerAt(view, zoom, documentWidth, documentHeight, center);
     const rect = documentRect(smaller, documentWidth, documentHeight);
     if (!islands.some((island) => overlaps(rect, island))) return smaller;
@@ -80,6 +81,7 @@ function centerAt(
   return {
     ...view,
     zoom,
+    fittedZoom: zoom,
     panX: x - (documentWidth * zoom) / 2,
     panY: y - (documentHeight * zoom) / 2,
   };

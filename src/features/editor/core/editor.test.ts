@@ -13,7 +13,7 @@ import {
   swapColors,
   toolPreferences,
 } from './state';
-import { formatZoom } from './zoom';
+import { displayZoom, formatZoom } from './zoom';
 
 const press = (key: string, modifiers: Partial<KeyPress> = {}): KeyPress => ({
   key,
@@ -52,6 +52,12 @@ describe('brush ladder', () => {
 });
 
 describe('zoom label', () => {
+  test('names a fitted whole zoom exactly and quantizes a moving pinch', () => {
+    expect(displayZoom({ zoom: 22, fittedZoom: 22 })).toBe(22);
+    expect(displayZoom({ zoom: 11, fittedZoom: 11 })).toBe(11);
+    expect(displayZoom({ zoom: 21.8 })).toBe(24);
+    expect(displayZoom({ zoom: 7 })).toBe(8);
+  });
   test('uses a multiplier at and above 1×', () => {
     expect(formatZoom(1)).toBe('1×');
     expect(formatZoom(24)).toBe('24×');

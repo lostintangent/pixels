@@ -66,6 +66,7 @@ export function zoomAt(viewport: Viewport, requestedZoom: number, point: ScreenP
   return {
     ...viewport,
     zoom,
+    fittedZoom: undefined,
     panX: point.x - (point.x - viewport.panX) * ratio,
     panY: point.y - (point.y - viewport.panY) * ratio,
   };
@@ -118,6 +119,7 @@ export function fitViewport(
   return {
     ...viewport,
     zoom,
+    fittedZoom: zoom,
     panX: edges.left + (availableWidth - documentWidth * zoom) / 2,
     panY: edges.top + (availableHeight - documentHeight * zoom) / 2,
   };

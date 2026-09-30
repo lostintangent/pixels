@@ -30,6 +30,12 @@ describe('fitAroundIslands', () => {
     expect(fit).toMatchObject({ zoom: 10, panX: 109, panY: 98 });
   });
 
+  test('drops one whole zoom when that clears an island', () => {
+    const grazing = { left: 684, top: 100, right: 752, bottom: 500 };
+    const fit = fitAroundIslands(view(768, 900), 16, 16, FRAME, [grazing]);
+    expect(fit).toMatchObject({ zoom: 37, fittedZoom: 37, panX: 88, panY: 162 });
+  });
+
   test('reserves the island column for a wide document that would run under it', () => {
     const fit = fitAroundIslands(view(1440, 900), 128, 64, FRAME, [panel(1440, 244, 360)]);
     expect(fit).toMatchObject({ zoom: 8, panX: 110, panY: 202 });

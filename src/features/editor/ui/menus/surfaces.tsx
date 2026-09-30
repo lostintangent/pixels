@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useEffectEvent } from 'react';
 import type { ReactElement } from 'react';
-import { snapZoom } from '../../../canvas';
 import { GRID_MIN_ZOOM } from '../../core/zoom';
 import { setAppearance, useAppearance } from '../../session/appearance';
 import type { Appearance } from '../../session/appearance';
@@ -142,7 +141,7 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
 /** Zoom level as the trigger, with fit, actual size, and the grid behind it. */
 export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   const session = useEditor();
-  const zoom = useSelector(session.viewport, (view) => snapZoom(view.zoom));
+  const gridTooSmall = useSelector(session.viewport, (view) => view.zoom < GRID_MIN_ZOOM);
   const grid = useEditorState((state) => state.gridEnabled);
   const phone = layout === 'phone';
   const keys = (shortcut: string) => (phone ? undefined : <Shortcut keys={shortcut} />);
@@ -179,7 +178,7 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
     {
       label: 'Pixel grid',
       icon: icon(Grid3x3),
-      description: grid && zoom < GRID_MIN_ZOOM ? `Shows from ${GRID_MIN_ZOOM}×` : undefined,
+      description: grid && gridTooSmall ? `Shows from ${GRID_MIN_ZOOM}×` : undefined,
       endContent: grid ? icon(Check) : keys("mod+'"),
       onClick: () => session.run({ type: 'toggle-grid' }),
     },

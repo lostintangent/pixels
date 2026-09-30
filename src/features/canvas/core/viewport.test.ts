@@ -45,7 +45,10 @@ test('fit centers a document within the padded viewport', () => {
 test('fit uses the largest whole-pixel zoom for small sprites', () => {
   const phone = { ...viewport, cssWidth: 390, cssHeight: 844 };
   const phoneFrame = { top: 72, right: 16, bottom: 148, left: 16 };
-  expect(fitViewport(phone, 16, 16, phoneFrame).zoom).toBe(22);
+  const fitted = fitViewport(phone, 16, 16, phoneFrame);
+  expect(fitted.zoom).toBe(22);
+  expect(fitted.fittedZoom).toBe(22);
+  expect(zoomAt(fitted, 21.8, { x: 100, y: 100 }).fittedZoom).toBeUndefined();
   expect(fitViewport(phone, 32, 32, phoneFrame).zoom).toBe(11);
   const desktopFrame = { top: 72, right: 76, bottom: 56, left: 76 };
   expect(

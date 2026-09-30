@@ -4,8 +4,7 @@ import type { DropdownMenuButtonProps } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
 import { useSelector } from '@tanstack/react-store';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
-import { snapZoom } from '../../../canvas';
-import { formatZoom } from '../../core/zoom';
+import { displayZoom, formatZoom } from '../../core/zoom';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
 
@@ -45,9 +44,8 @@ export function DocMenu({ layout }: { layout: Layout }) {
 /** The zoom level, behind which sit fit, actual size, and the grid. */
 export function ZoomMenu({ layout }: { layout: Layout }) {
   const session = useEditor();
-  // Every rest state sits on a ladder step. Mid-gesture, the label names the step the zoom
-  // will settle to, so a pinch re-renders only when it crosses one.
-  const zoom = useSelector(session.viewport, (view) => snapZoom(view.zoom));
+  // Whole-number fits keep their exact label. Mid-pinch labels still change only at ladder steps.
+  const zoom = useSelector(session.viewport, displayZoom);
   return (
     <DeferredMenu
       surface="ZoomMenu"
