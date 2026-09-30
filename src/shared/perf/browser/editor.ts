@@ -18,6 +18,11 @@ const profiles: Profile[] = [
   { name: 'phone', width: 390, height: 844, dpr: 3 },
 ];
 
+const mainThreadTargetMs = {
+  desktop: { stroke: 1.95, pan: 0.8 },
+  phone: { stroke: 0.9, pan: 0.75 },
+} as const;
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)]!;
@@ -328,7 +333,10 @@ export async function runEditorInput(
             await afterPaint(page);
           }
           if (errors.length) throw new Error(errors.join(', '));
-          const { passed, details } = summarizeBlocks(blocks, scenario === 'stroke' ? 4 : 3);
+          const { passed, details } = summarizeBlocks(
+            blocks,
+            mainThreadTargetMs[profile.name][scenario],
+          );
           if (!passed && process.env.PIXELS_PERF_TRACE_DIR) {
             const worstBlock = blocks.reduce(
               (worst, block, index) =>
