@@ -12,14 +12,22 @@ export const styles = stylex.create({
   },
 });`;
 
-// Bun 1.4.2 rejects valid media queries after the compiler warms up. Each
-// source varies to exercise compilation rather than a cache of identical input.
-// This checks correctness, not speed. A busy machine can exceed the default 5 s timeout.
+// Bun 1.4.2's JIT miscompiles StyleX's tokenizer, which then rejects valid media queries after
+// the compiler warms up. See AGENTS.md. Each source varies to exercise compilation rather than a
+// cache of identical input. This checks correctness, not speed. A busy machine can exceed the
+// default 5 s timeout.
 test('StyleX keeps compiling media queries after the JIT warms up', async () => {
   const transform = (stylex({ useCSSLayers: true }) as unknown as { transform: Transform })
     .transform;
   for (let file = 0; file < 200; file++) {
-    const result = await transform.call({}, source(file), `${import.meta.dir}/fixture-${file}.tsx`);
+    const id = `${import.meta.dir}/fixture-${file}.tsx`;
+    const result = await transform.call({}, source(file), id).catch((cause: unknown) => {
+      throw new Error(
+        `Bun ${Bun.version} (${Bun.revision.slice(0, 9)}) broke StyleX at fixture ${file}. ` +
+          'Run `bun upgrade --canary` to get 1.4.3-canary.1 (4b02e1031) or newer.',
+        { cause },
+      );
+    });
     expect(result).toBeDefined();
   }
 }, 20_000);

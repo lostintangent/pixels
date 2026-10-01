@@ -41,8 +41,5 @@
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0"
-  },
-  "patchedDependencies": {
-    "@stylexjs/babel-plugin@0.19.1": "patches/@stylexjs%2Fbabel-plugin@0.19.1.patch"
   }
 }

@@ -4,6 +4,8 @@ A pixel-first bitmap editor. See `AGENTS.md` for architecture and toolchain deci
 
 ## Development
 
+Pixels needs Bun 1.4.3-canary.1 (4b02e1031) or newer. Install it with `bun upgrade --canary`. Stable Bun 1.4.2 miscompiles StyleX's CSS tokenizer, so the dev server answers 500 for some files, and `bun test` fails with a message that says so.
+
 ```sh
 bun install
 bun run dev
