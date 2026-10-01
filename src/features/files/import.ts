@@ -1,10 +1,12 @@
 import { createBitmapDocument, type BitmapDocument, MAX_DOCUMENT_SIDE } from '../document';
 import { ImportError } from './core/contracts';
-import { decodePng } from './core/png';
+import { decodePngOffMainThread } from './runtime/pngWorkerClient';
 
 /**
  * Decodes a PNG and builds a live document from it. Byte-in only: the file picker, drag and
  * drop, and clipboard paste handlers all convert their input to bytes and call this one path.
+ * Decoding runs off the main thread (see `pngWorkerClient`), so opening a large photo never
+ * becomes a long task on the thread the user is interacting with.
  */
 export async function importPng(
   source: Uint8Array | ArrayBuffer | Blob,
@@ -12,7 +14,7 @@ export async function importPng(
   name = 'Untitled',
 ): Promise<BitmapDocument> {
   const bytes = await toBytes(source);
-  const decoded = await decodePng(bytes);
+  const decoded = await decodePngOffMainThread(bytes);
   if (decoded.width > MAX_DOCUMENT_SIDE || decoded.height > MAX_DOCUMENT_SIDE) {
     throw new ImportError(
       'too-large',

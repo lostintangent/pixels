@@ -170,7 +170,7 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
 
   let ihdr: Ihdr | null = null;
   let palette: Uint8Array | null = null;
-  let paletteAlpha: Uint8Array | null = null;
+  let trns: Uint8Array | null = null;
   const idatChunks: Uint8Array[] = [];
   let offset = SIGNATURE.length;
 
@@ -188,7 +188,7 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     }
     if (type === 'IHDR') ihdr = parseIhdr(data);
     else if (type === 'PLTE') palette = data;
-    else if (type === 'tRNS') paletteAlpha = data;
+    else if (type === 'tRNS') trns = data;
     else if (type === 'IDAT') idatChunks.push(data);
     else if (type === 'IEND') break;
     offset = dataEnd + 4;
@@ -200,11 +200,8 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
       `This PNG is ${ihdr.width} x ${ihdr.height}. Pixels opens images up to ${MAX_DOCUMENT_SIDE} x ${MAX_DOCUMENT_SIDE}.`,
     );
   }
-  if (ihdr.interlace !== 0) {
-    throw unsupported('This PNG uses interlacing, which Pixels does not support yet.');
-  }
-  if (ihdr.bitDepth === 16) {
-    throw unsupported('This PNG uses 16 bits per channel, which Pixels does not support yet.');
+  if (ihdr.interlace !== 0 && ihdr.interlace !== 1) {
+    throw corrupt(`The PNG has an invalid interlace method (${ihdr.interlace}).`);
   }
   if (ihdr.colorType === 3 && !palette) throw corrupt('The PNG is missing its color palette.');
 
@@ -216,9 +213,66 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     throw corrupt('The PNG\u2019s compressed pixel data is invalid.');
   }
 
-  const scanlines = unfilter(raw, ihdr);
-  const pixels = buildPixels(scanlines, ihdr, palette, paletteAlpha);
+  const pixels = decodeImage(raw, ihdr, palette, trns);
   return { width: ihdr.width, height: ihdr.height, pixels };
+}
+
+/** One of Adam7's seven reduced images, in pass order: starting offset and stride on each axis. */
+const ADAM7_PASSES: ReadonlyArray<{
+  xStart: number;
+  yStart: number;
+  xStep: number;
+  yStep: number;
+}> = [
+  { xStart: 0, yStart: 0, xStep: 8, yStep: 8 },
+  { xStart: 4, yStart: 0, xStep: 8, yStep: 8 },
+  { xStart: 0, yStart: 4, xStep: 4, yStep: 8 },
+  { xStart: 2, yStart: 0, xStep: 4, yStep: 4 },
+  { xStart: 0, yStart: 2, xStep: 2, yStep: 4 },
+  { xStart: 1, yStart: 0, xStep: 2, yStep: 2 },
+  { xStart: 0, yStart: 1, xStep: 1, yStep: 2 },
+];
+
+/** Decodes every scanline (interlaced or not) straight into the final packed RGBA buffer. A
+ *  non-interlaced image is treated as one "pass" covering the whole image at step 1,1, so the
+ *  same unfilter/scatter path handles both. */
+function decodeImage(
+  raw: Uint8Array,
+  ihdr: Ihdr,
+  palette: Uint8Array | null,
+  trns: Uint8Array | null,
+): Uint32Array {
+  const pixels = new Uint32Array(ihdr.width * ihdr.height);
+  const outBytes = new Uint8Array(pixels.buffer);
+  if (ihdr.interlace === 0) {
+    const { scanlines } = unfilterPass(raw, 0, ihdr, ihdr.width, ihdr.height);
+    writePass(scanlines, ihdr, ihdr.width, ihdr.height, 0, 0, 1, 1, palette, trns, outBytes);
+  } else {
+    let offset = 0;
+    for (const pass of ADAM7_PASSES) {
+      const passWidth = Math.ceil((ihdr.width - pass.xStart) / pass.xStep);
+      const passHeight = Math.ceil((ihdr.height - pass.yStart) / pass.yStep);
+      // A pass can be empty for small images (e.g. a 4px-wide image has nothing in pass 4+); PNG
+      // stores zero scanlines for it, so skip straight to the next pass without consuming bytes.
+      if (passWidth <= 0 || passHeight <= 0) continue;
+      const { scanlines, consumed } = unfilterPass(raw, offset, ihdr, passWidth, passHeight);
+      writePass(
+        scanlines,
+        ihdr,
+        passWidth,
+        passHeight,
+        pass.xStart,
+        pass.yStart,
+        pass.xStep,
+        pass.yStep,
+        palette,
+        trns,
+        outBytes,
+      );
+      offset += consumed;
+    }
+  }
+  return pixels;
 }
 
 async function inflateZlib(data: Uint8Array): Promise<Uint8Array> {
@@ -270,6 +324,14 @@ function parseIhdr(data: Uint8Array): Ihdr {
   if (![1, 2, 4, 8, 16].includes(bitDepth)) {
     throw corrupt(`The PNG has an invalid bit depth (${bitDepth}).`);
   }
+  channelsFor(colorType); // validates colorType itself
+  const allowedDepths =
+    colorType === 0 ? [1, 2, 4, 8, 16] : colorType === 3 ? [1, 2, 4, 8] : [8, 16];
+  if (!allowedDepths.includes(bitDepth)) {
+    throw corrupt(
+      `The PNG has bit depth ${bitDepth} with an incompatible color type (${colorType}).`,
+    );
+  }
   return { width, height, bitDepth, colorType, interlace };
 }
 
@@ -290,23 +352,36 @@ function channelsFor(colorType: number): number {
   }
 }
 
-function unfilter(raw: Uint8Array, ihdr: Ihdr): Uint8Array {
+/** Unfilters `height` scanlines of one pass (the whole image, for a non-interlaced PNG, or one
+ *  of Adam7's seven reduced images), starting at byte `offset` in the inflated stream. `width` is
+ *  that pass's own pixel width, which is narrower than the image for every Adam7 pass but the
+ *  first. Returns the contiguous unfiltered bytes plus how many input bytes they consumed, so the
+ *  caller can advance to the next pass. */
+function unfilterPass(
+  raw: Uint8Array,
+  offset: number,
+  ihdr: Ihdr,
+  width: number,
+  height: number,
+): { scanlines: Uint8Array; consumed: number } {
   const channels = channelsFor(ihdr.colorType);
   const bitsPerPixel = channels * ihdr.bitDepth;
   const bytesPerPixel = Math.max(1, Math.ceil(bitsPerPixel / 8));
-  const rowBytes = Math.ceil((ihdr.width * bitsPerPixel) / 8);
+  const rowBytes = Math.ceil((width * bitsPerPixel) / 8);
   const stride = rowBytes + 1;
-  if (raw.length < stride * ihdr.height) throw corrupt('The PNG pixel data is truncated.');
-  const out = new Uint8Array(rowBytes * ihdr.height);
+  const consumed = stride * height;
+  if (offset + consumed > raw.length) throw corrupt('The PNG pixel data is truncated.');
+  const out = new Uint8Array(rowBytes * height);
   let prevRow: Uint8Array | null = null;
-  for (let y = 0; y < ihdr.height; y++) {
-    const filterType = raw[y * stride]!;
-    const src = raw.subarray(y * stride + 1, y * stride + 1 + rowBytes);
+  for (let y = 0; y < height; y++) {
+    const rowOffset = offset + y * stride;
+    const filterType = raw[rowOffset]!;
+    const src = raw.subarray(rowOffset + 1, rowOffset + 1 + rowBytes);
     const dst = out.subarray(y * rowBytes, y * rowBytes + rowBytes);
     unfilterRow(filterType, src, dst, prevRow, bytesPerPixel);
     prevRow = dst;
   }
-  return out;
+  return { scanlines: out, consumed };
 }
 
 function unfilterRow(
@@ -353,52 +428,90 @@ function paeth(a: number, b: number, c: number): number {
   return c;
 }
 
-function buildPixels(
+/** Decodes one pass's scanlines and scatters each sample into the final packed RGBA buffer at
+ *  `(xStart + x * xStep, yStart + y * yStep)`. A non-interlaced image calls this once with
+ *  `xStep = yStep = 1`, covering every pixel; an Adam7 pass covers only its own sparse subset. */
+function writePass(
   scanlines: Uint8Array,
   ihdr: Ihdr,
+  width: number,
+  height: number,
+  xStart: number,
+  yStart: number,
+  xStep: number,
+  yStep: number,
   palette: Uint8Array | null,
   trns: Uint8Array | null,
-): Uint32Array {
-  const { width, height, bitDepth, colorType } = ihdr;
-  const pixels = new Uint32Array(width * height);
-  const outBytes = new Uint8Array(pixels.buffer);
+  outBytes: Uint8Array,
+): void {
+  const { bitDepth, colorType } = ihdr;
   const channels = channelsFor(colorType);
   const bitsPerPixel = channels * bitDepth;
   const rowBytes = Math.ceil((width * bitsPerPixel) / 8);
+  // Only grayscale and palette ever use depths below 8; every other color type is 8 or 16 bit, so
+  // this is exact for every depth actually reached by the bit-packed branch below.
   const maxSample = (1 << bitDepth) - 1;
 
-  const readSample = (row: Uint8Array, index: number): number => {
-    if (bitDepth === 8) return row[index]!;
-    const bitPos = index * bitDepth;
+  const readSample = (row: Uint8Array, pixelIndex: number, channel: number): number => {
+    const sampleIndex = pixelIndex * channels + channel;
+    if (bitDepth === 16) {
+      const byteIndex = sampleIndex * 2;
+      return (row[byteIndex]! << 8) | row[byteIndex + 1]!;
+    }
+    if (bitDepth === 8) return row[sampleIndex]!;
+    const bitPos = sampleIndex * bitDepth;
     const byteIndex = bitPos >> 3;
     const shift = 8 - bitDepth - (bitPos & 7);
     return (row[byteIndex]! >> shift) & maxSample;
   };
 
+  // PNG always stores samples at their native bit depth; scale to this document's 8-bit channels
+  // with exact rounding rather than truncating, so a 16-bit gradient doesn't band on import.
+  const scaleTo8 = (value: number): number =>
+    bitDepth === 16
+      ? Math.round((value * 255) / 65535)
+      : bitDepth === 8
+        ? value
+        : Math.round((value * 255) / maxSample);
+
+  // tRNS for color types 0 and 2 is a single native-depth sample (or RGB triple) naming the exact
+  // color that's transparent, stored as a 2-byte value per channel regardless of bit depth; compare
+  // against the raw, unscaled sample so a sub-8-bit or 16-bit key still matches precisely.
+  const grayKey = colorType === 0 && trns && trns.length >= 2 ? readUint16BE(trns, 0) : null;
+  const rgbKey =
+    colorType === 2 && trns && trns.length >= 6
+      ? ([readUint16BE(trns, 0), readUint16BE(trns, 2), readUint16BE(trns, 4)] as const)
+      : null;
+
   for (let y = 0; y < height; y++) {
     const row = scanlines.subarray(y * rowBytes, y * rowBytes + rowBytes);
+    const destY = yStart + y * yStep;
     for (let x = 0; x < width; x++) {
-      const outOffset = (y * width + x) * 4;
+      const destX = xStart + x * xStep;
+      const outOffset = (destY * ihdr.width + destX) * 4;
       switch (colorType) {
         case 0: {
-          const raw = readSample(row, x);
-          const value = bitDepth === 8 ? raw : Math.round((raw * 255) / maxSample);
+          const raw = readSample(row, x, 0);
+          const value = scaleTo8(raw);
           outBytes[outOffset] = value;
           outBytes[outOffset + 1] = value;
           outBytes[outOffset + 2] = value;
-          outBytes[outOffset + 3] = 255;
+          outBytes[outOffset + 3] = grayKey !== null && raw === grayKey ? 0 : 255;
           break;
         }
         case 2: {
-          const base = x * 3;
-          outBytes[outOffset] = row[base]!;
-          outBytes[outOffset + 1] = row[base + 1]!;
-          outBytes[outOffset + 2] = row[base + 2]!;
-          outBytes[outOffset + 3] = 255;
+          const r = readSample(row, x, 0);
+          const g = readSample(row, x, 1);
+          const b = readSample(row, x, 2);
+          outBytes[outOffset] = scaleTo8(r);
+          outBytes[outOffset + 1] = scaleTo8(g);
+          outBytes[outOffset + 2] = scaleTo8(b);
+          outBytes[outOffset + 3] =
+            rgbKey && r === rgbKey[0] && g === rgbKey[1] && b === rgbKey[2] ? 0 : 255;
           break;
         }
         case 3: {
-          const index = readSample(row, x);
+          const index = readSample(row, x, 0);
           const paletteOffset = index * 3;
           if (!palette || paletteOffset + 2 >= palette.length) {
             throw corrupt('The PNG references a palette index that does not exist.');
@@ -410,26 +523,29 @@ function buildPixels(
           break;
         }
         case 4: {
-          const base = x * 2;
-          const value = row[base]!;
+          const gray = readSample(row, x, 0);
+          const alpha = readSample(row, x, 1);
+          const value = scaleTo8(gray);
           outBytes[outOffset] = value;
           outBytes[outOffset + 1] = value;
           outBytes[outOffset + 2] = value;
-          outBytes[outOffset + 3] = row[base + 1]!;
+          outBytes[outOffset + 3] = scaleTo8(alpha);
           break;
         }
         case 6: {
-          const base = x * 4;
-          outBytes[outOffset] = row[base]!;
-          outBytes[outOffset + 1] = row[base + 1]!;
-          outBytes[outOffset + 2] = row[base + 2]!;
-          outBytes[outOffset + 3] = row[base + 3]!;
+          const r = readSample(row, x, 0);
+          const g = readSample(row, x, 1);
+          const b = readSample(row, x, 2);
+          const a = readSample(row, x, 3);
+          outBytes[outOffset] = scaleTo8(r);
+          outBytes[outOffset + 1] = scaleTo8(g);
+          outBytes[outOffset + 2] = scaleTo8(b);
+          outBytes[outOffset + 3] = scaleTo8(a);
           break;
         }
       }
     }
   }
-  return pixels;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +588,10 @@ function readUint32BE(bytes: Uint8Array, offset: number): number {
       bytes[offset + 3]!) >>>
     0
   );
+}
+
+function readUint16BE(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset]! << 8) | bytes[offset + 1]!;
 }
 
 function readAscii(bytes: Uint8Array, offset: number, length: number): string {

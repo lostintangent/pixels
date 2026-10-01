@@ -1,7 +1,9 @@
 /// <reference lib="webworker" />
-import { encodePng } from '../core/png';
+import { ImportError, type ImportErrorReason } from '../core/contracts';
+import { decodePng, encodePng } from '../core/png';
 
 interface EncodeRequest {
+  kind: 'encode';
   id: number;
   width: number;
   height: number;
@@ -9,42 +11,86 @@ interface EncodeRequest {
   pixels: ArrayBuffer;
 }
 
-interface EncodeSuccess {
+interface DecodeRequest {
+  kind: 'decode';
   id: number;
   bytes: ArrayBuffer;
 }
 
-interface EncodeFailure {
+interface EncodeSuccess {
+  kind: 'encode';
   id: number;
-  error: { name: string; message: string };
+  bytes: ArrayBuffer;
 }
 
-export type EncodeResponse = EncodeSuccess | EncodeFailure;
+interface DecodeSuccess {
+  kind: 'decode';
+  id: number;
+  width: number;
+  height: number;
+  pixels: ArrayBuffer;
+}
+
+interface Failure {
+  kind: 'encode' | 'decode';
+  id: number;
+  error: { name: string; message: string; reason?: ImportErrorReason };
+}
+
+export type EncodeResponse = EncodeSuccess | Failure;
+export type DecodeResponse = DecodeSuccess | Failure;
+
+function failureOf(kind: 'encode' | 'decode', id: number, error: unknown): Failure {
+  return {
+    kind,
+    id,
+    error: {
+      name: error instanceof Error ? error.name : 'Error',
+      message: error instanceof Error ? error.message : String(error),
+      reason: error instanceof ImportError ? error.reason : undefined,
+    },
+  };
+}
 
 /**
- * Runs the PNG codec's deflate step off the main thread. Worst-case (near-random) pixel content
- * can take tens of milliseconds under `CompressionStream`, which would otherwise be a long task
- * blocking input and paint; a dedicated worker removes it from the main thread entirely.
+ * Runs the PNG codec off the main thread. Worst-case (near-random) pixel content can take tens
+ * of milliseconds under `CompressionStream`/`DecompressionStream`, and a large photo's decode
+ * (unfiltering plus per-pixel sample expansion) is squarely main-thread work too — both would
+ * otherwise be long tasks blocking input and paint, which a dedicated worker removes entirely.
  */
-self.addEventListener('message', (event: MessageEvent<EncodeRequest>) => {
-  const { id, width, height, scale, pixels } = event.data;
-  void encodePng(width, height, new Uint32Array(pixels), scale).then(
-    (bytes) => {
-      // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless of
-      // whether `bytes` happens to be a view over a larger backing buffer.
-      const owned = bytes.slice().buffer as ArrayBuffer;
-      const response: EncodeSuccess = { id, bytes: owned };
-      (self as unknown as Worker).postMessage(response, [owned]);
-    },
-    (error: unknown) => {
-      const response: EncodeFailure = {
-        id,
-        error: {
-          name: error instanceof Error ? error.name : 'Error',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-      (self as unknown as Worker).postMessage(response);
-    },
-  );
+self.addEventListener('message', (event: MessageEvent<EncodeRequest | DecodeRequest>) => {
+  const request = event.data;
+  if (request.kind === 'encode') {
+    const { id, width, height, scale, pixels } = request;
+    void encodePng(width, height, new Uint32Array(pixels), scale).then(
+      (bytes) => {
+        // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
+        // of whether `bytes` happens to be a view over a larger backing buffer.
+        const owned = bytes.slice().buffer as ArrayBuffer;
+        const response: EncodeSuccess = { kind: 'encode', id, bytes: owned };
+        (self as unknown as Worker).postMessage(response, [owned]);
+      },
+      (error: unknown) => {
+        (self as unknown as Worker).postMessage(failureOf('encode', id, error));
+      },
+    );
+  } else {
+    const { id, bytes } = request;
+    void decodePng(bytes).then(
+      (decoded) => {
+        const owned = decoded.pixels.buffer as ArrayBuffer;
+        const response: DecodeSuccess = {
+          kind: 'decode',
+          id,
+          width: decoded.width,
+          height: decoded.height,
+          pixels: owned,
+        };
+        (self as unknown as Worker).postMessage(response, [owned]);
+      },
+      (error: unknown) => {
+        (self as unknown as Worker).postMessage(failureOf('decode', id, error));
+      },
+    );
+  }
 });

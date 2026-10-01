@@ -21,17 +21,25 @@ async function buildTestPng(options: {
   colorType: number;
   palette?: number[]; // RGB triples
   trns?: number[];
-  rows: number[][]; // one array of raw (unfiltered, filter-byte-free) bytes per row
+  rows?: number[][]; // one array of raw (unfiltered, filter-byte-free) bytes per row
+  /** A full, filter-byte-prefixed scanline stream, already laid out pass by pass for Adam7. Used
+   *  instead of `rows` when a test needs to control the raw stream directly. */
+  rawScanlines?: Uint8Array;
   interlace?: number;
   corruptCrc?: boolean;
   signature?: number[];
 }): Promise<Uint8Array> {
   const { width, height, bitDepth, colorType, palette, trns, rows, interlace = 0 } = options;
-  const rowBytes = rows[0]?.length ?? 0;
-  const raw = new Uint8Array((rowBytes + 1) * height);
-  for (let y = 0; y < height; y++) {
-    raw[y * (rowBytes + 1)] = 0;
-    raw.set(rows[y]!, y * (rowBytes + 1) + 1);
+  let raw: Uint8Array;
+  if (options.rawScanlines) {
+    raw = options.rawScanlines;
+  } else {
+    const rowBytes = rows![0]?.length ?? 0;
+    raw = new Uint8Array((rowBytes + 1) * height);
+    for (let y = 0; y < height; y++) {
+      raw[y * (rowBytes + 1)] = 0;
+      raw.set(rows![y]!, y * (rowBytes + 1) + 1);
+    }
   }
   const cs = new CompressionStream('deflate');
   const writer = cs.writable.getWriter();
@@ -247,6 +255,243 @@ describe('PNG decode: color type coverage', () => {
   });
 });
 
+describe('PNG decode: tRNS color-key transparency for gray and RGB', () => {
+  test('8-bit grayscale: the keyed sample is transparent, everything else opaque', async () => {
+    const bytes = await buildTestPng({
+      width: 3,
+      height: 1,
+      bitDepth: 8,
+      colorType: 0,
+      trns: [0, 64], // 2-byte gray key, 64 at this bit depth
+      rows: [[64, 65, 0]],
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([
+      packRgba(64, 64, 64, 0),
+      packRgba(65, 65, 65, 255),
+      packRgba(0, 0, 0, 255),
+    ]);
+  });
+
+  test('4-bit grayscale: the key is compared against the raw, unscaled sample', async () => {
+    // Two pixels packed into one byte at 4 bits/sample: index 5 then index 9 -> 0b0101_1001.
+    const bytes = await buildTestPng({
+      width: 2,
+      height: 1,
+      bitDepth: 4,
+      colorType: 0,
+      trns: [0, 5], // raw sample 5 is the key, not the scaled-to-8-bit value (5*255/15=85)
+      rows: [[0b01011001]],
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([
+      packRgba(85, 85, 85, 0),
+      packRgba(153, 153, 153, 255), // 9*255/15=153, not the key, so opaque
+    ]);
+  });
+
+  test('16-bit grayscale: the key is a full 16-bit value, not the scaled 8-bit one', async () => {
+    const bytes = await buildTestPng({
+      width: 2,
+      height: 1,
+      bitDepth: 16,
+      colorType: 0,
+      trns: [0x80, 0x80], // raw sample 0x8080 is the key
+      rows: [[0x80, 0x80, 0x80, 0x81]], // first pixel matches exactly, second is one raw unit off
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([
+      packRgba(128, 128, 128, 0),
+      packRgba(128, 128, 128, 255), // scales to the same 8-bit gray, but isn't the exact raw key
+    ]);
+  });
+
+  test('8-bit RGB: only the exact keyed triple is transparent', async () => {
+    const bytes = await buildTestPng({
+      width: 2,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      trns: [0, 255, 0, 0, 0, 255], // magenta color key (3 x 2-byte values per the spec), as a real sprite sheet would use
+      rows: [[255, 0, 255, 254, 0, 255]], // exact key, then one channel off
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(255, 0, 255, 0), packRgba(254, 0, 255, 255)]);
+  });
+
+  test('16-bit RGB: the key compares all three raw 16-bit channels', async () => {
+    const bytes = await buildTestPng({
+      width: 2,
+      height: 1,
+      bitDepth: 16,
+      colorType: 2,
+      trns: [0xff, 0xff, 0, 0, 0xff, 0xff], // raw (65535, 0, 65535)
+      rows: [
+        [0xff, 0xff, 0, 0, 0xff, 0xff, 0xff, 0xff, 0, 1, 0xff, 0xff], // exact key, then G off by one raw unit
+      ],
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([
+      packRgba(255, 0, 255, 0),
+      packRgba(255, 0, 255, 255), // scales identically to 8-bit, but the raw key doesn't match
+    ]);
+  });
+});
+
+describe('PNG decode: 16-bit samples, scaled with exact rounding', () => {
+  // 65535 = 255 * 257, so any raw sample that's a multiple of 257 scales to an exact integer;
+  // everything else must round rather than truncate. These cover both.
+  test('grayscale', async () => {
+    const bytes = await buildTestPng({
+      width: 4,
+      height: 1,
+      bitDepth: 16,
+      colorType: 0,
+      rows: [[0x00, 0x00, 0x80, 0x80, 0xff, 0xff, 0x01, 0x90]], // 0, 32896(=257*128), 65535, 400
+    });
+    const decoded = await decodePng(bytes);
+    // 400 * 255 / 65535 = 1.5569... which must round to 2, not truncate to 1.
+    expect([...decoded.pixels]).toEqual([
+      packRgba(0, 0, 0),
+      packRgba(128, 128, 128),
+      packRgba(255, 255, 255),
+      packRgba(2, 2, 2),
+    ]);
+  });
+
+  test('RGB', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 16,
+      colorType: 2,
+      rows: [[0x01, 0x90, 0xff, 0xff, 0x00, 0x00]], // R=400 (rounds to 2), G=65535, B=0
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(2, 255, 0)]);
+  });
+
+  test('gray+alpha', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 16,
+      colorType: 4,
+      rows: [[0x80, 0x80, 0x01, 0x90]], // gray=32896(->128), alpha=400 (->2)
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(128, 128, 128, 2)]);
+  });
+
+  test('RGBA', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 16,
+      colorType: 6,
+      rows: [[0x01, 0x90, 0x80, 0x80, 0xff, 0xff, 0x00, 0x00]], // R=400(->2), G=32896(->128), B=65535, A=0
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(2, 128, 255, 0)]);
+  });
+});
+
+describe('PNG decode: Adam7 interlacing', () => {
+  // The spec's seven reduced images, independent of the decoder: used to build interlaced test
+  // fixtures and, separately, to compute each test's expected pixels, so neither side of the
+  // assertion goes through the decoder's own pass logic.
+  const ADAM7_PASSES = [
+    { xStart: 0, yStart: 0, xStep: 8, yStep: 8 },
+    { xStart: 4, yStart: 0, xStep: 8, yStep: 8 },
+    { xStart: 0, yStart: 4, xStep: 4, yStep: 8 },
+    { xStart: 2, yStart: 0, xStep: 4, yStep: 4 },
+    { xStart: 0, yStart: 2, xStep: 2, yStep: 4 },
+    { xStart: 1, yStart: 0, xStep: 2, yStep: 2 },
+    { xStart: 0, yStart: 1, xStep: 1, yStep: 2 },
+  ];
+
+  /** A simple, bounded-to-one-byte RGBA formula so any small width/height stays in range. */
+  function pixelAt(x: number, y: number): [number, number, number, number] {
+    return [(x * 40 + 10) & 255, (y * 40 + 20) & 255, ((x + y) * 30 + 5) & 255, 255];
+  }
+
+  function buildAdam7Raw(width: number, height: number): Uint8Array {
+    const parts: number[] = [];
+    for (const pass of ADAM7_PASSES) {
+      const passWidth = Math.ceil((width - pass.xStart) / pass.xStep);
+      const passHeight = Math.ceil((height - pass.yStart) / pass.yStep);
+      if (passWidth <= 0 || passHeight <= 0) continue;
+      for (let py = 0; py < passHeight; py++) {
+        parts.push(0); // filter type: None
+        for (let px = 0; px < passWidth; px++) {
+          const [r, g, b, a] = pixelAt(
+            pass.xStart + px * pass.xStep,
+            pass.yStart + py * pass.yStep,
+          );
+          parts.push(r, g, b, a);
+        }
+      }
+    }
+    return new Uint8Array(parts);
+  }
+
+  function expectedPixels(width: number, height: number): number[] {
+    const out: number[] = [];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const [r, g, b, a] = pixelAt(x, y);
+        out.push(packRgba(r, g, b, a));
+      }
+    }
+    return out;
+  }
+
+  test('an 8x8 image exercises all seven passes', async () => {
+    const width = 8;
+    const height = 8;
+    const bytes = await buildTestPng({
+      width,
+      height,
+      bitDepth: 8,
+      colorType: 6,
+      interlace: 1,
+      rawScanlines: buildAdam7Raw(width, height),
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual(expectedPixels(width, height));
+  });
+
+  test('a 1x1 image only has a pixel in the first pass, the rest are empty', async () => {
+    const width = 1;
+    const height = 1;
+    const bytes = await buildTestPng({
+      width,
+      height,
+      bitDepth: 8,
+      colorType: 6,
+      interlace: 1,
+      rawScanlines: buildAdam7Raw(width, height),
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual(expectedPixels(width, height));
+  });
+
+  test('an odd 3x5 image mixes empty passes with non-square pass dimensions', async () => {
+    const width = 3;
+    const height = 5;
+    const bytes = await buildTestPng({
+      width,
+      height,
+      bitDepth: 8,
+      colorType: 6,
+      interlace: 1,
+      rawScanlines: buildAdam7Raw(width, height),
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual(expectedPixels(width, height));
+  });
+});
+
 describe('PNG decode: error cases', () => {
   test('rejects a file over the 4096 document size limit with reason too-large', async () => {
     const bytes = await buildTestPng({
@@ -259,27 +504,28 @@ describe('PNG decode: error cases', () => {
     expect(await rejectionOf(decodePng(bytes))).toMatchObject({ reason: 'too-large' });
   });
 
-  test('rejects interlaced PNGs with reason unsupported-format', async () => {
+  test('rejects an invalid interlace method with reason corrupt', async () => {
     const bytes = await buildTestPng({
       width: 2,
       height: 1,
       bitDepth: 8,
       colorType: 2,
       rows: [[1, 2, 3, 4, 5, 6]],
-      interlace: 1,
+      interlace: 2,
     });
-    expect(await rejectionOf(decodePng(bytes))).toMatchObject({ reason: 'unsupported-format' });
+    expect(await rejectionOf(decodePng(bytes))).toMatchObject({ reason: 'corrupt' });
   });
 
-  test('rejects 16-bit PNGs with reason unsupported-format', async () => {
+  test('rejects a color type and bit depth combination the spec disallows', async () => {
+    // Color type 2 (RGB) only ever has 8 or 16-bit samples, never 4.
     const bytes = await buildTestPng({
       width: 1,
       height: 1,
-      bitDepth: 16,
+      bitDepth: 4,
       colorType: 2,
-      rows: [[0, 10, 0, 20, 0, 30]],
+      rows: [[0]],
     });
-    expect(await rejectionOf(decodePng(bytes))).toMatchObject({ reason: 'unsupported-format' });
+    expect(await rejectionOf(decodePng(bytes))).toMatchObject({ reason: 'corrupt' });
   });
 
   test('rejects a corrupt checksum with reason corrupt', async () => {
