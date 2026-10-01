@@ -54,9 +54,11 @@ async function traceScenario(
   page: Page,
   scenario: Scenario,
 ): Promise<TraceSummary> {
+  const kind: 'blank' | 'maze' | 'large' =
+    scenario === 'maze' ? 'maze' : scenario === 'large-pan' ? 'large' : 'blank';
   await page.evaluate(
     (kind: 'blank' | 'maze' | 'large') => window.__pixelsPerf!.reset(kind),
-    scenario === 'maze' ? 'maze' : scenario === 'large-pan' ? 'large' : 'blank',
+    kind,
   );
   return captureTrace(context, page, async (markFirstInput) => {
     await markFirstInput();
