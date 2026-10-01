@@ -29,7 +29,10 @@ function createManualClock() {
       pending.delete(id as number);
     },
   };
-  async function advance(ms: number): Promise<void> {
+  // `store` is whichever fake store the test attached to this clock's autosave; a fired timer's
+  // flush does real async work (a PNG worker round trip), so this waits for that store to report
+  // itself idle again instead of guessing at a sleep duration a busy machine can outrun.
+  async function advance(ms: number, store: { waitForIdle(): Promise<void> }): Promise<void> {
     const target = now + ms;
     for (;;) {
       const due = [...pending.values()]
@@ -40,9 +43,7 @@ function createManualClock() {
       pending.delete(next.id);
       now = next.dueAt;
       next.callback();
-      // The triggered flush does real async work (PNG encode via CompressionStream, IndexedDB).
-      // Wait on the real event loop, not the fake clock, so it settles before we check timers again.
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await store.waitForIdle();
     }
     now = target;
   }
@@ -59,19 +60,38 @@ function createFakeStore(): DocumentStore & {
   /** Like `blockNextSave`, but the returned function rejects that call's `save()` instead of
    *  letting it through, so a test can control exactly when a specific in-flight save fails. */
   blockNextSaveAndFail(): (error: Error) => void;
+  /** Resolves once every `save()` call not currently paused on a `blockNextSave`/
+   *  `blockNextSaveAndFail` gate has fully settled, including `flush()`'s own synchronous
+   *  follow-up (its `inFlightFlushes--` bookkeeping and `onStatus` call) — not just this fake
+   *  store's own promise. A test driving the manual clock awaits this instead of a fixed sleep,
+   *  so a timer-triggered flush is waited for exactly as long as its real async work (the PNG
+   *  worker round trip) actually takes, however long that is under load. */
+  waitForIdle(): Promise<void>;
 } {
   const saved = new Map<string, DocumentSnapshot & { thumbnail: Uint8Array }>();
   // A FIFO queue of gates, one per still-unconsumed `blockNextSave`/`blockNextSaveAndFail` call.
   // Each `save()` call consumes at most one gate, in call order, so overlapping saves can each be
   // controlled independently rather than all waiting on the same one.
   const gateQueue: Promise<void>[] = [];
-  const store = {
-    saves: [] as DocumentSnapshot[],
-    stashes: [] as DocumentSnapshot[],
-    failNext: false,
-    async save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>) {
-      const myGate = gateQueue.shift();
-      if (myGate) await myGate; // may reject, surfacing as this call's own failure
+  // Counts saves that have cleared their gate (if any) and are doing real, ungated async work —
+  // the thing `waitForIdle` actually waits out. A save still paused on a gate doesn't count: it's
+  // waiting on the test itself, not on independent async work `advance()` should sit through.
+  let liveSaves = 0;
+  let idleWaiters: Array<() => void> = [];
+  function notifyIfIdle(): void {
+    if (liveSaves > 0) return;
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+  async function performSave(
+    snapshot: DocumentSnapshot,
+    thumbnail: Uint8Array | Promise<Uint8Array>,
+  ): Promise<void> {
+    const myGate = gateQueue.shift();
+    if (myGate) await myGate; // may reject, surfacing as this call's own failure
+    liveSaves++;
+    try {
       if (store.failNext) {
         store.failNext = false;
         throw new Error('simulated write failure');
@@ -79,6 +99,28 @@ function createFakeStore(): DocumentStore & {
       const resolvedThumbnail = await thumbnail;
       store.saves.push(snapshot);
       saved.set(snapshot.id, { ...snapshot, thumbnail: resolvedThumbnail });
+    } finally {
+      liveSaves--;
+    }
+  }
+  const store = {
+    saves: [] as DocumentSnapshot[],
+    stashes: [] as DocumentSnapshot[],
+    failNext: false,
+    save(snapshot: DocumentSnapshot, thumbnail: Uint8Array | Promise<Uint8Array>): Promise<void> {
+      const result = performSave(snapshot, thumbnail);
+      // Queued, rather than attached directly: `flush()` itself evaluates `await store.save(...)`
+      // synchronously right after this call returns `result`, which subscribes its own
+      // continuation (the `inFlightFlushes--`/`onStatus` bookkeeping) to `result` first. Queuing
+      // our subscription instead of attaching it here guarantees it runs after that — in the same
+      // synchronous turn, `result` already has `flush()`'s reaction attached by the time our
+      // queued callback runs and attaches this one — so a `waitForIdle()` waiter only resumes
+      // once `flush()`'s own follow-up has actually happened, not merely once this fake store's
+      // own work settled a tick earlier.
+      queueMicrotask(() => {
+        result.then(notifyIfIdle, notifyIfIdle);
+      });
+      return result;
     },
     stashForRecovery(snapshot: DocumentSnapshot) {
       store.stashes.push(snapshot);
@@ -109,6 +151,12 @@ function createFakeStore(): DocumentStore & {
       );
       return fail;
     },
+    waitForIdle(): Promise<void> {
+      if (liveSaves === 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        idleWaiters.push(resolve);
+      });
+    },
   };
   return store;
 }
@@ -119,7 +167,7 @@ describe('attachAutosave', () => {
     const store = createFakeStore();
     const { clock, advance } = createManualClock();
     const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
-    await advance(1000);
+    await advance(1000, store);
     expect(store.saves).toHaveLength(0);
     autosave.dispose();
   });
@@ -134,7 +182,7 @@ describe('attachAutosave', () => {
       maxWaitMs: 500,
       initialResave: true,
     });
-    await advance(100);
+    await advance(100, store);
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.fullResave).toBe(true);
     autosave.dispose();
@@ -148,9 +196,9 @@ describe('attachAutosave', () => {
 
     document.pixels[0] = packRgba(1, 2, 3, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(199);
+    await advance(199, store);
     expect(store.saves).toHaveLength(0);
-    await advance(1);
+    await advance(1, store);
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.fullResave).toBe(false);
     expect(store.saves[0]!.tiles).toHaveLength(1);
@@ -169,7 +217,7 @@ describe('attachAutosave', () => {
       onStatus: (status) => statuses.push(status),
     });
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(50);
+    await advance(50, store);
     expect(statuses).toEqual(['saving', 'saved']);
     autosave.dispose();
   });
@@ -187,7 +235,7 @@ describe('attachAutosave', () => {
     });
     store.failNext = true;
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(50);
+    await advance(50, store);
     expect(statuses).toEqual(['saving', 'error']);
     expect(store.saves).toHaveLength(0);
 
@@ -313,7 +361,7 @@ describe('attachAutosave', () => {
     const autosave = attachAutosave(document, store, { clock, debounceMs: 50, maxWaitMs: 200 });
     autosave.dispose();
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(1000);
+    await advance(1000, store);
     expect(store.saves).toHaveLength(0);
   });
 
@@ -325,7 +373,7 @@ describe('attachAutosave', () => {
     document.pixels[0] = packRgba(4, 5, 6, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     autosave.dispose(); // long before the 5s debounce would ever fire on its own
-    await new Promise((resolve) => setTimeout(resolve, 20)); // let the real encode + store.save settle
+    await store.waitForIdle(); // let the real encode + store.save settle
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.fullResave).toBe(false);
   });
@@ -339,7 +387,7 @@ describe('attachAutosave', () => {
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     autosave.dispose();
     autosave.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await store.waitForIdle();
     expect(store.saves).toHaveLength(1);
   });
 });
@@ -443,7 +491,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
       fakeWindow.dispatch('visibilitychange');
       expect(store.stashes).toHaveLength(1);
 
-      await new Promise((resolve) => setTimeout(resolve, 20)); // let the triggered flush settle
+      await store.waitForIdle(); // let the triggered flush settle
       autosave.dispose();
     });
   });
@@ -516,7 +564,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     document.pixels[0] = packRgba(4, 5, 6, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     autosave.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await store.waitForIdle();
     expect(store.saves).toHaveLength(1); // still flushed normally
     expect(store.stashes).toHaveLength(0); // but never through the journal
   });
