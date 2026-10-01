@@ -97,6 +97,16 @@ export function stepZoom(viewport: Viewport, direction: -1 | 1, point: ScreenPoi
   return zoomAt(viewport, MIN_ZOOM, point);
 }
 
+/**
+ * The zoom a fit settles on for a raw fitting scale. At or above 1× it is the largest whole number,
+ * so every pixel is an exact square. Below 1× pixels are already area-filtered, so it keeps the
+ * largest whole percentage that fits instead of dropping to a power-of-two step.
+ */
+export function fitZoom(rawZoom: number): number {
+  if (rawZoom >= 1) return clampZoom(Math.floor(rawZoom));
+  return clampZoom(Math.floor(rawZoom * 100 + 1e-9) / 100);
+}
+
 export function fitViewport(
   viewport: Viewport,
   documentWidth: number,
@@ -109,13 +119,7 @@ export function fitViewport(
       : insets;
   const availableWidth = Math.max(1, viewport.cssWidth - edges.left - edges.right);
   const availableHeight = Math.max(1, viewport.cssHeight - edges.top - edges.bottom);
-  const rawZoom = Math.min(availableWidth / documentWidth, availableHeight / documentHeight);
-  let zoom: number;
-  if (rawZoom >= 1) zoom = clampZoom(Math.floor(rawZoom));
-  else {
-    zoom = MIN_ZOOM;
-    for (const step of ZOOM_STEPS) if (step <= rawZoom) zoom = step;
-  }
+  const zoom = fitZoom(Math.min(availableWidth / documentWidth, availableHeight / documentHeight));
   return {
     ...viewport,
     zoom,

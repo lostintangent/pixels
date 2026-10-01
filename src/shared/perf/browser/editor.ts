@@ -77,7 +77,8 @@ async function prepareDocument(
   await page.waitForURL((url) => url.href !== initialUrl);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('application', { name: 'Canvas' }).waitFor();
-  await page.getByRole('button', { name: profile.name === 'phone' ? '25%' : '50%' }).waitFor();
+  // A fitted 1024² document is below 1× on both profiles; its exact percentage follows the viewport.
+  await page.getByRole('button', { name: /^\d+%$/ }).waitFor();
   await afterPaint(page);
   for (let step = 0; step < 12; step++) {
     if ((await page.getByRole('button', { name: '8×' }).count()) > 0) break;

@@ -36,6 +36,17 @@ describe('fitAroundIslands', () => {
     expect(fit).toMatchObject({ zoom: 37, fittedZoom: 37, panX: 88, panY: 162 });
   });
 
+  test('shrinks a large image to the whole percentage that clears an island', () => {
+    // A wide island along the top grazes a centered 4000 × 3000 fit. Moving beside it would halve it.
+    const island = { left: 600, top: 16, right: 1424, bottom: 120 };
+    const fit = fitAroundIslands(view(1440, 900), 4000, 3000, FRAME, [island]);
+    expect(fit.zoom).toBe(0.22);
+    expect(fit.fittedZoom).toBe(0.22);
+    const center = frameCenter(fit, FRAME);
+    expect(fit.panX + (4000 * fit.zoom) / 2).toBeCloseTo(center.x, 6);
+    expect(fit.panY).toBeGreaterThanOrEqual(island.bottom);
+  });
+
   test('reserves the island column for a wide document that would run under it', () => {
     const fit = fitAroundIslands(view(1440, 900), 128, 64, FRAME, [panel(1440, 244, 360)]);
     expect(fit).toMatchObject({ zoom: 8, panX: 110, panY: 202 });

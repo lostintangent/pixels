@@ -1,4 +1,4 @@
-import { fitViewport, stepZoom } from '../../canvas/model';
+import { fitViewport, fitZoom } from '../../canvas/model';
 import type { Viewport, ViewportInsets } from '../../canvas/model';
 
 /** A floating island in canvas CSS pixels, such as the desktop color panel. */
@@ -14,10 +14,10 @@ const ISLAND_GAP = 12;
 
 /**
  * Fits the document inside `frame` and keeps it truly centered unless that would put it under an
- * island. Then it steps down by whole-number zooms above 1× and ladder steps below, still
- * centered, until the document clears. Moving
- * beside the island's column is the last resort. So a tall window doesn't shove a document
- * sideways for a panel that sits entirely above it.
+ * island. Then it shrinks around the same center to the largest fit zoom that clears every island:
+ * a whole number at or above 1×, a whole percentage below. Moving beside the island's column is
+ * the last resort. So a tall window doesn't shove a document sideways for a panel that sits
+ * entirely above it.
  */
 export function fitAroundIslands(
   view: Viewport,
@@ -39,14 +39,28 @@ export function fitAroundIslands(
     reserveColumns(view, frame, blocking),
   );
   const center = frameCenter(view, frame);
-  let zoom = centered.zoom;
-  while (zoom > beside.zoom) {
-    zoom = zoom > 1 ? zoom - 1 : stepZoom({ ...view, zoom }, -1, center).zoom;
-    const smaller = centerAt(view, zoom, documentWidth, documentHeight, center);
-    const rect = documentRect(smaller, documentWidth, documentHeight);
-    if (!islands.some((island) => overlaps(rect, island))) return smaller;
-  }
-  return beside;
+  // Islands that don't overlap the centered fit can't overlap a smaller one around the same center.
+  let clear = centered.zoom;
+  for (const island of blocking)
+    clear = Math.min(clear, clearingZoom(island, center, documentWidth, documentHeight));
+  const zoom = fitZoom(clear);
+  if (zoom < beside.zoom) return beside;
+  return centerAt(view, zoom, documentWidth, documentHeight, center);
+}
+
+/**
+ * The largest zoom at which a document centered on `center` stays clear of `island`. It clears
+ * when either axis separates them, so that is the larger of the two axis limits.
+ */
+function clearingZoom(
+  island: IslandRect,
+  center: { x: number; y: number },
+  documentWidth: number,
+  documentHeight: number,
+): number {
+  const gapX = Math.max(island.left - center.x, center.x - island.right);
+  const gapY = Math.max(island.top - center.y, center.y - island.bottom);
+  return Math.max(0, (2 * gapX) / documentWidth, (2 * gapY) / documentHeight);
 }
 
 /** The screen point zoom buttons anchor on: the middle of the frame. */

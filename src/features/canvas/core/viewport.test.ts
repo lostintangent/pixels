@@ -3,6 +3,7 @@ import {
   clampZoom,
   documentToScreen,
   fitViewport,
+  fitZoom,
   screenToDocument,
   settleZoom,
   stepZoom,
@@ -56,11 +57,27 @@ test('fit uses the largest whole-pixel zoom for small sprites', () => {
   ).toBe(48);
 });
 
-test('fit picks the largest power-of-two downscale that fits a large document', () => {
+test('fit keeps the largest whole percentage that fits a large document', () => {
   const phone = { ...viewport, cssWidth: 390, cssHeight: 844 };
   const fitted = fitViewport(phone, 4096, 4096);
-  expect(fitted.zoom).toBe(1 / 16);
-  expect(fitted.panX).toBe(67);
+  expect(fitted.zoom).toBe(0.09);
+  expect(fitted.fittedZoom).toBe(0.09);
+  expect(fitted.panX).toBeCloseTo(10.68, 6);
+  // A 1990 px Retina screenshot: 55% on desktop and 17% on phone, not 50% and 12.5%.
+  const desktop = { ...viewport, cssWidth: 1440, cssHeight: 900 };
+  const desktopFrame = { top: 72, right: 272, bottom: 56, left: 76 };
+  expect(fitViewport(desktop, 1990, 1192, desktopFrame).zoom).toBe(0.54);
+  const phoneFrame = { top: 72, right: 16, bottom: 148, left: 16 };
+  expect(fitViewport(phone, 1990, 1192, phoneFrame).zoom).toBe(0.17);
+  expect(fitViewport(phone, 1 << 20, 1 << 20).zoom).toBe(1 / 32);
+});
+
+test('fit zoom is whole above 1× and a whole percentage below', () => {
+  expect(fitZoom(7.99)).toBe(7);
+  expect(fitZoom(1)).toBe(1);
+  expect(fitZoom(0.999)).toBe(0.99);
+  expect(fitZoom(0.55)).toBe(0.55);
+  expect(fitZoom(0.01)).toBe(1 / 32);
 });
 
 test('asymmetric insets center the art in the actual free region', () => {
