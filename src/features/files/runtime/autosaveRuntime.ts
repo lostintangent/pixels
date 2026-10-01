@@ -20,6 +20,8 @@ export async function saveDocument(document: BitmapDocument, store: DocumentStor
     snapshot.thumbnailPixels.width,
     snapshot.thumbnailPixels.height,
     snapshot.thumbnailPixels.pixels,
+    1,
+    snapshot.colorSpace,
   );
   await store.save(snapshot, thumbnail);
 }
@@ -116,6 +118,8 @@ export function attachAutosave(
         snapshot.thumbnailPixels.width,
         snapshot.thumbnailPixels.height,
         snapshot.thumbnailPixels.pixels,
+        1,
+        snapshot.colorSpace,
       );
       await store.save(snapshot, thumbnail);
       inFlightFlushes--;

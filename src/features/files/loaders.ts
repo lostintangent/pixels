@@ -19,7 +19,13 @@ export async function loadDocument(
 ): Promise<BitmapDocument | null> {
   const loaded = await store.load(id);
   if (!loaded) return null;
-  const document = createBitmapDocument(loaded.id, loaded.width, loaded.height, loaded.name);
+  const document = createBitmapDocument(
+    loaded.id,
+    loaded.width,
+    loaded.height,
+    loaded.name,
+    loaded.colorSpace,
+  );
   document.rgbaBytes.set(loaded.pixels);
   return document;
 }

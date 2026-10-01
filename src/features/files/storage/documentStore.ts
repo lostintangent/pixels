@@ -1,3 +1,4 @@
+import type { DocumentColorSpace } from '../../document';
 import type {
   DocumentId,
   DocumentSnapshot,
@@ -22,6 +23,9 @@ interface DocumentRecord {
   height: number;
   updatedAt: number;
   thumbnail: Uint8Array;
+  /** Missing on a record written before color tagging landed; `load()` defaults it to `'srgb'`,
+   *  the color space every document was implicitly in before this field existed. */
+  colorSpace?: DocumentColorSpace;
 }
 
 interface TileRecord {
@@ -98,6 +102,7 @@ interface CrashRecoveryPayload {
   height: number;
   fullResave: boolean;
   tiles: { tx: number; ty: number; pixels: string }[];
+  colorSpace: DocumentColorSpace;
 }
 
 // Measured directly, with the journal disabled, against real Chromium: once `saveNow` issues its
@@ -134,6 +139,7 @@ function stashForCrashRecovery(snapshot: DocumentSnapshot): void {
         ty: tile.ty,
         pixels: bytesToBase64(tile.pixels),
       })),
+      colorSpace: snapshot.colorSpace,
     };
     localStorage.setItem(crashRecoveryKey(snapshot.id), JSON.stringify(payload));
   } catch {
@@ -197,10 +203,17 @@ async function buildRecoveredThumbnail(
   pixels: Uint8Array,
   width: number,
   height: number,
+  colorSpace: DocumentColorSpace,
 ): Promise<Uint8Array> {
   const pixels32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.length / 4);
   const thumbnailPixels = buildThumbnail(pixels32, width, height);
-  return encodePng(thumbnailPixels.width, thumbnailPixels.height, thumbnailPixels.pixels);
+  return encodePng(
+    thumbnailPixels.width,
+    thumbnailPixels.height,
+    thumbnailPixels.pixels,
+    1,
+    colorSpace,
+  );
 }
 
 /** Real IndexedDB persistence. Under `bun test`, `fake-indexeddb/auto` provides the same global.
@@ -240,6 +253,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       // Keep whatever thumbnail is already known (or a blank placeholder for a brand-new
       // document) until the real one resolves below — it's a preview icon, not document data.
       thumbnail: lastKnownThumbnail.get(snapshot.id) ?? new Uint8Array(0),
+      colorSpace: snapshot.colorSpace,
     };
     documents.put(record);
     for (const tile of snapshot.tiles) {
@@ -361,6 +375,8 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
         }));
         for (const tile of recoveredTiles) writeTile(pixels, width, height, tile);
 
+        const recoveryColorSpace: DocumentColorSpace =
+          recovery.colorSpace ?? record?.colorSpace ?? 'srgb';
         const recoverySnapshot: DocumentSnapshot = {
           id,
           name: recovery.name,
@@ -370,15 +386,17 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
           tiles: recoveredTiles,
           fullResave: !record || recovery.fullResave,
           thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
+          colorSpace: recoveryColorSpace,
         };
         // A document that crashed before its first real thumbnail ever computed has nothing in
         // `lastKnownThumbnail` to carry forward: give it a real one now (a cheap, one-shot
         // encode) instead of leaving Recent Documents showing a blank tile until the next edit.
         const thumbnail =
-          lastKnownThumbnail.get(id) ?? (await buildRecoveredThumbnail(pixels, width, height));
+          lastKnownThumbnail.get(id) ??
+          (await buildRecoveredThumbnail(pixels, width, height, recoveryColorSpace));
         await writes.run(id, () => saveNow(recoverySnapshot, thumbnail));
         clearCrashRecovery(id);
-        return { id, name: recovery.name, width, height, pixels };
+        return { id, name: recovery.name, width, height, pixels, colorSpace: recoveryColorSpace };
       }
       if (recovery) clearCrashRecovery(id);
 
@@ -393,6 +411,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
         width: record.width,
         height: record.height,
         pixels,
+        colorSpace: record.colorSpace ?? 'srgb',
       };
     },
 

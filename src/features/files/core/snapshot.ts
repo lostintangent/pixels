@@ -27,6 +27,7 @@ export function snapshotDocument(
     tiles,
     fullResave,
     thumbnailPixels,
+    colorSpace: document.colorSpace,
   };
 }
 

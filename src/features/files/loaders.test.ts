@@ -27,6 +27,15 @@ describe('loadDocument', () => {
     expect(loaded!.name).toBe('Saved');
     expect([...loaded!.rgbaBytes.subarray(0, 4)]).toEqual([7, 8, 9, 255]);
   });
+
+  test('round-trips a display-p3 document\u2019s color space', async () => {
+    const store = freshStore();
+    const original = createBitmapDocument('doc-p3', 4, 4, 'P3 doc', 'display-p3');
+    await store.save(snapshotDocument(original, [], true), new Uint8Array([1]));
+
+    const loaded = await loadDocument(store, 'doc-p3');
+    expect(loaded!.colorSpace).toBe('display-p3');
+  });
 });
 
 describe('loadMostRecentOrNew', () => {

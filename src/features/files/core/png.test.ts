@@ -28,6 +28,9 @@ async function buildTestPng(options: {
   interlace?: number;
   corruptCrc?: boolean;
   signature?: number[];
+  /** Raw `cICP`/`iCCP`/`sRGB` chunk bytes to embed, for color-tagging decode tests. Written right
+   *  after IHDR, matching where a real encoder places them. */
+  colorChunks?: { cicp?: number[]; iccp?: Uint8Array; srgb?: number[] };
 }): Promise<Uint8Array> {
   const { width, height, bitDepth, colorType, palette, trns, rows, interlace = 0 } = options;
   let raw: Uint8Array;
@@ -83,6 +86,11 @@ async function buildTestPng(options: {
     new Uint8Array(options.signature ?? [137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', ihdr),
   ];
+  if (options.colorChunks?.cicp)
+    parts.push(chunk('cICP', new Uint8Array(options.colorChunks.cicp)));
+  if (options.colorChunks?.iccp) parts.push(chunk('iCCP', options.colorChunks.iccp));
+  if (options.colorChunks?.srgb)
+    parts.push(chunk('sRGB', new Uint8Array(options.colorChunks.srgb)));
   if (palette) {
     const plteData = new Uint8Array(palette);
     parts.push(chunk('PLTE', plteData));
@@ -159,6 +167,59 @@ describe('PNG round-trip', () => {
     const pixels = new Uint32Array([packRgba(1, 2, 3)]);
     expect(await rejectionOf(encodePng(1, 1, pixels, 0))).toBeInstanceOf(RangeError);
     expect(await rejectionOf(encodePng(1, 1, pixels, 1.5))).toBeInstanceOf(RangeError);
+  });
+});
+
+describe('PNG color tagging', () => {
+  test('encodePng defaults to sRGB, writing a plain sRGB chunk and no cICP', async () => {
+    const pixels = new Uint32Array([packRgba(100, 150, 200)]);
+    const bytes = await encodePng(1, 1, pixels);
+    const decoded = await decodePng(bytes);
+    expect(decoded.colorTag).toBe('srgb');
+  });
+
+  test('encodePng tags a display-p3 document with a cICP chunk round-tripping as display-p3', async () => {
+    const pixels = new Uint32Array([packRgba(100, 150, 200)]);
+    const bytes = await encodePng(1, 1, pixels, 1, 'display-p3');
+    const decoded = await decodePng(bytes);
+    expect(decoded.colorTag).toBe('display-p3');
+    // Pixel values themselves are an exact passthrough: export never re-maps numbers, only tags.
+    expect([...decoded.pixels]).toEqual([...pixels]);
+  });
+
+  test('decodePng classifies a PNG with no color chunk as sRGB (the spec default)', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[1, 2, 3]],
+    });
+    expect((await decodePng(bytes)).colorTag).toBe('srgb');
+  });
+
+  test('decodePng classifies real-world Display P3 cICP bytes as display-p3', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[1, 2, 3]],
+      colorChunks: { cicp: [12, 13, 0, 1] }, // verified against a real macOS P3 screenshot
+    });
+    expect((await decodePng(bytes)).colorTag).toBe('display-p3');
+  });
+
+  test('decodePng classifies an unrecognized cICP combination as unknown-icc', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[1, 2, 3]],
+      colorChunks: { cicp: [9, 16, 0, 1] }, // Rec. 2020: real color info, just not one we map
+    });
+    expect((await decodePng(bytes)).colorTag).toBe('unknown-icc');
   });
 });
 

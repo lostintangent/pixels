@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import type { DocumentColorSpace } from '../../document';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
 import { decodePng, encodePng } from '../core/png';
 
@@ -8,6 +9,7 @@ interface EncodeRequest {
   width: number;
   height: number;
   scale: number;
+  colorSpace: DocumentColorSpace;
   pixels: ArrayBuffer;
 }
 
@@ -29,6 +31,7 @@ interface DecodeSuccess {
   width: number;
   height: number;
   pixels: ArrayBuffer;
+  colorTag: DocumentColorSpace | 'unknown-icc';
 }
 
 interface Failure {
@@ -61,8 +64,8 @@ function failureOf(kind: 'encode' | 'decode', id: number, error: unknown): Failu
 self.addEventListener('message', (event: MessageEvent<EncodeRequest | DecodeRequest>) => {
   const request = event.data;
   if (request.kind === 'encode') {
-    const { id, width, height, scale, pixels } = request;
-    void encodePng(width, height, new Uint32Array(pixels), scale).then(
+    const { id, width, height, scale, colorSpace, pixels } = request;
+    void encodePng(width, height, new Uint32Array(pixels), scale, colorSpace).then(
       (bytes) => {
         // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
         // of whether `bytes` happens to be a view over a larger backing buffer.
@@ -85,6 +88,7 @@ self.addEventListener('message', (event: MessageEvent<EncodeRequest | DecodeRequ
           width: decoded.width,
           height: decoded.height,
           pixels: owned,
+          colorTag: decoded.colorTag,
         };
         (self as unknown as Worker).postMessage(response, [owned]);
       },

@@ -1,9 +1,16 @@
+import type { DocumentColorSpace } from '../../document';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
 import { decodePng, type DecodedPng, encodePng } from '../core/png';
 import type { DecodeResponse, EncodeResponse } from './pngWorker';
 
 export interface PngWorkerClient {
-  encode(width: number, height: number, pixels: Uint32Array, scale?: number): Promise<Uint8Array>;
+  encode(
+    width: number,
+    height: number,
+    pixels: Uint32Array,
+    scale?: number,
+    colorSpace?: DocumentColorSpace,
+  ): Promise<Uint8Array>;
   decode(bytes: Uint8Array): Promise<DecodedPng>;
   /** Terminates the underlying worker, if any. Tests use this to avoid leaking workers. */
   terminate(): void;
@@ -57,6 +64,7 @@ function createWorkerBackedClient(): PngWorkerClient {
         width: response.width,
         height: response.height,
         pixels: new Uint32Array(response.pixels),
+        colorTag: response.colorTag,
       });
     }
   });
@@ -70,14 +78,15 @@ function createWorkerBackedClient(): PngWorkerClient {
   });
 
   return {
-    encode(width, height, pixels, scale = 1) {
+    encode(width, height, pixels, scale = 1, colorSpace: DocumentColorSpace = 'srgb') {
       const copy = pixels.slice(); // owns its buffer; safe to transfer
       const id = nextRequestId++;
       return new Promise((resolve, reject) => {
         pending.set(id, { kind: 'encode', resolve, reject });
-        worker.postMessage({ kind: 'encode', id, width, height, scale, pixels: copy.buffer }, [
-          copy.buffer,
-        ]);
+        worker.postMessage(
+          { kind: 'encode', id, width, height, scale, colorSpace, pixels: copy.buffer },
+          [copy.buffer],
+        );
       });
     },
     decode(bytes) {
@@ -99,8 +108,8 @@ function createWorkerBackedClient(): PngWorkerClient {
  *  Behavior is identical, just without the off-main-thread guarantee. */
 function createInlineClient(): PngWorkerClient {
   return {
-    encode(width, height, pixels, scale = 1) {
-      return encodePng(width, height, pixels, scale);
+    encode(width, height, pixels, scale = 1, colorSpace: DocumentColorSpace = 'srgb') {
+      return encodePng(width, height, pixels, scale, colorSpace);
     },
     decode(bytes) {
       return decodePng(bytes);
@@ -136,8 +145,9 @@ export function encodePngOffMainThread(
   height: number,
   pixels: Uint32Array,
   scale = 1,
+  colorSpace: DocumentColorSpace = 'srgb',
 ): Promise<Uint8Array> {
-  return getClient().encode(width, height, pixels, scale);
+  return getClient().encode(width, height, pixels, scale, colorSpace);
 }
 
 /**

@@ -327,6 +327,7 @@ function recoveryStash(options: {
     tiles: options.tiles,
     fullResave: options.fullResave,
     thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
+    colorSpace: 'srgb',
   };
 }
 

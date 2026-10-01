@@ -1,3 +1,5 @@
+import type { DocumentColorSpace } from '../../document';
+
 /** File IO is intentionally outside the pixel hot path. */
 export type DocumentId = string;
 
@@ -38,6 +40,7 @@ export interface DocumentSnapshot {
   fullResave: boolean;
   /** Raw, already-detached thumbnail pixels. PNG-encoding happens after the snapshot, off the live buffer. */
   thumbnailPixels: { width: number; height: number; pixels: Uint32Array };
+  colorSpace: DocumentColorSpace;
 }
 
 export interface DocumentSummary {
@@ -56,6 +59,7 @@ export interface LoadedDocument {
   height: number;
   /** Raw RGBA bytes, width * height * 4, reassembled from tiles. */
   pixels: Uint8Array;
+  colorSpace: DocumentColorSpace;
 }
 
 export interface DocumentStore {

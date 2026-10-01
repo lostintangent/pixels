@@ -13,5 +13,6 @@ export async function exportPng(
     document.height,
     document.pixels,
     options.scale ?? 1,
+    document.colorSpace,
   );
 }

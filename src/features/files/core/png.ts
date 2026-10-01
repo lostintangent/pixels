@@ -1,4 +1,5 @@
-import { MAX_DOCUMENT_SIDE } from '../../document';
+import { MAX_DOCUMENT_SIDE, type DocumentColorSpace } from '../../document';
+import { classifyColorTag } from './colorTag';
 import { ImportError } from './contracts';
 
 /** The maximum side length we'll ever produce on export, so an unreasonable scale fails clearly
@@ -21,6 +22,12 @@ export interface DecodedPng {
   height: number;
   /** Packed ABGR-in-uint32 matching BitmapDocument.pixels, little-endian bytes are RGBA. */
   pixels: Uint32Array;
+  /** The PNG's embedded color tag, classified against the spec's own precedence (cICP, then
+   *  iCCP, then sRGB, defaulting to sRGB when none is present). `'unknown-icc'` means the PNG
+   *  carries real color information we can't map onto either of Pixels' two document color
+   *  spaces ourselves; the caller (`import.ts`) is the one with access to the browser's own
+   *  color management for that rare case, so `pixels` here stay the untouched, exact decode. */
+  colorTag: DocumentColorSpace | 'unknown-icc';
 }
 
 // ---------------------------------------------------------------------------
@@ -37,6 +44,7 @@ export async function encodePng(
   height: number,
   pixels: Uint32Array,
   scale = 1,
+  colorSpace: DocumentColorSpace = 'srgb',
 ): Promise<Uint8Array> {
   if (!Number.isInteger(scale) || scale < 1) {
     throw new RangeError(`Export scale must be a positive integer, got ${scale}`);
@@ -51,7 +59,7 @@ export async function encodePng(
   const sourceBytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
   const rowBytes = outWidth * 4;
   const idat = await deflateZlib(generateFilteredRows(sourceBytes, width, height, scale, rowBytes));
-  return assemblePng(outWidth, outHeight, idat);
+  return assemblePng(outWidth, outHeight, idat, colorSpace);
 }
 
 /** Yields one filter-tagged, already-upscaled scanline at a time (source row reused across scale copies). */
@@ -124,7 +132,17 @@ async function deflateZlib(rows: Generator<Uint8Array>): Promise<Uint8Array> {
   return out;
 }
 
-function assemblePng(width: number, height: number, idat: Uint8Array): Uint8Array {
+/** cICP code points (ITU-T H.273), as PNG requires: identity matrix (RGB, not YCbCr) and full
+ *  range. Verified against a real macOS-tagged Display P3 screenshot, which writes exactly these
+ *  four bytes. primaries 1 (BT.709) + transfer 13 (sRGB) is the matching sRGB tagging. */
+const CICP_DISPLAY_P3 = new Uint8Array([12, 13, 0, 1]);
+
+function assemblePng(
+  width: number,
+  height: number,
+  idat: Uint8Array,
+  colorSpace: DocumentColorSpace,
+): Uint8Array {
   const ihdr = new Uint8Array(13);
   writeUint32BE(ihdr, 0, width);
   writeUint32BE(ihdr, 4, height);
@@ -133,10 +151,17 @@ function assemblePng(width: number, height: number, idat: Uint8Array): Uint8Arra
   ihdr[10] = 0; // compression method
   ihdr[11] = 0; // filter method
   ihdr[12] = 0; // interlace: none
-  const srgb = new Uint8Array([0]); // rendering intent: perceptual
+  // sRGB is the plain, widely-understood tag for the common case. Display P3 gets a cICP chunk
+  // instead: a tool that doesn't understand cICP simply ignores it and falls back to treating the
+  // file as untagged (assumed sRGB) - a known, deliberate tradeoff over embedding a full ICC
+  // profile, which every color-managed reader (including this app) already handles via cICP.
+  const colorChunk =
+    colorSpace === 'display-p3'
+      ? chunk('cICP', CICP_DISPLAY_P3)
+      : chunk('sRGB', new Uint8Array([0]));
   const chunks = [
     chunk('IHDR', ihdr),
-    chunk('sRGB', srgb),
+    colorChunk,
     chunk('IDAT', idat),
     chunk('IEND', new Uint8Array(0)),
   ];
@@ -172,6 +197,9 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   let palette: Uint8Array | null = null;
   let trns: Uint8Array | null = null;
   const idatChunks: Uint8Array[] = [];
+  let cicp: Uint8Array | null = null;
+  let iccp: Uint8Array | null = null;
+  let srgb: Uint8Array | null = null;
   let offset = SIGNATURE.length;
 
   while (offset < bytes.length) {
@@ -190,6 +218,9 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     else if (type === 'PLTE') palette = data;
     else if (type === 'tRNS') trns = data;
     else if (type === 'IDAT') idatChunks.push(data);
+    else if (type === 'cICP') cicp = data;
+    else if (type === 'iCCP') iccp = data;
+    else if (type === 'sRGB') srgb = data;
     else if (type === 'IEND') break;
     offset = dataEnd + 4;
   }
@@ -214,7 +245,8 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   }
 
   const pixels = decodeImage(raw, ihdr, palette, trns);
-  return { width: ihdr.width, height: ihdr.height, pixels };
+  const colorTag = await classifyColorTag({ cicp, iccp, srgb });
+  return { width: ihdr.width, height: ihdr.height, pixels, colorTag };
 }
 
 /** One of Adam7's seven reduced images, in pass order: starting offset and stride on each axis. */

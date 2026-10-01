@@ -1,4 +1,10 @@
-import { createBitmapDocument, type BitmapDocument, MAX_DOCUMENT_SIDE } from '../document';
+import {
+  createBitmapDocument,
+  type BitmapDocument,
+  type DocumentColorSpace,
+  MAX_DOCUMENT_SIDE,
+} from '../document';
+import { convertUnknownIccPngToDisplayP3 } from './browser/pngColorManagement';
 import { ImportError } from './core/contracts';
 import { decodePngOffMainThread } from './runtime/pngWorkerClient';
 
@@ -21,8 +27,23 @@ export async function importPng(
       `This PNG is ${decoded.width} x ${decoded.height}. Pixels opens images up to ${MAX_DOCUMENT_SIDE} x ${MAX_DOCUMENT_SIDE}.`,
     );
   }
-  const document = createBitmapDocument(id, decoded.width, decoded.height, name);
-  document.pixels.set(decoded.pixels);
+  let colorSpace: DocumentColorSpace = 'srgb';
+  let pixels = decoded.pixels;
+  if (decoded.colorTag === 'unknown-icc') {
+    // A real, embedded profile we can't classify ourselves: hand the original bytes to the
+    // browser's own ICC color management rather than guessing. `converted` is `null` only when
+    // the DOM APIs it needs aren't available, in which case the already-decoded pixels (exact,
+    // just not color-corrected) are kept as plain sRGB.
+    const converted = await convertUnknownIccPngToDisplayP3(bytes, decoded.width, decoded.height);
+    if (converted) {
+      colorSpace = 'display-p3';
+      pixels = converted;
+    }
+  } else {
+    colorSpace = decoded.colorTag;
+  }
+  const document = createBitmapDocument(id, decoded.width, decoded.height, name, colorSpace);
+  document.pixels.set(pixels);
   return document;
 }
 
