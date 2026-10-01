@@ -21,8 +21,10 @@ describe('fitAroundIslands', () => {
   });
 
   test('keeps a smaller zoom centered when that clears an island above the document', () => {
+    // 6× would clear the panel by only 9 px, short of the 12 px gap the beside fit keeps.
     const fit = fitAroundIslands(view(820, 1180), 64, 64, FRAME, [panel(820, 370, 397)]);
-    expect(fit).toMatchObject({ zoom: 6, panX: 218, panY: 406 });
+    expect(fit).toMatchObject({ zoom: 5, panX: 250, panY: 438 });
+    expect(fit.panY - 397).toBeGreaterThanOrEqual(12);
   });
 
   test('moves beside an island only when centering would still overlap it', () => {
@@ -31,20 +33,22 @@ describe('fitAroundIslands', () => {
   });
 
   test('drops one whole zoom when that clears an island', () => {
-    const grazing = { left: 684, top: 100, right: 752, bottom: 500 };
+    // 38× would end 6 px short of the island, inside the 12 px gap.
+    const grazing = { left: 694, top: 100, right: 760, bottom: 500 };
     const fit = fitAroundIslands(view(768, 900), 16, 16, FRAME, [grazing]);
     expect(fit).toMatchObject({ zoom: 37, fittedZoom: 37, panX: 88, panY: 162 });
+    expect(grazing.left - (fit.panX + 16 * fit.zoom)).toBeGreaterThanOrEqual(12);
   });
 
   test('shrinks a large image to the whole percentage that clears an island', () => {
     // A wide island along the top grazes a centered 4000 × 3000 fit. Moving beside it would halve it.
     const island = { left: 600, top: 16, right: 1424, bottom: 120 };
     const fit = fitAroundIslands(view(1440, 900), 4000, 3000, FRAME, [island]);
-    expect(fit.zoom).toBe(0.22);
-    expect(fit.fittedZoom).toBe(0.22);
+    expect(fit.zoom).toBe(0.21);
+    expect(fit.fittedZoom).toBe(0.21);
     const center = frameCenter(fit, FRAME);
     expect(fit.panX + (4000 * fit.zoom) / 2).toBeCloseTo(center.x, 6);
-    expect(fit.panY).toBeGreaterThanOrEqual(island.bottom);
+    expect(fit.panY).toBeGreaterThanOrEqual(island.bottom + 12);
   });
 
   test('reserves the island column for a wide document that would run under it', () => {

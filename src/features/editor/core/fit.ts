@@ -27,8 +27,14 @@ export function fitAroundIslands(
   islands: readonly IslandRect[],
 ): Viewport {
   const centered = fitViewport(view, documentWidth, documentHeight, frame);
+  // An island blocks when it comes within the gap, so every fit keeps the same breathing room.
   const blocking = islands.filter((island) =>
-    overlaps(documentRect(centered, documentWidth, documentHeight), island),
+    overlaps(documentRect(centered, documentWidth, documentHeight), {
+      left: island.left - ISLAND_GAP,
+      top: island.top - ISLAND_GAP,
+      right: island.right + ISLAND_GAP,
+      bottom: island.bottom + ISLAND_GAP,
+    }),
   );
   if (blocking.length === 0) return centered;
 
@@ -49,8 +55,9 @@ export function fitAroundIslands(
 }
 
 /**
- * The largest zoom at which a document centered on `center` stays clear of `island`. It clears
- * when either axis separates them, so that is the larger of the two axis limits.
+ * The largest zoom at which a document centered on `center` stays `ISLAND_GAP` clear of `island`,
+ * the same breathing room the beside fit keeps. Either axis can separate them, so that is the
+ * larger of the two axis limits.
  */
 function clearingZoom(
   island: IslandRect,
@@ -58,8 +65,8 @@ function clearingZoom(
   documentWidth: number,
   documentHeight: number,
 ): number {
-  const gapX = Math.max(island.left - center.x, center.x - island.right);
-  const gapY = Math.max(island.top - center.y, center.y - island.bottom);
+  const gapX = Math.max(island.left - center.x, center.x - island.right) - ISLAND_GAP;
+  const gapY = Math.max(island.top - center.y, center.y - island.bottom) - ISLAND_GAP;
   return Math.max(0, (2 * gapX) / documentWidth, (2 * gapY) / documentHeight);
 }
 

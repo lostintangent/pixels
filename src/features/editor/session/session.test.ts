@@ -301,11 +301,11 @@ test('an island measured after the first fit refits only an untouched view', () 
 
   const panel = { left: 434, top: 16, right: 804, bottom: 397 };
   session.setIslands([panel]);
-  expect(session.viewport.state).toMatchObject({ zoom: 6, panX: 218, panY: 406 });
+  expect(session.viewport.state).toMatchObject({ zoom: 5, panX: 250, panY: 438 });
 
   session.setViewport({ ...session.viewport.state, panX: 10 });
   session.setIslands([]);
-  expect(session.viewport.state).toMatchObject({ zoom: 6, panX: 10 });
+  expect(session.viewport.state).toMatchObject({ zoom: 5, panX: 10 });
   session.run({ type: 'zoom-fit' });
   expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 90 });
 });
