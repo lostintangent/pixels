@@ -130,10 +130,32 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
     });
     flush();
     expect(viewportCanvas.context.imageSmoothingEnabled).toBe(false);
+    renderer.setViewport({
+      zoom: 0.55,
+      panX: 0,
+      panY: 0,
+      cssWidth: 32,
+      cssHeight: 32,
+      devicePixelRatio: 2,
+    });
+    renderer.setOverlay({
+      grid: 'off',
+      cursor: null,
+      marquee: null,
+      preview: {
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+        pixels: new Uint32Array([ink]),
+      },
+    });
+    flush();
+    expect(viewportCanvas.context.imageSmoothingEnabled).toBe(true);
+    expect(viewportCanvas.context.imageSmoothingQuality).toBe('low');
+    expect(overlayCanvas.context.imageSmoothingEnabled).toBe(true);
+    expect(overlayCanvas.context.imageSmoothingQuality).toBe('low');
     const draws = viewportCanvas.context.drawCount;
     const uploads = documentCanvas.context.putImages.length;
     renderer.setOverlay({
-      grid: 'auto',
+      grid: 'off',
       cursor: { x: 1, y: 1, width: 1, height: 1 },
       marquee: null,
       preview: null,

@@ -20,6 +20,13 @@ function context(
   return ctx;
 }
 
+function smoothingForView(view: Viewport): 'off' | 'low' | 'high' {
+  if (view.zoom >= 1) return 'off';
+  const deviceScale = view.zoom * view.devicePixelRatio;
+  if (deviceScale < 1) return 'high';
+  return Math.abs(deviceScale - Math.round(deviceScale)) < 0.000001 ? 'off' : 'low';
+}
+
 function checkerPattern(ctx: CanvasRenderingContext2D, a: string, b: string): CanvasPattern {
   const tile = globalThis.document.createElement('canvas');
   tile.width = tile.height = 16;
@@ -214,8 +221,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         previewCtx.putImageData(previewImage, 0, 0, clip.x, clip.y, clip.width, clip.height);
       }
     } else previewCtx.putImageData(previewImage, 0, 0);
-    overlayCtx.imageSmoothingEnabled = view.zoom * view.devicePixelRatio < 1;
-    if (overlayCtx.imageSmoothingEnabled) overlayCtx.imageSmoothingQuality = 'high';
+    const smoothing = smoothingForView(view);
+    overlayCtx.imageSmoothingEnabled = smoothing !== 'off';
+    if (smoothing !== 'off') overlayCtx.imageSmoothingQuality = smoothing;
     overlayCtx.drawImage(
       previewCanvas,
       view.panX + preview.bounds.x * view.zoom,
@@ -289,8 +297,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       viewportCtx.clip();
       viewportCtx.fillStyle = checker;
       viewportCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
-      viewportCtx.imageSmoothingEnabled = view.zoom * view.devicePixelRatio < 1;
-      if (viewportCtx.imageSmoothingEnabled) viewportCtx.imageSmoothingQuality = 'high';
+      const smoothing = smoothingForView(view);
+      viewportCtx.imageSmoothingEnabled = smoothing !== 'off';
+      if (smoothing !== 'off') viewportCtx.imageSmoothingQuality = smoothing;
       viewportCtx.drawImage(
         sourceForZoom(view),
         view.panX,

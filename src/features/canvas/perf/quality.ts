@@ -4,6 +4,36 @@ import { createCanvasRenderer } from '../render/renderer';
 const SIDE = 512;
 const OUTPUT = SIDE / 2;
 
+function areaReferenceError(
+  source: Uint8ClampedArray,
+  actual: Uint8ClampedArray,
+  outputSide: number,
+  scale: number,
+): number {
+  let error = 0;
+  for (let y = 0; y < outputSide; y++) {
+    const top = y / scale;
+    const bottom = (y + 1) / scale;
+    for (let x = 0; x < outputSide; x++) {
+      const left = x / scale;
+      const right = (x + 1) / scale;
+      for (let channel = 0; channel < 3; channel++) {
+        let weighted = 0;
+        for (let sy = Math.floor(top); sy < Math.ceil(bottom); sy++) {
+          const height = Math.min(bottom, sy + 1) - Math.max(top, sy);
+          for (let sx = Math.floor(left); sx < Math.ceil(right); sx++) {
+            const width = Math.min(right, sx + 1) - Math.max(left, sx);
+            weighted += source[(sy * SIDE + sx) * 4 + channel]! * width * height;
+          }
+        }
+        const expected = weighted / ((right - left) * (bottom - top));
+        error += Math.abs(actual[(y * outputSide + x) * 4 + channel]! - expected);
+      }
+    }
+  }
+  return error / (outputSide * outputSide * 3);
+}
+
 function frames(): Promise<void> {
   return new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -100,6 +130,32 @@ export async function checkZoomOutQuality(): Promise<Record<string, number>> {
     await measure('small text', () =>
       bitmap.rgbaBytes.set(ctx.getImageData(0, 0, SIDE, SIDE).data),
     );
+    ctx.fillRect(0, 101, SIDE, 1);
+    ctx.fillRect(137, 0, 1, SIDE);
+    bitmap.rgbaBytes.set(ctx.getImageData(0, 0, SIDE, SIDE).data);
+    bitmap.events.invalidate({ x: 0, y: 0, width: SIDE, height: SIDE });
+    for (const scale of [1.1, 1.2]) {
+      const zoom = scale / 2;
+      renderer.setViewport({
+        zoom,
+        panX: 0,
+        panY: 0,
+        cssWidth: Math.ceil(SIDE * zoom),
+        cssHeight: Math.ceil(SIDE * zoom),
+        devicePixelRatio: 2,
+      });
+      await frames();
+      const outputSide = Math.floor(SIDE * scale);
+      const actual = viewportCanvas
+        .getContext('2d')!
+        .getImageData(0, 0, outputSide, outputSide).data;
+      errors[`text and lines ${scale}x`] = areaReferenceError(
+        bitmap.rgbaBytes,
+        actual,
+        outputSide,
+        scale,
+      );
+    }
     return errors;
   } finally {
     renderer.dispose();
