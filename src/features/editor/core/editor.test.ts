@@ -141,6 +141,37 @@ describe('shortcuts', () => {
     });
   });
 
+  test('arrow keys nudge a selection 1 px, or 10 px with Shift', () => {
+    expect(resolveShortcut(press('ArrowLeft'), selecting)).toEqual({
+      type: 'nudge',
+      dx: -1,
+      dy: 0,
+    });
+    expect(resolveShortcut(press('ArrowRight'), selecting)).toEqual({
+      type: 'nudge',
+      dx: 1,
+      dy: 0,
+    });
+    expect(resolveShortcut(press('ArrowUp'), selecting)).toEqual({ type: 'nudge', dx: 0, dy: -1 });
+    expect(resolveShortcut(press('ArrowDown', { shift: true }), selecting)).toEqual({
+      type: 'nudge',
+      dx: 0,
+      dy: 10,
+    });
+    expect(resolveShortcut(press('ArrowLeft', { shift: true }), selecting)).toEqual({
+      type: 'nudge',
+      dx: -10,
+      dy: 0,
+    });
+  });
+
+  test('arrow keys are left alone without a selection, mid-gesture, or with a modifier', () => {
+    expect(resolveShortcut(press('ArrowLeft'), idle)).toBeNull();
+    expect(resolveShortcut(press('ArrowLeft'), { hasSelection: true, gesturing: true })).toBeNull();
+    expect(resolveShortcut(press('ArrowLeft', { alt: true }), selecting)).toBeNull();
+    expect(resolveShortcut(press('ArrowLeft', { mod: true }), selecting)).toBeNull();
+  });
+
   test('tab toggles chrome, shift-tab is left for focus', () => {
     expect(resolveShortcut(press('Tab'), idle)).toEqual({ type: 'toggle-chrome' });
     expect(resolveShortcut(press('Tab', { shift: true }), idle)).toBeNull();

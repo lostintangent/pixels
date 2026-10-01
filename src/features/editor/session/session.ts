@@ -90,6 +90,8 @@ export interface EditorSession {
   readonly overlay: Store<OverlayState>;
   /** Document pixel under the pointer, or null when outside the canvas. */
   readonly pointer: Store<PixelPoint | null>;
+  /** True from a canvas gesture's press until its lift or cancel. */
+  readonly gesturing: boolean;
   /** Commits a floating selection before a document snapshot such as PNG export. */
   commitFloatingSelection(): boolean;
   run(command: EditorCommand): void;
@@ -341,6 +343,17 @@ export function createEditorSession({
     }
   }
 
+  /** Lifts like a drag, so a run of nudges stays one float and commits as one undo step. */
+  function nudge(dx: number, dy: number): void {
+    const rect = state.state.selection;
+    if (gesture || !rect) return;
+    const floating = selection.floating ?? selection.lift(rect);
+    if (!floating) return;
+    selection.move({ x: floating.bounds.x + dx, y: floating.bounds.y + dy });
+    update((current) => selectTool(current, 'select'));
+    setSelection({ ...floating.bounds });
+  }
+
   function pasteOrigin(pixels: FloatingSelection): PixelPoint {
     const bounds = pixels.bounds;
     const bitmap = document();
@@ -395,6 +408,9 @@ export function createEditorSession({
     viewport,
     overlay,
     pointer,
+    get gesturing() {
+      return gesture !== null;
+    },
     commitFloatingSelection: commitFloating,
 
     run(command) {
@@ -443,6 +459,9 @@ export function createEditorSession({
           return;
         case 'selection':
           runSelection(command.action);
+          return;
+        case 'nudge':
+          nudge(command.dx, command.dy);
           return;
       }
     },
@@ -556,6 +575,8 @@ export function createEditorSession({
       if (tool === 'select') {
         const rect = state.state.selection;
         if (rect && contains(selection.floating?.bounds ?? rect, cell)) {
+          // Option drags out a copy: the same float and undo steps as Duplicate, then a move.
+          if (alt) runSelection('duplicate');
           const lifted = selection.floating ?? selection.lift(rect);
           if (!lifted) return;
           gesture = {

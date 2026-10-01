@@ -220,7 +220,7 @@ function Canvas({ session }: { session: EditorSession }) {
           y >= selection.y &&
           x < selection.x + selection.width &&
           y < selection.y + selection.height;
-        return within ? 'move' : 'crosshair';
+        return within ? (alt ? 'copy' : 'move') : 'crosshair';
       }
       // The renderer draws the brush footprint, so a second cursor would only add noise.
       const inside = x >= 0 && y >= 0 && x < document.width && y < document.height;

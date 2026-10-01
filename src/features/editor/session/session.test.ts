@@ -71,6 +71,111 @@ test('duplicate floats in place without replacing the clipboard', () => {
   expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
 });
 
+function selectionSession(width: number) {
+  const document = createBitmapDocument('select', width, 1);
+  document.pixels[0] = A;
+  document.pixels[1] = B;
+  const session = createEditorSession({ document, save: null, clipboard: createPixelClipboard() });
+  session.run({ type: 'tool', tool: 'select' });
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(1, 0)]);
+  session.endGesture();
+  return { document, session, undoSteps: () => countUndo(session) };
+}
+
+/** Undoes until nothing is left, then redoes it all, so the document ends where it began. */
+function countUndo(session: ReturnType<typeof createEditorSession>): number {
+  let steps = 0;
+  while (session.state.state.canUndo) {
+    session.run({ type: 'undo' });
+    steps++;
+  }
+  for (let step = 0; step < steps; step++) session.run({ type: 'redo' });
+  return steps;
+}
+
+test('a run of nudges floats the selection and commits as one undo step', () => {
+  const { document, session, undoSteps } = selectionSession(16);
+  session.run({ type: 'nudge', dx: 1, dy: 0 });
+  // The float sits above an untouched document until it commits.
+  expect(Array.from(document.pixels.subarray(0, 4))).toEqual([A, B, 0, 0]);
+  session.run({ type: 'nudge', dx: 1, dy: 0 });
+  session.run({ type: 'nudge', dx: 10, dy: 0 });
+  session.run({ type: 'nudge', dx: -1, dy: 0 });
+  expect(session.state.state.selection).toEqual({ x: 11, y: 0, width: 2, height: 1 });
+  session.run({ type: 'selection', action: 'commit' });
+  expect(document.pixels[11]).toBe(A);
+  expect(document.pixels[12]).toBe(B);
+  expect(document.pixels[0]).toBe(0);
+  expect(undoSteps()).toBe(1);
+  session.run({ type: 'undo' });
+  expect(Array.from(document.pixels.subarray(0, 2))).toEqual([A, B]);
+  expect(document.pixels.subarray(2).every((pixel) => pixel === 0)).toBe(true);
+});
+
+test('a tool change commits a nudge run, and Escape leaves the document byte-identical', () => {
+  const committed = selectionSession(4);
+  committed.session.run({ type: 'nudge', dx: 1, dy: 0 });
+  committed.session.run({ type: 'nudge', dx: 1, dy: 0 });
+  committed.session.run({ type: 'tool', tool: 'pencil' });
+  expect(Array.from(committed.document.pixels)).toEqual([0, 0, A, B]);
+  expect(committed.undoSteps()).toBe(1);
+
+  const { document, session } = selectionSession(4);
+  const before = document.pixels.slice();
+  session.run({ type: 'nudge', dx: 1, dy: 0 });
+  session.run({ type: 'selection', action: 'cancel' });
+  expect(Array.from(document.pixels)).toEqual(Array.from(before));
+  expect(session.state.state.selection).toBeNull();
+  expect(session.state.state.canUndo).toBe(false);
+});
+
+test('a nudge waits out a pointer gesture and needs a selection', () => {
+  const { document, session } = selectionSession(4);
+  session.beginGesture(input(0, 0));
+  expect(session.gesturing).toBe(true);
+  session.run({ type: 'nudge', dx: 1, dy: 0 });
+  session.endGesture();
+  expect(session.gesturing).toBe(false);
+  expect(session.state.state.selection).toEqual({ x: 0, y: 0, width: 2, height: 1 });
+  session.run({ type: 'selection', action: 'cancel' });
+  session.run({ type: 'nudge', dx: 1, dy: 0 });
+  expect(session.state.state.selection).toBeNull();
+  expect(Array.from(document.pixels)).toEqual([A, B, 0, 0]);
+});
+
+test('Option-drag inside a selection drags out a copy with the undo cost of Duplicate', () => {
+  const { document, session, undoSteps } = selectionSession(6);
+  session.beginGesture({ ...input(0, 0), alt: true });
+  session.extendGesture([input(2, 0)]);
+  session.endGesture();
+  session.run({ type: 'selection', action: 'commit' });
+  expect(Array.from(document.pixels)).toEqual([A, B, A, B, 0, 0]);
+  expect(undoSteps()).toBe(1);
+
+  // From a float, the copy first stamps the float where it is: two steps, like Duplicate.
+  const floating = selectionSession(6);
+  floating.session.run({ type: 'nudge', dx: 1, dy: 0 });
+  floating.session.beginGesture({ ...input(1, 0), alt: true });
+  floating.session.extendGesture([input(4, 0)]);
+  floating.session.endGesture();
+  floating.session.run({ type: 'selection', action: 'commit' });
+  expect(Array.from(floating.document.pixels)).toEqual([0, A, B, 0, A, B]);
+  expect(floating.undoSteps()).toBe(2);
+});
+
+test('Option-drag outside a selection starts a new marquee and never eyedrops', () => {
+  const { document, session } = selectionSession(6);
+  const primary = session.state.state.primary;
+  session.beginGesture({ ...input(3, 0), alt: true });
+  session.extendGesture([{ ...input(5, 0), alt: true }]);
+  session.endGesture();
+  expect(session.state.state.selection).toEqual({ x: 3, y: 0, width: 3, height: 1 });
+  expect(session.state.state.primary).toBe(primary);
+  expect(session.state.state.canUndo).toBe(false);
+  expect(Array.from(document.pixels)).toEqual([A, B, 0, 0, 0, 0]);
+});
+
 test('paste stays at a visible origin and recenters when that origin is off screen', () => {
   const document = createBitmapDocument('placement', 10, 10);
   const source = createBitmapDocument('source', 10, 10);

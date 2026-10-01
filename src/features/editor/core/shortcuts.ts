@@ -14,7 +14,8 @@ export type EditorCommand =
   | { type: 'toggle-chrome' }
   | { type: 'open'; panel: 'new' | 'export' | 'resize' }
   | { type: 'open-file' }
-  | { type: 'selection'; action: SelectionAction };
+  | { type: 'selection'; action: SelectionAction }
+  | { type: 'nudge'; dx: number; dy: number };
 
 export type SelectionAction =
   | 'all'
@@ -36,7 +37,16 @@ export interface KeyPress {
 
 export interface ShortcutContext {
   hasSelection: boolean;
+  /** A pointer gesture owns the selection until it lifts. */
+  gesturing?: boolean;
 }
+
+const NUDGES: Record<string, readonly [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
 
 const TOOL_KEYS = new Map(TOOLS.map((tool) => [tool.key, tool.kind]));
 
@@ -92,6 +102,12 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
       return context.hasSelection ? { type: 'selection', action: 'clear' } : null;
     case 'Tab':
       return press.shift ? null : { type: 'toggle-chrome' };
+  }
+  const nudge = NUDGES[key];
+  if (nudge) {
+    if (!context.hasSelection || context.gesturing) return null;
+    const step = press.shift ? 10 : 1;
+    return { type: 'nudge', dx: nudge[0] * step, dy: nudge[1] * step };
   }
   if (press.shift) return null;
   const tool = TOOL_KEYS.get(key);

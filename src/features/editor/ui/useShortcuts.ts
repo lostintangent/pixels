@@ -9,8 +9,11 @@ const IS_APPLE = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '');
 export const OWNS_KEYS =
   'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], dialog, [role="dialog"]';
 
+/** Composite widgets that move their own focus with arrow keys, even when they don't consume them. */
+const OWNS_ARROWS = '[role="radiogroup"], [role="slider"], [role="tablist"], [role="grid"]';
+
 /** Toggles fire once per press. Stepping commands repeat while held. */
-const REPEATS = new Set<EditorCommand['type']>(['zoom', 'brush-size', 'undo', 'redo']);
+const REPEATS = new Set<EditorCommand['type']>(['zoom', 'brush-size', 'undo', 'redo', 'nudge']);
 
 /** These arrive as the browser's copy, cut, and paste events instead. See useClipboard. */
 const CLIPBOARD = new Set<SelectionAction>(['copy', 'cut', 'paste']);
@@ -30,9 +33,10 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
           shift: event.shiftKey,
           alt: event.altKey,
         },
-        { hasSelection: session.state.state.selection !== null },
+        { hasSelection: session.state.state.selection !== null, gesturing: session.gesturing },
       );
       if (!command) return;
+      if (command.type === 'nudge' && target?.closest(OWNS_ARROWS)) return;
       if (command.type === 'selection' && CLIPBOARD.has(command.action)) return;
       // Tab still moves focus through the chrome. It only hides chrome from the canvas.
       if (
