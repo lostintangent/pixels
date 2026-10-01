@@ -18,7 +18,13 @@ export function resizeDocument(
   height: number,
   anchor: CanvasAnchor = 'center',
 ): BitmapDocument {
-  const output = createBitmapDocument(document.id, width, height, document.name);
+  const output = createBitmapDocument(
+    document.id,
+    width,
+    height,
+    document.name,
+    document.colorSpace,
+  );
   const offsetX = anchor.endsWith('left')
     ? 0
     : anchor.endsWith('right')

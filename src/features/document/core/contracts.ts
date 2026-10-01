@@ -13,9 +13,12 @@ export interface PixelRect {
 /** Packed ABGR in a Uint32Array on little-endian browsers: bytes are RGBA. */
 export type PackedColor = number;
 
+export type DocumentColorSpace = 'srgb' | 'display-p3';
+
 export interface BitmapDocument {
   readonly id: string;
   name: string;
+  readonly colorSpace: DocumentColorSpace;
   width: number;
   height: number;
   /** Shares its ArrayBuffer with rgbaBytes, so ImageData can be a zero-copy view.

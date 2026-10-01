@@ -1,4 +1,10 @@
-import type { BitmapDocument, PackedColor, PixelPoint, PixelRect } from '../../document';
+import type {
+  BitmapDocument,
+  DocumentColorSpace,
+  PackedColor,
+  PixelPoint,
+  PixelRect,
+} from '../../document';
 import type { DocumentHistory } from '../../history';
 
 export interface Brush {
@@ -46,6 +52,7 @@ export interface FloatingSelection {
   bounds: PixelRect;
   pixels: Uint32Array;
   sourceBounds: PixelRect;
+  colorSpace: DocumentColorSpace;
 }
 export interface SelectionSession {
   readonly floating: FloatingSelection | null;

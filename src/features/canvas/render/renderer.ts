@@ -1,4 +1,4 @@
-import type { BitmapDocument, PixelRect } from '../../document';
+import type { BitmapDocument, DocumentColorSpace, PixelRect } from '../../document';
 import { intersectRect, unionRect } from '../../document';
 import type { Viewport } from '../core/contracts';
 import type { CanvasRenderer, OverlayPreview, OverlayState, RendererSurface } from './contracts';
@@ -11,8 +11,11 @@ const EMPTY_OVERLAY: OverlayState = {
   sourceClear: null,
 };
 
-function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
-  const ctx = canvas.getContext('2d', { alpha: true });
+function context(
+  canvas: HTMLCanvasElement,
+  colorSpace: DocumentColorSpace,
+): CanvasRenderingContext2D {
+  const ctx = canvas.getContext('2d', { alpha: true, colorSpace });
   if (!ctx) throw new Error('Canvas 2D context is unavailable');
   return ctx;
 }
@@ -20,7 +23,7 @@ function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
 function checkerPattern(ctx: CanvasRenderingContext2D, a: string, b: string): CanvasPattern {
   const tile = globalThis.document.createElement('canvas');
   tile.width = tile.height = 16;
-  const tileCtx = context(tile);
+  const tileCtx = context(tile, 'srgb');
   tileCtx.fillStyle = a;
   tileCtx.fillRect(0, 0, 16, 16);
   tileCtx.fillStyle = b;
@@ -57,20 +60,22 @@ function drawTwoToneRect(
 }
 
 export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
-  const documentCtx = context(surface.documentCanvas);
-  const viewportCtx = context(surface.viewportCanvas);
-  const overlayCtx = context(surface.overlayCanvas);
+  const colorSpace = surface.colorSpace ?? 'srgb';
+  const documentCtx = context(surface.documentCanvas, colorSpace);
+  const viewportCtx = context(surface.viewportCanvas, colorSpace);
+  const overlayCtx = context(surface.overlayCanvas, colorSpace);
   let checker = checkerPattern(viewportCtx, '#fff', '#d6d6d6');
   let overlayChecker = checkerPattern(overlayCtx, '#fff', '#d6d6d6');
   let checkerA = '#fff';
   let checkerB = '#d6d6d6';
   const previewCanvas = globalThis.document.createElement('canvas');
-  const previewCtx = context(previewCanvas);
+  const previewCtx = context(previewCanvas, colorSpace);
   let document: BitmapDocument | null = null;
   let viewport: Viewport | null = null;
   let overlay = EMPTY_OVERLAY;
   let unsubscribe: (() => void) | null = null;
   let imageData: ImageData | null = null;
+  const mipmaps: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }[] = [];
   let pendingDirty: PixelRect | null = null;
   let viewportDirty = true;
   let overlayDirty = true;
@@ -113,6 +118,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     ) {
       surface.documentCanvas.width = bitmap.width;
       surface.documentCanvas.height = bitmap.height;
+      mipmaps.length = 0;
       imageData = null;
       pendingDirty = { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
     }
@@ -121,21 +127,59 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         bitmap.rgbaBytes as Uint8ClampedArray<ArrayBuffer>,
         bitmap.width,
         bitmap.height,
+        { colorSpace },
       );
       pendingDirty = { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
     }
     if (pendingDirty) {
-      documentCtx.putImageData(
-        imageData,
-        0,
-        0,
-        pendingDirty.x,
-        pendingDirty.y,
-        pendingDirty.width,
-        pendingDirty.height,
-      );
+      const dirty = pendingDirty;
+      documentCtx.putImageData(imageData, 0, 0, dirty.x, dirty.y, dirty.width, dirty.height);
+      let previousDirty = dirty;
+      for (let level = 0; level < mipmaps.length; level++) {
+        const source = level === 0 ? surface.documentCanvas : mipmaps[level - 1]!.canvas;
+        const { canvas, ctx } = mipmaps[level]!;
+        // Include the resampling footprint so a changed source edge cannot leave stale colors.
+        const left = Math.max(0, Math.floor((previousDirty.x - 2) / 2));
+        const top = Math.max(0, Math.floor((previousDirty.y - 2) / 2));
+        const right = Math.min(
+          canvas.width,
+          Math.ceil((previousDirty.x + previousDirty.width + 2) / 2),
+        );
+        const bottom = Math.min(
+          canvas.height,
+          Math.ceil((previousDirty.y + previousDirty.height + 2) / 2),
+        );
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(left, top, right - left, bottom - top);
+        ctx.clip();
+        ctx.clearRect(left, top, right - left, bottom - top);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        previousDirty = { x: left, y: top, width: right - left, height: bottom - top };
+      }
       pendingDirty = null;
     }
+  }
+
+  function sourceForZoom(view: Viewport): HTMLCanvasElement {
+    if (view.zoom * view.devicePixelRatio >= 1) return surface.documentCanvas;
+    const scale = view.zoom * view.devicePixelRatio;
+    const levels = Math.max(0, Math.floor(Math.log2(1 / scale)));
+    while (mipmaps.length < levels) {
+      const source = mipmaps.at(-1)?.canvas ?? surface.documentCanvas;
+      const canvas = globalThis.document.createElement('canvas');
+      canvas.width = Math.max(1, Math.ceil(source.width / 2));
+      canvas.height = Math.max(1, Math.ceil(source.height / 2));
+      const ctx = context(canvas, colorSpace);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      mipmaps.push({ canvas, ctx });
+    }
+    return mipmaps[levels - 1]?.canvas ?? surface.documentCanvas;
   }
 
   function drawPreview(view: Viewport, preview: OverlayPreview): void {
@@ -158,7 +202,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         preview.pixels.byteOffset,
         byteLength,
       );
-      previewImage = new ImageData(bytes, stride, rows);
+      previewImage = new ImageData(bytes, stride, rows, { colorSpace });
       previewBuffer = preview.pixels.buffer;
       previewOffset = preview.pixels.byteOffset;
       previewWidth = stride;
@@ -170,7 +214,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         previewCtx.putImageData(previewImage, 0, 0, clip.x, clip.y, clip.width, clip.height);
       }
     } else previewCtx.putImageData(previewImage, 0, 0);
-    overlayCtx.imageSmoothingEnabled = false;
+    overlayCtx.imageSmoothingEnabled = view.zoom * view.devicePixelRatio < 1;
+    if (overlayCtx.imageSmoothingEnabled) overlayCtx.imageSmoothingQuality = 'high';
     overlayCtx.drawImage(
       previewCanvas,
       view.panX + preview.bounds.x * view.zoom,
@@ -244,9 +289,10 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       viewportCtx.clip();
       viewportCtx.fillStyle = checker;
       viewportCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
-      viewportCtx.imageSmoothingEnabled = false;
+      viewportCtx.imageSmoothingEnabled = view.zoom * view.devicePixelRatio < 1;
+      if (viewportCtx.imageSmoothingEnabled) viewportCtx.imageSmoothingQuality = 'high';
       viewportCtx.drawImage(
-        surface.documentCanvas,
+        sourceForZoom(view),
         view.panX,
         view.panY,
         bitmap.width * view.zoom,
@@ -277,6 +323,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
 
   return {
     setDocument(bitmap) {
+      if (bitmap.colorSpace !== colorSpace) {
+        throw new Error('Canvas renderer color space must match its document');
+      }
       unsubscribe?.();
       document = bitmap;
       imageData = null;

@@ -3,11 +3,14 @@ import { createCanvasRenderer } from '../render/renderer';
 import { createBitmapDocument, packRgba } from '../../document';
 import { createDocumentHistory } from '../../history';
 import { beginStroke, FillWorkspace, floodFill } from '../../tools';
+import { checkColorConversion, checkP3Canvas, checkZoomOutQuality } from './quality';
 
 const SIDE = 1024;
 const INK = packRgba(18, 111, 202);
 const WALL = packRgba(25, 25, 25);
 const bitmap = createBitmapDocument('browser-perf', SIDE, SIDE);
+const largeBitmap = createBitmapDocument('browser-perf-large', 4096, 4096);
+largeBitmap.pixels.fill(packRgba(48, 96, 160));
 const history = createDocumentHistory();
 const fillWorkspace = new FillWorkspace();
 const baseViewport: Viewport = {
@@ -31,6 +34,7 @@ const renderer = createCanvasRenderer({
   overlayCanvas: document.querySelector<HTMLCanvasElement>('#overlay')!,
 });
 renderer.setDocument(bitmap);
+let activeBitmap = bitmap;
 renderer.setViewport(baseViewport);
 renderer.setOverlay({ grid: 'auto', cursor: null, marquee: null, preview: null });
 
@@ -45,15 +49,37 @@ function frames(count = 2): Promise<void> {
 }
 
 export interface BrowserPerfApi {
-  reset(kind: 'blank' | 'maze'): Promise<void>;
+  reset(kind: 'blank' | 'maze' | 'large'): Promise<void>;
   runStroke(): Promise<void>;
   runPanZoom(): Promise<void>;
   runMazeFill(): Promise<void>;
+  runLargePan(): Promise<void>;
+  checkZoomOutQuality(): Promise<Record<string, number>>;
+  checkP3Canvas(): Promise<boolean>;
+  checkColorConversion(): number;
 }
 
 const api: BrowserPerfApi = {
   async reset(kind) {
     history.clear();
+    if (kind === 'large') {
+      if (activeBitmap !== largeBitmap) {
+        renderer.setDocument(largeBitmap);
+        activeBitmap = largeBitmap;
+      }
+      renderer.setViewport({
+        ...baseViewport,
+        zoom: window.innerWidth > 400 ? 0.25 : 0.0625,
+        panX: 20,
+        panY: 20,
+      });
+      await frames();
+      return;
+    }
+    if (activeBitmap !== bitmap) {
+      renderer.setDocument(bitmap);
+      activeBitmap = bitmap;
+    }
     if (kind === 'maze') bitmap.pixels.set(maze);
     else bitmap.pixels.fill(0);
     renderer.setViewport(baseViewport);
@@ -105,6 +131,28 @@ const api: BrowserPerfApi = {
       requestAnimationFrame(next);
     });
   },
+  runLargePan() {
+    return new Promise((resolve) => {
+      let frame = 0;
+      const zoom = window.innerWidth > 400 ? 0.25 : 0.0625;
+      const next = () => {
+        const phase = (frame / 90) * Math.PI * 2;
+        renderer.setViewport({
+          ...baseViewport,
+          zoom,
+          panX: 20 + Math.round(20 * Math.sin(phase)),
+          panY: 20 + Math.round(20 * Math.cos(phase)),
+        });
+        frame++;
+        if (frame < 90) requestAnimationFrame(next);
+        else void frames().then(resolve);
+      };
+      requestAnimationFrame(next);
+    });
+  },
+  checkZoomOutQuality,
+  checkP3Canvas,
+  checkColorConversion,
   async runMazeFill() {
     floodFill(bitmap, { at: { x: 0, y: 0 }, color: INK }, history, fillWorkspace);
     await frames();

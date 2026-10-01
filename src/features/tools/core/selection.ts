@@ -13,7 +13,7 @@ function copyRegion(document: BitmapDocument, rect: PixelRect): FloatingSelectio
     const source = (region.y + row) * document.width + region.x;
     pixels.set(document.pixels.subarray(source, source + region.width), row * region.width);
   }
-  return { bounds: { ...region }, sourceBounds: region, pixels };
+  return { bounds: { ...region }, sourceBounds: region, pixels, colorSpace: document.colorSpace };
 }
 
 function pasteRegion(document: BitmapDocument, selection: FloatingSelection): PixelRect | null {
@@ -65,6 +65,9 @@ export function beginSelection(
     },
     paste(selection, to) {
       if (floating) throw new Error('Selection is already floating');
+      if (selection.colorSpace !== document.colorSpace) {
+        throw new Error('Selection pixels must be converted to the document color space');
+      }
       const bounds = {
         x: Math.floor(to.x),
         y: Math.floor(to.y),
@@ -80,7 +83,12 @@ export function beginSelection(
       const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
       if (!intersectRect(bounds, documentBounds, clip)) return null;
       transaction = history.begin('Paste', document);
-      floating = { bounds, sourceBounds: { ...bounds }, pixels: selection.pixels.slice() };
+      floating = {
+        bounds,
+        sourceBounds: { ...bounds },
+        pixels: selection.pixels.slice(),
+        colorSpace: document.colorSpace,
+      };
       lifted = false;
       return floating;
     },

@@ -16,17 +16,21 @@ const headed = !process.argv.includes('--headless') && !headlessGpu;
 const calibrate = process.argv.includes('--calibrate');
 
 interface BrowserPerfApi {
-  reset(kind: 'blank' | 'maze'): Promise<void>;
+  reset(kind: 'blank' | 'maze' | 'large'): Promise<void>;
   runStroke(): Promise<void>;
   runPanZoom(): Promise<void>;
   runMazeFill(): Promise<void>;
+  runLargePan(): Promise<void>;
+  checkZoomOutQuality(): Promise<Record<string, number>>;
+  checkP3Canvas(): Promise<boolean>;
+  checkColorConversion(): number;
 }
 declare global {
   interface Window {
     __pixelsPerf?: BrowserPerfApi;
   }
 }
-type Scenario = 'stroke' | 'pan' | 'maze';
+type Scenario = 'stroke' | 'pan' | 'maze' | 'large-pan';
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -51,8 +55,8 @@ async function traceScenario(
   scenario: Scenario,
 ): Promise<TraceSummary> {
   await page.evaluate(
-    (isMaze) => window.__pixelsPerf!.reset(isMaze ? 'maze' : 'blank'),
-    scenario === 'maze',
+    (kind: 'blank' | 'maze' | 'large') => window.__pixelsPerf!.reset(kind),
+    scenario === 'maze' ? 'maze' : scenario === 'large-pan' ? 'large' : 'blank',
   );
   return captureTrace(context, page, async (markFirstInput) => {
     await markFirstInput();
@@ -62,7 +66,9 @@ async function traceScenario(
         ? api.runStroke()
         : kind === 'pan'
           ? api.runPanZoom()
-          : api.runMazeFill();
+          : kind === 'large-pan'
+            ? api.runLargePan()
+            : api.runMazeFill();
     }, scenario);
   });
 }
@@ -89,11 +95,28 @@ try {
     });
     try {
       const profiles = [
-        { name: 'desktop', width: 1440, height: 900, dpr: 2, scenarios: ['stroke', 'pan', 'maze'] },
-        { name: 'phone', width: 390, height: 844, dpr: 3, scenarios: ['stroke', 'pan'] },
+        {
+          name: 'desktop',
+          width: 1440,
+          height: 900,
+          dpr: 2,
+          scenarios: ['stroke', 'pan', 'maze', 'large-pan'],
+        },
+        {
+          name: 'phone',
+          width: 390,
+          height: 844,
+          dpr: 3,
+          scenarios: ['stroke', 'pan', 'large-pan'],
+        },
       ] as const;
       let failed = false;
-      const targets: Record<Scenario, number> = { stroke: 4, pan: 3, maze: Infinity };
+      const targets: Record<Scenario, number> = {
+        stroke: 4,
+        pan: 3,
+        maze: Infinity,
+        'large-pan': 1.35,
+      };
       for (const profile of profiles) {
         const context = await browser.newContext({
           viewport: { width: profile.width, height: profile.height },
@@ -108,6 +131,20 @@ try {
         await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
         await page.waitForFunction(() => Boolean(window.__pixelsPerf));
         if (headed) await page.bringToFront();
+        const quality = await page.evaluate(async () => ({
+          zoom: await window.__pixelsPerf!.checkZoomOutQuality(),
+          p3: await window.__pixelsPerf!.checkP3Canvas(),
+          conversionError: window.__pixelsPerf!.checkColorConversion(),
+        }));
+        console.log(
+          `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, conversion error ≤ 2`,
+        );
+        if (
+          !quality.p3 ||
+          quality.conversionError > 2 ||
+          Object.values(quality.zoom).some((error) => error > 2)
+        )
+          failed = true;
         const gpuRenderer = await page.evaluate(() => {
           const gl = document.createElement('canvas').getContext('webgl');
           if (!gl) return 'WebGL unavailable';
@@ -128,6 +165,8 @@ try {
             await api.reset('maze');
             await api.runMazeFill();
           }
+          await api.reset('large');
+          await api.reset('blank');
         });
         console.log(
           `Pixels browser perf ${profile.name}: Chromium ${browser.version()}, ${headed ? 'headed user path' : headlessGpu ? 'headless GPU experiment' : 'headless diagnostic'}, WebGL ${gpuRenderer}, ${process.platform}/${process.arch}, ${profile.width}×${profile.height} @ ${profile.dpr}×, document 1024² @ 8×, loadavg ${loadavg()
@@ -159,20 +198,26 @@ try {
             const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
             const onTimePercent = (onTime / eligible) * 100;
             const refreshHz = median(blocks.map((block) => block.refreshHz));
+            const target =
+              scenario === 'large-pan' && profile.name === 'phone' ? 2 : targets[scenario];
             const passed =
-              p95 < targets[scenario] &&
+              p95 < target &&
               maxLongTask <= 50 &&
               (scenario === 'maze' || (onTimePercent >= 99 && !consecutiveDrops && eligible >= 90));
             if (!passed) failed = true;
             console.log(
-              `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(targets[scenario]) ? `main < ${targets[scenario]} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
+              `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(target) ? `main < ${target} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
             );
           }
         }
         await context.close();
       }
       if (failed && !calibrate) process.exitCode = 1;
-      if (!(await runAppPerf(browser, repeat, calibrate))) process.exitCode = 1;
+      if (
+        !process.argv.includes('--fixture-only') &&
+        !(await runAppPerf(browser, repeat, calibrate))
+      )
+        process.exitCode = 1;
     } finally {
       await browser.close();
     }

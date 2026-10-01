@@ -1,4 +1,10 @@
-import type { BitmapDocument, PackedColor, PixelPoint, PixelRect } from './contracts';
+import type {
+  BitmapDocument,
+  DocumentColorSpace,
+  PackedColor,
+  PixelPoint,
+  PixelRect,
+} from './contracts';
 
 export const MAX_DOCUMENT_SIDE = 4096;
 
@@ -11,6 +17,7 @@ export function createBitmapDocument(
   width: number,
   height: number,
   name = 'Untitled',
+  colorSpace: DocumentColorSpace = 'srgb',
 ): BitmapDocument {
   if (
     !Number.isInteger(width) ||
@@ -40,6 +47,7 @@ export function createBitmapDocument(
   document = {
     id,
     name,
+    colorSpace,
     width,
     height,
     pixels: new Uint32Array(buffer),

@@ -12,6 +12,7 @@ class TestContext {
   lineWidth = 1;
   lineDashOffset = 0;
   imageSmoothingEnabled = false;
+  imageSmoothingQuality = 'low';
   fillRect() {}
   clearRect() {}
   strokeRect() {}
@@ -40,7 +41,9 @@ class TestCanvas {
   width = 0;
   height = 0;
   context = new TestContext();
-  getContext() {
+  contextOptions: CanvasRenderingContext2DSettings | undefined;
+  getContext(_type: string, options?: CanvasRenderingContext2DSettings) {
+    this.contextOptions = options;
     return this.context;
   }
 }
@@ -58,7 +61,11 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
         public data: Uint8ClampedArray,
         public width: number,
         public height: number,
+        public options?: ImageDataSettings,
       ) {}
+      get colorSpace() {
+        return this.options?.colorSpace ?? 'srgb';
+      }
     },
     requestAnimationFrame: (callback: FrameRequestCallback) => {
       frames.push(callback);
@@ -102,6 +109,27 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
     flush();
     expect(document.pixels[3]).toBe(ink);
     expect(documentCanvas.context.putImages.at(-1)?.data.buffer).toBe(document.rgbaBytes.buffer);
+    renderer.setViewport({
+      zoom: 0.25,
+      panX: 0,
+      panY: 0,
+      cssWidth: 32,
+      cssHeight: 32,
+      devicePixelRatio: 2,
+    });
+    flush();
+    expect(viewportCanvas.context.imageSmoothingEnabled).toBe(true);
+    expect(viewportCanvas.context.imageSmoothingQuality).toBe('high');
+    renderer.setViewport({
+      zoom: 0.5,
+      panX: 0,
+      panY: 0,
+      cssWidth: 32,
+      cssHeight: 32,
+      devicePixelRatio: 2,
+    });
+    flush();
+    expect(viewportCanvas.context.imageSmoothingEnabled).toBe(false);
     const draws = viewportCanvas.context.drawCount;
     const uploads = documentCanvas.context.putImages.length;
     renderer.setOverlay({
@@ -114,6 +142,31 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
     expect(viewportCanvas.context.drawCount).toBe(draws);
     expect(documentCanvas.context.putImages.length).toBe(uploads);
     renderer.dispose();
+
+    const p3DocumentCanvas = new TestCanvas();
+    const p3ViewportCanvas = new TestCanvas();
+    const p3OverlayCanvas = new TestCanvas();
+    const p3Renderer = createCanvasRenderer({
+      documentCanvas: p3DocumentCanvas as unknown as HTMLCanvasElement,
+      viewportCanvas: p3ViewportCanvas as unknown as HTMLCanvasElement,
+      overlayCanvas: p3OverlayCanvas as unknown as HTMLCanvasElement,
+      colorSpace: 'display-p3',
+    });
+    p3Renderer.setDocument(createBitmapDocument('wide', 1, 1, 'Wide', 'display-p3'));
+    p3Renderer.setViewport({
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      cssWidth: 1,
+      cssHeight: 1,
+      devicePixelRatio: 1,
+    });
+    flush();
+    expect(p3DocumentCanvas.contextOptions?.colorSpace).toBe('display-p3');
+    expect(p3ViewportCanvas.contextOptions?.colorSpace).toBe('display-p3');
+    expect(p3OverlayCanvas.contextOptions?.colorSpace).toBe('display-p3');
+    expect((p3DocumentCanvas.context.putImages.at(-1) as ImageData)?.colorSpace).toBe('display-p3');
+    p3Renderer.dispose();
   } finally {
     Object.assign(globalThis, {
       document: priorDocument,

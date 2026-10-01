@@ -75,6 +75,7 @@ export function CanvasSurface({
       documentCanvas: globalThis.document.createElement('canvas'),
       viewportCanvas: viewportRef.current!,
       overlayCanvas: overlayRef.current!,
+      colorSpace: document.state.colorSpace,
     });
     renderer.setDocument(document.state);
     renderer.setViewport(viewport.state);

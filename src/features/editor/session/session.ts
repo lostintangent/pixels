@@ -9,7 +9,7 @@ import type {
   Viewport,
   ViewportInsets,
 } from '../../canvas/model';
-import { getPixel, intersectRect, resizeDocument } from '../../document';
+import { convertPixelColorSpace, getPixel, intersectRect, resizeDocument } from '../../document';
 import type {
   BitmapDocument,
   CanvasAnchor,
@@ -108,7 +108,7 @@ export interface EditorSession {
   setViewport(viewport: Viewport): void;
   setSaveStatus(status: SaveStatus): void;
   /** Pastes outside pixels centered on the canvas as a selection. False when they don't fit. */
-  place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels'>): boolean;
+  place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels' | 'colorSpace'>): boolean;
   resizeDocument(width: number, height: number, anchor: CanvasAnchor): void;
   toDocument(point: ScreenPoint): PixelPoint;
   /** Alt previews the temporary eyedropper's single pixel instead of the brush. */
@@ -313,6 +313,7 @@ export function createEditorSession({
               bounds: { ...floating.bounds },
               sourceBounds: { ...floating.bounds },
               pixels: floating.pixels.slice(),
+              colorSpace: floating.colorSpace,
             }
           : copySelection(document(), rect);
         if (copied) {
@@ -335,6 +336,7 @@ export function createEditorSession({
               bounds: { ...floating.bounds },
               sourceBounds: { ...floating.bounds },
               pixels: floating.pixels.slice(),
+              colorSpace: floating.colorSpace,
             }
           : copySelection(document(), rect);
         if (copied) paste(copied, { x: copied.bounds.x, y: copied.bounds.y });
@@ -392,7 +394,21 @@ export function createEditorSession({
 
   function paste(pixels: FloatingSelection, at: PixelPoint): boolean {
     commitFloating();
-    if (!selection.paste(pixels, at)) return false;
+    const converted: FloatingSelection =
+      pixels.colorSpace === document().colorSpace
+        ? pixels
+        : {
+            ...pixels,
+            pixels: convertPixelColorSpace(
+              pixels.pixels,
+              pixels.bounds.width,
+              pixels.bounds.height,
+              pixels.colorSpace,
+              document().colorSpace,
+            ),
+            colorSpace: document().colorSpace,
+          };
+    if (!selection.paste(converted, at)) return false;
     update((current) => selectTool(current, 'select'));
     setSelection({ ...at, width: pixels.bounds.width, height: pixels.bounds.height });
     return true;
@@ -539,7 +555,10 @@ export function createEditorSession({
         y: Math.floor((height - image.height) / 2),
       };
       const bounds = { ...at, width: image.width, height: image.height };
-      return paste({ bounds, sourceBounds: bounds, pixels: image.pixels }, at);
+      return paste(
+        { bounds, sourceBounds: bounds, pixels: image.pixels, colorSpace: image.colorSpace },
+        at,
+      );
     },
 
     resizeDocument(width, height, anchor) {

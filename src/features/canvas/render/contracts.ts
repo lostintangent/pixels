@@ -1,4 +1,4 @@
-import type { BitmapDocument, PixelRect } from '../../document';
+import type { BitmapDocument, DocumentColorSpace, PixelRect } from '../../document';
 import type { Viewport } from '../core/contracts';
 
 export interface CanvasRenderer {
@@ -37,4 +37,5 @@ export interface RendererSurface {
   documentCanvas: HTMLCanvasElement;
   viewportCanvas: HTMLCanvasElement;
   overlayCanvas: HTMLCanvasElement;
+  colorSpace?: DocumentColorSpace;
 }
