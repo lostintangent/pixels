@@ -1,6 +1,14 @@
+import 'fake-indexeddb/auto';
 import { expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
-import { exportPng, importPng } from '../../files';
+import {
+  attachAutosave,
+  createDocumentStore,
+  exportPng,
+  importPng,
+  loadDocument,
+  saveDocument,
+} from '../../files';
 import { copySelection } from '../../tools';
 import { DEFAULT_TOOL_PREFERENCES } from '../core/state';
 import { createPixelClipboard } from './clipboard';
@@ -116,6 +124,27 @@ test('lifted move leaves saved pixels intact and export commits the moved result
   expect(Array.from(exported.pixels)).toEqual([0, A, 0]);
   session.run({ type: 'undo' });
   expect(document.rgbaBytes).toEqual(before);
+});
+
+test('a move committed as the editor leaves reaches its final autosave flush', async () => {
+  const store = createDocumentStore({ databaseName: 'session-leave-test-db' });
+  const document = createBitmapDocument('leave', 3, 1);
+  document.pixels[0] = A;
+  await saveDocument(document, store);
+  const autosave = attachAutosave(document, store, { debounceMs: 5000, maxWaitMs: 20000 });
+  const session = createEditorSession({ document, save: 'saved' });
+  session.run({ type: 'tool', tool: 'select' });
+  session.run({ type: 'selection', action: 'all' });
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(1, 0)]);
+  session.endGesture();
+
+  // The same order as the editor's leave path: commit, then dispose, which flushes.
+  session.commitFloatingSelection();
+  autosave.dispose();
+
+  const saved = await loadDocument(store, 'leave');
+  expect(Array.from(saved!.pixels)).toEqual([0, A, 0]);
 });
 
 test('opening export commits a floating move before the preview snapshots pixels', () => {

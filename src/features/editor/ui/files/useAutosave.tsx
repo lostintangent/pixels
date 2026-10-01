@@ -7,7 +7,8 @@ import { useToast } from '../toasts';
 
 /**
  * Keeps the live document persisted. A resize swaps in a new document with a new tile grid, so
- * autosave re-attaches with a full resave. Leaving flushes pending tiles instead of dropping them.
+ * autosave re-attaches with a full resave. Leaving commits a floating selection, then flushes
+ * pending tiles instead of dropping them.
  */
 export function useAutosave(session: EditorSession, store: DocumentStore): void {
   const showToast = useToast();
@@ -56,6 +57,10 @@ export function useAutosave(session: EditorSession, store: DocumentStore): void 
     return () => {
       subscription.unsubscribe();
       dismissError?.();
+      // Leaving for another document ends a floating selection the way a tool change does, so
+      // the move the artist last saw is what gets saved. A reload never runs this and keeps the
+      // source art.
+      session.commitFloatingSelection();
       // flush() takes its snapshot synchronously, so disposing right after can't lose tiles.
       autosave?.flush().catch(() => {});
       autosave?.dispose();
