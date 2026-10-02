@@ -13,7 +13,7 @@ class TestContext {
   lineDashOffset = 0;
   imageSmoothingEnabled = false;
   imageSmoothingQuality = 'low';
-  fillRect() {}
+  fillRect(_x: number, _y: number, _width: number, _height: number) {}
   clearRect() {}
   strokeRect() {}
   setLineDash() {}
@@ -21,7 +21,7 @@ class TestContext {
   save() {}
   restore() {}
   beginPath() {}
-  rect() {}
+  rect(_x: number, _y: number, _width: number, _height: number) {}
   clip() {}
   moveTo() {}
   lineTo() {}
@@ -200,6 +200,129 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
       ImageData: priorImageData,
       requestAnimationFrame: priorRaf,
       cancelAnimationFrame: priorCancel,
+    });
+  }
+});
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Records where the document edge can paint: hairline rects and the clip around each shadow. */
+class EdgeContext extends TestContext {
+  shadowColor = 'transparent';
+  shadowBlur = 0;
+  shadowOffsetY = 0;
+  painted: Array<{ kind: 'edge' | 'shadow'; box: Box }> = [];
+  private path: Box | null = null;
+  private clipBox: Box | null = null;
+  private stack: Array<Box | null> = [];
+  override save() {
+    this.stack.push(this.clipBox);
+  }
+  override restore() {
+    this.clipBox = this.stack.pop() ?? null;
+  }
+  override rect(x: number, y: number, width: number, height: number) {
+    this.path = { x, y, width, height };
+  }
+  override clip() {
+    this.clipBox = this.path;
+  }
+  override fillRect(x: number, y: number, width: number, height: number) {
+    if (this.fillStyle === EDGE) this.painted.push({ kind: 'edge', box: { x, y, width, height } });
+    else if (this.shadowColor === SHADOW)
+      this.painted.push({
+        kind: 'shadow',
+        box: this.clipBox ?? { x: -1e9, y: -1e9, width: 2e9, height: 2e9 },
+      });
+  }
+}
+
+const EDGE = 'rgba(255, 255, 255, 0.1)';
+const SHADOW = 'rgba(0, 0, 0, 0.6)';
+
+const overlaps = (a: Box, b: Box) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+test('the document edge paints only outside its device-pixel footprint', () => {
+  const priorDocument = globalThis.document;
+  const priorRaf = globalThis.requestAnimationFrame;
+  const priorImageData = globalThis.ImageData;
+  const frames: FrameRequestCallback[] = [];
+  Object.assign(globalThis, {
+    document: { createElement: () => new TestCanvas() },
+    ImageData: class {
+      constructor(public data: Uint8ClampedArray) {}
+    },
+    requestAnimationFrame: (callback: FrameRequestCallback) => frames.push(callback),
+  });
+  const flush = () => {
+    while (frames.length) frames.shift()!(0);
+  };
+  try {
+    const viewportCanvas = new TestCanvas();
+    const context = new EdgeContext();
+    viewportCanvas.context = context;
+    const renderer = createCanvasRenderer({
+      documentCanvas: new TestCanvas() as unknown as HTMLCanvasElement,
+      viewportCanvas: viewportCanvas as unknown as HTMLCanvasElement,
+      annotationCanvas: new TestCanvas() as unknown as HTMLCanvasElement,
+      overlayCanvas: new TestCanvas() as unknown as HTMLCanvasElement,
+    });
+    renderer.setDocument(createBitmapDocument('edge', 1738, 1032));
+    const colors = {
+      checkerA: '#3a3a3c',
+      checkerB: '#313133',
+      gridMinor: 'transparent',
+      gridMajor: 'transparent',
+    };
+    const view = {
+      zoom: 0.63,
+      panX: 77,
+      panY: 133,
+      cssWidth: 1440,
+      cssHeight: 900,
+      devicePixelRatio: 2,
+    };
+    renderer.setOverlay({ grid: 'off', cursor: null, marquee: null, preview: null, colors });
+    renderer.setViewport(view);
+    flush();
+    expect(context.painted).toEqual([]);
+
+    renderer.setOverlay({
+      grid: 'off',
+      cursor: null,
+      marquee: null,
+      preview: null,
+      colors: { ...colors, edge: EDGE, shadow: SHADOW },
+    });
+    flush();
+    // 1738 × 0.63 = 1094.94 and 1032 × 0.63 = 650.16 CSS px, so both far edges are fractional.
+    const footprint = { x: 154, y: 266, width: 2344 - 154, height: 1567 - 266 };
+    expect(context.painted.filter((paint) => paint.kind === 'shadow')).toHaveLength(4);
+    expect(context.painted.filter((paint) => paint.kind === 'edge')).toHaveLength(4);
+    for (const { box } of context.painted) expect(overlaps(box, footprint)).toBe(false);
+    const ring = { x: 153, y: 265, width: footprint.width + 2, height: footprint.height + 2 };
+    for (const { box } of context.painted.filter((paint) => paint.kind === 'edge'))
+      expect(overlaps(box, ring)).toBe(true);
+
+    // Panned off the left side, the left band is beyond the canvas and costs no blurred fill.
+    context.painted = [];
+    renderer.setViewport({ ...view, panX: -200 });
+    flush();
+    expect(context.painted.filter((paint) => paint.kind === 'shadow')).toHaveLength(3);
+    for (const { box } of context.painted.filter((paint) => paint.kind === 'shadow'))
+      expect(box.x + box.width).toBeGreaterThan(0);
+
+    context.painted = [];
+    renderer.setViewport({ ...view, zoom: 8, panX: -4000, panY: -4000 });
+    flush();
+    expect(context.painted).toEqual([]);
+    renderer.dispose();
+  } finally {
+    Object.assign(globalThis, {
+      document: priorDocument,
+      ImageData: priorImageData,
+      requestAnimationFrame: priorRaf,
     });
   }
 });

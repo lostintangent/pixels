@@ -71,12 +71,16 @@ const CANVAS_COLORS: Record<ColorScheme, NonNullable<OverlayState['colors']>> = 
     checkerB: '#ebebef',
     gridMinor: 'rgba(0, 0, 0, 0.08)',
     gridMajor: 'rgba(0, 0, 0, 0.2)',
+    edge: 'rgba(0, 0, 0, 0.08)',
+    shadow: 'rgba(0, 0, 0, 0.16)',
   },
   dark: {
     checkerA: '#3a3a3c',
     checkerB: '#313133',
     gridMinor: 'rgba(255, 255, 255, 0.07)',
     gridMajor: 'rgba(255, 255, 255, 0.16)',
+    edge: 'rgba(255, 255, 255, 0.1)',
+    shadow: 'rgba(0, 0, 0, 0.6)',
   },
 };
 

@@ -32,6 +32,10 @@ export interface OverlayState {
     checkerB: string;
     gridMinor: string;
     gridMajor: string;
+    /** Hairline just outside the document, one device pixel wide. */
+    edge?: string;
+    /** Soft shadow cast by the document onto the workspace. */
+    shadow?: string;
   };
 }
 

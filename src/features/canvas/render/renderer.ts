@@ -42,6 +42,70 @@ function checkerPattern(ctx: CanvasRenderingContext2D, a: string, b: string): Ca
   return pattern;
 }
 
+/** The document shadow's blur and drop in CSS pixels, small enough to stay inside the fit gap. */
+const SHADOW_BLUR = 6;
+const SHADOW_DROP = 1;
+
+/**
+ * Draws the document's hairline and shadow strictly outside its device-pixel footprint, so a
+ * fractional edge pixel keeps exactly the blend the document drew.
+ */
+function drawDocumentEdge(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  bitmap: BitmapDocument,
+  view: Viewport,
+  edge: string | undefined,
+  shadow: string | undefined,
+): void {
+  const scale = view.devicePixelRatio;
+  const left = Math.floor(view.panX * scale);
+  const top = Math.floor(view.panY * scale);
+  const right = Math.ceil((view.panX + bitmap.width * view.zoom) * scale);
+  const bottom = Math.ceil((view.panY + bitmap.height * view.zoom) * scale);
+  const width = right - left;
+  const height = bottom - top;
+  const reach = Math.ceil((SHADOW_BLUR + SHADOW_DROP) * scale) + 1;
+  if (left > canvasWidth + reach || top > canvasHeight + reach || right < -reach || bottom < -reach)
+    return;
+  if (left < -reach && top < -reach && right > canvasWidth + reach && bottom > canvasHeight + reach)
+    return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (shadow) {
+    ctx.shadowColor = shadow;
+    ctx.shadowBlur = SHADOW_BLUR * scale;
+    ctx.shadowOffsetY = SHADOW_DROP * scale;
+    ctx.fillStyle = '#000';
+    // Four plain rectangle clips stay exact. Chrome's even-odd clip leaked into a fractional corner.
+    const bands = [
+      [left - reach, top - reach, width + reach * 2, reach],
+      [left - reach, bottom, width + reach * 2, reach],
+      [left - reach, top, reach, height],
+      [right, top, reach, height],
+    ] as const;
+    for (const [x, y, w, h] of bands) {
+      if (x >= canvasWidth || y >= canvasHeight || x + w <= 0 || y + h <= 0) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+      ctx.fillRect(left, top, width, height);
+      ctx.restore();
+    }
+    ctx.shadowColor = 'transparent';
+  }
+  if (edge) {
+    ctx.fillStyle = edge;
+    ctx.fillRect(left - 1, top - 1, width + 2, 1);
+    ctx.fillRect(left - 1, bottom, width + 2, 1);
+    ctx.fillRect(left - 1, top, 1, height);
+    ctx.fillRect(right, top, 1, height);
+  }
+  ctx.restore();
+}
+
 function drawTwoToneRect(
   ctx: CanvasRenderingContext2D,
   rect: PixelRect,
@@ -331,6 +395,17 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         bitmap.height * view.zoom,
       );
       viewportCtx.restore();
+      const colors = overlay.colors;
+      if (colors?.edge || colors?.shadow)
+        drawDocumentEdge(
+          viewportCtx,
+          pixelWidth,
+          pixelHeight,
+          bitmap,
+          view,
+          colors.edge,
+          colors.shadow,
+        );
       drawGrid(viewportCtx, bitmap, view);
       viewportDirty = false;
     }
@@ -459,7 +534,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       if (
         next.grid !== overlay.grid ||
         next.colors?.gridMinor !== overlay.colors?.gridMinor ||
-        next.colors?.gridMajor !== overlay.colors?.gridMajor
+        next.colors?.gridMajor !== overlay.colors?.gridMajor ||
+        next.colors?.edge !== overlay.colors?.edge ||
+        next.colors?.shadow !== overlay.colors?.shadow
       )
         viewportDirty = true;
       overlay = next;

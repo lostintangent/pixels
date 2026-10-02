@@ -33,6 +33,15 @@ const handlePreview: Annotation = {
 largeBitmap.pixels.fill(packRgba(48, 96, 160));
 const history = createDocumentHistory();
 const fillWorkspace = new FillWorkspace();
+/** The renderer's default checker and grid, plus the editor's dark document edge and shadow. */
+const colors = {
+  checkerA: '#fff',
+  checkerB: '#d6d6d6',
+  gridMinor: 'rgba(0,0,0,.12)',
+  gridMajor: 'rgba(0,0,0,.32)',
+  edge: 'rgba(255, 255, 255, 0.1)',
+  shadow: 'rgba(0, 0, 0, 0.6)',
+};
 const baseViewport: Viewport = {
   zoom: 8,
   panX: window.innerWidth / 2 - 512 * 8,
@@ -57,7 +66,7 @@ const renderer = createCanvasRenderer({
 renderer.setDocument(bitmap);
 let activeBitmap = bitmap;
 renderer.setViewport(baseViewport);
-renderer.setOverlay({ grid: 'auto', cursor: null, marquee: null, preview: null });
+renderer.setOverlay({ grid: 'auto', cursor: null, marquee: null, preview: null, colors });
 
 function frames(count = 2): Promise<void> {
   return new Promise((resolve) => {
@@ -88,7 +97,7 @@ const api: BrowserPerfApi = {
     history.clear();
     if (kind === 'large') {
       largeAnnotations.replace([]);
-      renderer.setOverlay({ grid: 'off', cursor: null, marquee: null, preview: null });
+      renderer.setOverlay({ grid: 'off', cursor: null, marquee: null, preview: null, colors });
       if (activeBitmap !== largeBitmap) {
         renderer.setDocument(largeBitmap);
         activeBitmap = largeBitmap;
@@ -184,6 +193,7 @@ const api: BrowserPerfApi = {
       marquee: null,
       preview: null,
       selectedAnnotationId: handleShape.id,
+      colors,
     });
     await frames(4);
   },
