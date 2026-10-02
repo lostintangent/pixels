@@ -12,6 +12,8 @@ export default defineConfig({
   // Native modulepreload is available in every browser Pixels supports. Keep lazy dependencies
   // parallel, but avoid sending the entry's already-loaded JS paths in every preload map.
   build: {
+    // The folded entry is ~520 kB minified; perf:app gates its actual 170 KiB gzip cost.
+    chunkSizeWarningLimit: 550,
     modulePreload: { polyfill: false, resolveDependencies: preload.resolveDependencies },
     rolldownOptions: {
       output: {

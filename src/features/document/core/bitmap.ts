@@ -18,6 +18,7 @@ export function createBitmapDocument(
   height: number,
   name = 'Untitled',
   colorSpace: DocumentColorSpace = 'srgb',
+  initialPixels?: Uint32Array,
 ): BitmapDocument {
   if (
     !Number.isInteger(width) ||
@@ -29,7 +30,17 @@ export function createBitmapDocument(
   ) {
     throw new RangeError(`Canvas dimensions must be integers from 1 to ${MAX_DOCUMENT_SIDE}`);
   }
-  const buffer = new ArrayBuffer(width * height * 4);
+  if (
+    initialPixels &&
+    (initialPixels.length !== width * height ||
+      initialPixels.byteOffset !== 0 ||
+      initialPixels.buffer.byteLength !== width * height * 4)
+  ) {
+    throw new RangeError('Initial pixel buffer must exactly match the canvas dimensions');
+  }
+  // A decoded PNG arrives as a transferred buffer. Adopt it instead of allocating and
+  // copying a second full-size buffer on the browser's main thread.
+  const pixels = initialPixels ?? new Uint32Array(width * height);
   const listeners = new Set<(rect: PixelRect, revision: number) => void>();
   let document: BitmapDocument;
   const events = {
@@ -50,8 +61,8 @@ export function createBitmapDocument(
     colorSpace,
     width,
     height,
-    pixels: new Uint32Array(buffer),
-    rgbaBytes: new Uint8ClampedArray(buffer),
+    pixels,
+    rgbaBytes: new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength),
     revision: 0,
     events,
   };

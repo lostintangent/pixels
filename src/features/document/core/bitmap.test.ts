@@ -17,6 +17,19 @@ describe('bitmap storage', () => {
     expect(() => createBitmapDocument('bad', 4097, 1)).toThrow(RangeError);
   });
 
+  test('adopts an exact decoded pixel buffer without copying', () => {
+    const decoded = new Uint32Array(2);
+    decoded.set([packRgba(1, 2, 3, 4), packRgba(5, 6, 7, 8)]);
+    const document = createBitmapDocument('decoded', 2, 1, 'Photo', 'display-p3', decoded);
+    expect(document.pixels).toBe(decoded);
+    expect(document.rgbaBytes.buffer).toBe(decoded.buffer);
+    expect([...document.rgbaBytes]).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(() => createBitmapDocument('bad', 2, 2, 'Bad', 'srgb', decoded)).toThrow(RangeError);
+    expect(() =>
+      createBitmapDocument('bad', 2, 1, 'Bad', 'srgb', new Uint32Array(4).subarray(1, 3)),
+    ).toThrow(RangeError);
+  });
+
   test('new canvases default to sRGB and resize keeps a P3 document tagged', () => {
     expect(createBitmapDocument('new', 1, 1).colorSpace).toBe('srgb');
     const p3 = createBitmapDocument('p3', 2, 2, 'Wide color', 'display-p3');

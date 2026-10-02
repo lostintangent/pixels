@@ -49,9 +49,7 @@ export async function importPng(
   } else {
     colorSpace = decoded.colorTag;
   }
-  const document = createBitmapDocument(id, decoded.width, decoded.height, name, colorSpace);
-  document.pixels.set(pixels);
-  return document;
+  return createBitmapDocument(id, decoded.width, decoded.height, name, colorSpace, pixels);
 }
 
 async function toBytes(source: Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> {
