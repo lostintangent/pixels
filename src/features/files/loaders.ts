@@ -1,11 +1,6 @@
 import { createBitmapDocument, type BitmapDocument } from '../document';
 import type { DocumentStore } from './core/contracts';
 
-export interface RecentOrNewResult {
-  document: BitmapDocument;
-  isNew: boolean;
-}
-
 /**
  * For `/d/$docId`. Returns null so the route can render a graceful not-found state.
  *
@@ -31,30 +26,17 @@ export async function loadDocument(
 }
 
 /**
- * For `/`. Opens the most recently updated document, or creates a fresh blank one if there are
- * none yet. The blank document is in-memory only: nothing is written until the first edit, so
- * recents never fill up with empty canvases. The route should redirect (replace) to
- * `/d/$docId` with the returned id either way, so a reload lands on the same document.
+ * For `/`. Picks the id to redirect to: the most recently updated document, or a freshly minted
+ * one if there are none yet. Deliberately does not load the document itself — `listRecents` only
+ * reads the small documents index, never the tile store — so the `/d/$docId` redirect target's
+ * own loader (via `loadDocument`) is the only place that ever pays for tile reassembly. An
+ * earlier version loaded the full document here and threw it away on redirect, paying that cost
+ * twice on every cold load.
  */
-export async function loadMostRecentOrNew(
+export async function pickInitialDocumentId(
   store: DocumentStore,
   makeId: () => string,
-  newDocumentSize = 64,
-): Promise<RecentOrNewResult> {
+): Promise<string> {
   const recents = await store.listRecents();
-  const mostRecent = recents[0];
-  if (!mostRecent) {
-    return {
-      document: createBitmapDocument(makeId(), newDocumentSize, newDocumentSize),
-      isNew: true,
-    };
-  }
-  const document = await loadDocument(store, mostRecent.id);
-  if (!document) {
-    return {
-      document: createBitmapDocument(makeId(), newDocumentSize, newDocumentSize),
-      isNew: true,
-    };
-  }
-  return { document, isNew: false };
+  return recents[0]?.id ?? makeId();
 }

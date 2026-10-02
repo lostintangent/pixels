@@ -9,7 +9,7 @@ import { EditorShell } from '../features/editor';
 import {
   createDocumentId,
   loadDocument,
-  loadMostRecentOrNew,
+  pickInitialDocumentId,
   type DocumentStore,
 } from '../features/files';
 import { createBitmapDocument, type BitmapDocument } from '../features/document';
@@ -24,8 +24,8 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   loader: async ({ context }) => {
-    const { document } = await loadMostRecentOrNew(context.documentStore, createDocumentId);
-    throw redirect({ to: '/d/$docId', params: { docId: document.id }, replace: true });
+    const docId = await pickInitialDocumentId(context.documentStore, createDocumentId);
+    throw redirect({ to: '/d/$docId', params: { docId }, replace: true });
   },
 });
 

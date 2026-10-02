@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../document';
 import { snapshotDocument } from './core/snapshot';
 import { createDocumentStore } from './storage/documentStore';
-import { loadDocument, loadMostRecentOrNew } from './loaders';
+import { loadDocument, pickInitialDocumentId } from './loaders';
 
 let dbCounter = 0;
 function freshStore() {
@@ -38,17 +38,14 @@ describe('loadDocument', () => {
   });
 });
 
-describe('loadMostRecentOrNew', () => {
-  test('creates a fresh blank document when the store is empty', async () => {
+describe('pickInitialDocumentId', () => {
+  test('mints a fresh id when the store is empty', async () => {
     const store = freshStore();
-    const result = await loadMostRecentOrNew(store, () => 'generated-id');
-    expect(result.isNew).toBe(true);
-    expect(result.document.id).toBe('generated-id');
-    expect(result.document.width).toBe(64);
-    expect(result.document.height).toBe(64);
+    const id = await pickInitialDocumentId(store, () => 'generated-id');
+    expect(id).toBe('generated-id');
   });
 
-  test('opens the most recently updated document when one exists', async () => {
+  test('picks the most recently updated document\u2019s id when one exists', async () => {
     const store = freshStore();
     const older = createBitmapDocument('older', 32, 32, 'Older');
     await store.save(
@@ -61,9 +58,7 @@ describe('loadMostRecentOrNew', () => {
       new Uint8Array([1]),
     );
 
-    const result = await loadMostRecentOrNew(store, () => 'unused-id');
-    expect(result.isNew).toBe(false);
-    expect(result.document.id).toBe('newer');
-    expect(result.document.width).toBe(48);
+    const id = await pickInitialDocumentId(store, () => 'unused-id');
+    expect(id).toBe('newer');
   });
 });

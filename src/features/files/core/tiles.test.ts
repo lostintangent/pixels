@@ -96,24 +96,26 @@ describe('thumbnail generation', () => {
     expect(thumb.height).toBe(2);
   });
 
-  test(
-    'a large downscale samples a bounded number of source pixels per block, independent of ' +
-      "source size: a 4096² source completes in a tiny fraction of an exact box average's time",
-    () => {
-      const width = 4096;
-      const height = 4096;
-      const pixels = new Uint32Array(width * height).fill(0xff224466);
-      const start = performance.now();
-      const thumb = buildThumbnail(pixels, width, height);
-      const elapsedMs = performance.now() - start;
-      expect(thumb.width).toBeLessThanOrEqual(64);
-      expect(thumb.height).toBeLessThanOrEqual(64);
-      // An exact box average over every source pixel measured ~100+ ms on a real document this
-      // size (the main-thread task the lead flagged); a bounded-sample average should be a couple
-      // of orders of magnitude cheaper. Generous margin keeps this from flaking on a loaded machine.
-      expect(elapsedMs).toBeLessThan(20);
-    },
-  );
+  test('a large block only visits its sampled strides, not every source pixel', () => {
+    // A 32x32 source downscaled to 4x4 gives each output pixel an 8x8 source block. At
+    // THUMBNAIL_SAMPLES_PER_AXIS = 4, the stride is 2, so only pixels at even offsets (0, 2, 4, 6)
+    // within the block are ever read. Placing a lone, extreme outlier at an odd (unsampled)
+    // offset proves the cap structurally: if it were visited, it would shift the rounded average
+    // away from zero (255 split across the 64-pixel block rounds to 4); if it is skipped, as the
+    // cap guarantees, the average stays exactly 0. No clock involved, so this holds regardless of
+    // machine load.
+    const width = 32;
+    const height = 32;
+    const pixels = new Uint32Array(width * height).fill(0xff000000);
+    const bytes = new Uint8Array(pixels.buffer);
+    const oddOffset = (1 * width + 1) * 4; // (x=1, y=1): off every sampled stride
+    bytes[oddOffset] = 255;
+    const thumb = buildThumbnail(pixels, width, height, 4);
+    expect(thumb.width).toBe(4);
+    expect(thumb.height).toBe(4);
+    const outBytes = new Uint8Array(thumb.pixels.buffer);
+    expect(outBytes[0]).toBe(0);
+  });
 
   test('a solid-color source still averages to that exact color, regardless of sampling', () => {
     const pixels = new Uint32Array(512 * 512).fill(packRgba(10, 20, 30, 255));
