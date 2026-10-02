@@ -1,6 +1,7 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
 import { screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
+import { resizeAnnotatedDocument } from '../../annotations/model';
 import type {
   OverlayPreview,
   OverlayState,
@@ -9,7 +10,7 @@ import type {
   Viewport,
   ViewportInsets,
 } from '../../canvas/model';
-import { convertPixelColorSpace, getPixel, intersectRect, resizeDocument } from '../../document';
+import { convertPixelColorSpace, getPixel, intersectRect } from '../../document';
 import type {
   BitmapDocument,
   CanvasAnchor,
@@ -229,9 +230,7 @@ export function createEditorSession({
     return frameCenter(viewport.state, FRAMES[layout]);
   }
 
-  function replaceDocument(next: BitmapDocument): void {
-    commitFloating();
-    history.clear();
+  function installDocument(next: BitmapDocument): void {
     selection = beginSelection(next, history);
     bitmap.setState(() => next);
     setSelection(null);
@@ -452,9 +451,10 @@ export function createEditorSession({
         case 'redo':
           if (gesture) return;
           commitFloating();
-          if (command.type === 'undo') history.undo(document());
-          else history.redo(document());
-          setSelection(null);
+          const change =
+            command.type === 'undo' ? history.undo(document()) : history.redo(document());
+          if (change && 'document' in change) installDocument(change.document);
+          else setSelection(null);
           syncHistory();
           return;
         case 'zoom':
@@ -576,7 +576,7 @@ export function createEditorSession({
 
     resizeDocument(width, height, anchor) {
       commitFloating();
-      replaceDocument(resizeDocument(document(), width, height, anchor));
+      installDocument(resizeAnnotatedDocument(document(), history, width, height, anchor));
     },
 
     toDocument(point) {

@@ -1,4 +1,5 @@
 import { convertPixelColorSpace, createBitmapDocument, packRgba } from '../../document';
+import { annotationsFor } from '../../annotations';
 import { createCanvasRenderer } from '../render/renderer';
 
 const SIDE = 512;
@@ -47,6 +48,7 @@ export async function checkZoomOutQuality(): Promise<Record<string, number>> {
   const renderer = createCanvasRenderer({
     documentCanvas: document.createElement('canvas'),
     viewportCanvas,
+    annotationCanvas: document.createElement('canvas'),
     overlayCanvas: document.createElement('canvas'),
   });
   renderer.setDocument(bitmap);
@@ -167,10 +169,12 @@ export async function checkP3Canvas(): Promise<boolean> {
   bitmap.rgbaBytes.set([200, 100, 20, 255]);
   const documentCanvas = document.createElement('canvas');
   const viewportCanvas = document.createElement('canvas');
+  const annotationCanvas = document.createElement('canvas');
   const overlayCanvas = document.createElement('canvas');
   const renderer = createCanvasRenderer({
     documentCanvas,
     viewportCanvas,
+    annotationCanvas,
     overlayCanvas,
     colorSpace: bitmap.colorSpace,
   });
@@ -188,11 +192,13 @@ export async function checkP3Canvas(): Promise<boolean> {
     const documentCtx = documentCanvas.getContext('2d')!;
     const viewportCtx = viewportCanvas.getContext('2d')!;
     const overlayCtx = overlayCanvas.getContext('2d')!;
+    const annotationCtx = annotationCanvas.getContext('2d')!;
     const pixel = viewportCtx.getImageData(0, 0, 1, 1, { colorSpace: 'display-p3' }).data;
     return (
       documentCtx.getContextAttributes().colorSpace === 'display-p3' &&
       viewportCtx.getContextAttributes().colorSpace === 'display-p3' &&
       overlayCtx.getContextAttributes().colorSpace === 'display-p3' &&
+      annotationCtx.getContextAttributes().colorSpace === 'display-p3' &&
       pixel[0] === 200 &&
       pixel[1] === 100 &&
       pixel[2] === 20 &&
@@ -210,4 +216,91 @@ export function checkColorConversion(): number {
   const restored = convertPixelColorSpace(p3, 1, 1, 'display-p3', 'srgb');
   const bytes = new Uint8Array(restored.buffer);
   return Math.max(Math.abs(bytes[0]! - 100), Math.abs(bytes[1]! - 120), Math.abs(bytes[2]! - 140));
+}
+
+export async function checkAnnotationLayer(): Promise<{
+  passed: boolean;
+  primary: number[];
+  outside: number[];
+  handle: number[];
+}> {
+  const bitmap = createBitmapDocument('shape-quality', 32, 32, 'Shapes', 'display-p3');
+  const annotationCanvas = document.createElement('canvas');
+  const overlayCanvas = document.createElement('canvas');
+  const renderer = createCanvasRenderer({
+    documentCanvas: document.createElement('canvas'),
+    viewportCanvas: document.createElement('canvas'),
+    annotationCanvas,
+    overlayCanvas,
+    colorSpace: bitmap.colorSpace,
+  });
+  try {
+    renderer.setDocument(bitmap);
+    renderer.setViewport({
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      cssWidth: 40,
+      cssHeight: 40,
+      devicePixelRatio: 2,
+    });
+    renderer.setOverlay({
+      grid: 'off',
+      cursor: null,
+      marquee: null,
+      preview: null,
+      selectedAnnotationId: 'rectangle',
+    });
+    annotationsFor(bitmap).commit({
+      id: 'rectangle',
+      kind: 'rectangle',
+      start: { x: 4, y: 4 },
+      end: { x: 20, y: 20 },
+      width: 2,
+      color: packRgba(200, 100, 20),
+    });
+    const ctx = annotationCanvas.getContext('2d')!;
+    let stroke = ctx.getImageData(8, 24, 1, 1, { colorSpace: 'display-p3' }).data;
+    for (let attempt = 0; stroke[3] === 0 && attempt < 20; attempt++) {
+      await frames();
+      stroke = ctx.getImageData(8, 24, 1, 1, { colorSpace: 'display-p3' }).data;
+    }
+    const blank = ctx.getImageData(60, 60, 1, 1, { colorSpace: 'display-p3' }).data;
+    const handle = overlayCanvas.getContext('2d')!.getImageData(8, 8, 1, 1).data;
+    const primaryOkay =
+      ctx.getContextAttributes().colorSpace === 'display-p3' &&
+      stroke[0] === 200 &&
+      stroke[1] === 100 &&
+      stroke[2] === 20 &&
+      stroke[3] === 255 &&
+      blank[3] === 0 &&
+      handle[3]! > 0;
+    annotationsFor(bitmap).commit({
+      id: 'outside-arrow',
+      kind: 'arrow',
+      start: { x: 25, y: 16 },
+      end: { x: 38, y: 16 },
+      width: 2,
+      color: packRgba(200, 100, 20),
+    });
+    renderer.setOverlay({
+      grid: 'off',
+      cursor: null,
+      marquee: null,
+      preview: null,
+      selectedAnnotationId: 'outside-arrow',
+    });
+    await frames();
+    const overlayPixels = overlayCanvas.getContext('2d')!;
+    const beyondImage = overlayPixels.getImageData(65, 32, 1, 1).data;
+    const outsideHandle = overlayPixels.getImageData(76, 32, 1, 1).data;
+    return {
+      passed: primaryOkay && beyondImage[3] === 0 && outsideHandle[3]! > 0,
+      primary: Array.from(stroke),
+      outside: Array.from(beyondImage),
+      handle: Array.from(outsideHandle),
+    };
+  } finally {
+    renderer.dispose();
+  }
 }

@@ -1,4 +1,5 @@
 import { createBitmapDocument, packRgba } from '../../features/document';
+import { createAnnotationSet } from '../../features/annotations';
 import { createDocumentHistory } from '../../features/history';
 import { beginSelection, beginStroke, FillWorkspace, floodFill } from '../../features/tools';
 import type { PerfCase } from './harness';
@@ -154,6 +155,35 @@ function selectionGestureCase(): PerfCase {
   };
 }
 
+function annotationHitCase(): PerfCase {
+  const annotations = createAnnotationSet();
+  for (let index = 0; index < 200; index++) {
+    const x = index ? index * 20 + 20 : 10;
+    annotations.commit({
+      id: `shape-${index}`,
+      kind: 'rectangle',
+      start: { x, y: 10 },
+      end: { x: x + 20, y: 30 },
+      width: 2,
+      color: INK,
+    });
+  }
+  const point = { x: 10, y: 20 };
+  return {
+    name: 'hit test oldest of 200 shapes',
+    targetP95Ms: 0.0016,
+    samples: 1000,
+    prepare() {
+      if (annotations.hitTest(point, 0)?.id !== 'shape-0')
+        throw new Error('Hit-test fixture must scan all 200 shapes');
+    },
+    reset() {},
+    run() {
+      annotations.hitTest(point, 0);
+    },
+  };
+}
+
 export const corePerfCases: PerfCase[] = [
   strokeCase(1, 0.25),
   strokeCase(16, 0.76),
@@ -163,4 +193,5 @@ export const corePerfCases: PerfCase[] = [
   tileStrokeUndoRedoCase(),
   tileFillUndoRedoCase(),
   selectionGestureCase(),
+  annotationHitCase(),
 ];

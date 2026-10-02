@@ -79,10 +79,12 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
   try {
     const documentCanvas = new TestCanvas();
     const viewportCanvas = new TestCanvas();
+    const annotationCanvas = new TestCanvas();
     const overlayCanvas = new TestCanvas();
     const renderer = createCanvasRenderer({
       documentCanvas: documentCanvas as unknown as HTMLCanvasElement,
       viewportCanvas: viewportCanvas as unknown as HTMLCanvasElement,
+      annotationCanvas: annotationCanvas as unknown as HTMLCanvasElement,
       overlayCanvas: overlayCanvas as unknown as HTMLCanvasElement,
     });
     const document = createBitmapDocument('render', 2, 2);
@@ -167,10 +169,12 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
 
     const p3DocumentCanvas = new TestCanvas();
     const p3ViewportCanvas = new TestCanvas();
+    const p3AnnotationCanvas = new TestCanvas();
     const p3OverlayCanvas = new TestCanvas();
     const p3Renderer = createCanvasRenderer({
       documentCanvas: p3DocumentCanvas as unknown as HTMLCanvasElement,
       viewportCanvas: p3ViewportCanvas as unknown as HTMLCanvasElement,
+      annotationCanvas: p3AnnotationCanvas as unknown as HTMLCanvasElement,
       overlayCanvas: p3OverlayCanvas as unknown as HTMLCanvasElement,
       colorSpace: 'display-p3',
     });
@@ -186,6 +190,7 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
     flush();
     expect(p3DocumentCanvas.contextOptions?.colorSpace).toBe('display-p3');
     expect(p3ViewportCanvas.contextOptions?.colorSpace).toBe('display-p3');
+    expect(p3AnnotationCanvas.contextOptions?.colorSpace).toBe('display-p3');
     expect(p3OverlayCanvas.contextOptions?.colorSpace).toBe('display-p3');
     expect((p3DocumentCanvas.context.putImages.at(-1) as ImageData)?.colorSpace).toBe('display-p3');
     p3Renderer.dispose();

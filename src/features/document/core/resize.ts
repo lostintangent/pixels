@@ -12,6 +12,27 @@ export type CanvasAnchor =
   | 'bottom'
   | 'bottom-right';
 
+export function canvasAnchorOffset(
+  sourceWidth: number,
+  sourceHeight: number,
+  width: number,
+  height: number,
+  anchor: CanvasAnchor,
+): { x: number; y: number } {
+  return {
+    x: anchor.endsWith('left')
+      ? 0
+      : anchor.endsWith('right')
+        ? width - sourceWidth
+        : Math.floor((width - sourceWidth) / 2),
+    y: anchor.startsWith('top')
+      ? 0
+      : anchor.startsWith('bottom')
+        ? height - sourceHeight
+        : Math.floor((height - sourceHeight) / 2),
+  };
+}
+
 export function resizeDocument(
   document: BitmapDocument,
   width: number,
@@ -25,16 +46,13 @@ export function resizeDocument(
     document.name,
     document.colorSpace,
   );
-  const offsetX = anchor.endsWith('left')
-    ? 0
-    : anchor.endsWith('right')
-      ? width - document.width
-      : Math.floor((width - document.width) / 2);
-  const offsetY = anchor.startsWith('top')
-    ? 0
-    : anchor.startsWith('bottom')
-      ? height - document.height
-      : Math.floor((height - document.height) / 2);
+  const { x: offsetX, y: offsetY } = canvasAnchorOffset(
+    document.width,
+    document.height,
+    width,
+    height,
+    anchor,
+  );
   const fromX = Math.max(0, -offsetX);
   const fromY = Math.max(0, -offsetY);
   const toX = Math.max(0, offsetX);

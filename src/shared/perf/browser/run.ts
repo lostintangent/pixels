@@ -21,16 +21,24 @@ interface BrowserPerfApi {
   runPanZoom(): Promise<void>;
   runMazeFill(): Promise<void>;
   runLargePan(): Promise<void>;
+  prepareShapeDrag(): Promise<void>;
+  runShapeHandleDrag(): Promise<void>;
   checkZoomOutQuality(): Promise<Record<string, number>>;
   checkP3Canvas(): Promise<boolean>;
   checkColorConversion(): number;
+  checkAnnotationLayer(): Promise<{
+    passed: boolean;
+    primary: number[];
+    outside: number[];
+    handle: number[];
+  }>;
 }
 declare global {
   interface Window {
     __pixelsPerf?: BrowserPerfApi;
   }
 }
-type Scenario = 'stroke' | 'pan' | 'maze' | 'large-pan';
+type Scenario = 'stroke' | 'pan' | 'maze' | 'large-pan' | 'shape-handle';
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -55,8 +63,14 @@ async function traceScenario(
   scenario: Scenario,
 ): Promise<TraceSummary> {
   const kind: 'blank' | 'maze' | 'large' =
-    scenario === 'maze' ? 'maze' : scenario === 'large-pan' ? 'large' : 'blank';
+    scenario === 'maze'
+      ? 'maze'
+      : scenario === 'large-pan' || scenario === 'shape-handle'
+        ? 'large'
+        : 'blank';
   await page.evaluate((kind: 'blank' | 'maze' | 'large') => window.__pixelsPerf!.reset(kind), kind);
+  if (scenario === 'shape-handle')
+    await page.evaluate(() => window.__pixelsPerf!.prepareShapeDrag());
   return captureTrace(context, page, async (markFirstInput) => {
     await markFirstInput();
     await page.evaluate((kind) => {
@@ -67,7 +81,9 @@ async function traceScenario(
           ? api.runPanZoom()
           : kind === 'large-pan'
             ? api.runLargePan()
-            : api.runMazeFill();
+            : kind === 'shape-handle'
+              ? api.runShapeHandleDrag()
+              : api.runMazeFill();
     }, scenario);
   });
 }
@@ -99,14 +115,14 @@ try {
           width: 1440,
           height: 900,
           dpr: 2,
-          scenarios: ['stroke', 'pan', 'maze', 'large-pan'],
+          scenarios: ['stroke', 'pan', 'maze', 'large-pan', 'shape-handle'],
         },
         {
           name: 'phone',
           width: 390,
           height: 844,
           dpr: 3,
-          scenarios: ['stroke', 'pan', 'large-pan'],
+          scenarios: ['stroke', 'pan', 'large-pan', 'shape-handle'],
         },
       ] as const;
       let failed = false;
@@ -115,6 +131,7 @@ try {
         pan: 3,
         maze: Infinity,
         'large-pan': 1.35,
+        'shape-handle': 1.25,
       };
       for (const profile of profiles) {
         const context = await browser.newContext({
@@ -134,12 +151,14 @@ try {
           zoom: await window.__pixelsPerf!.checkZoomOutQuality(),
           p3: await window.__pixelsPerf!.checkP3Canvas(),
           conversionError: window.__pixelsPerf!.checkColorConversion(),
+          annotations: await window.__pixelsPerf!.checkAnnotationLayer(),
         }));
         console.log(
-          `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, conversion error ≤ 2`,
+          `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, P3 annotation layer ${quality.annotations.passed ? 'PASS' : `FAIL ${JSON.stringify(quality.annotations)}`}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, conversion error ≤ 2`,
         );
         if (
           !quality.p3 ||
+          !quality.annotations.passed ||
           quality.conversionError > 2 ||
           Object.values(quality.zoom).some((error) => error > 2)
         )
@@ -165,6 +184,8 @@ try {
             await api.runMazeFill();
           }
           await api.reset('large');
+          await api.prepareShapeDrag();
+          await api.runShapeHandleDrag();
           await api.reset('blank');
         });
         console.log(
@@ -198,7 +219,11 @@ try {
             const onTimePercent = (onTime / eligible) * 100;
             const refreshHz = median(blocks.map((block) => block.refreshHz));
             const target =
-              scenario === 'large-pan' && profile.name === 'phone' ? 2 : targets[scenario];
+              scenario === 'large-pan' && profile.name === 'phone'
+                ? 2
+                : scenario === 'shape-handle' && profile.name === 'phone'
+                  ? 1.2
+                  : targets[scenario];
             const passed =
               p95 < target &&
               maxLongTask <= 50 &&

@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
+import { annotationsFor } from '../../annotations';
 import {
   attachAutosave,
   createDocumentStore,
@@ -46,6 +47,37 @@ test('session paste floats through a drag and commits as one undo step', () => {
   session.run({ type: 'undo' });
   expect(Array.from(document.pixels)).toEqual([A, 0, 0, 0]);
   expect(session.state.state.canUndo).toBe(false);
+});
+
+test('resize shifts shapes with pixels and undoes as one document change', () => {
+  const document = createBitmapDocument('resize', 3, 3);
+  document.pixels[4] = A;
+  annotationsFor(document).commit({
+    id: 'rect-1',
+    kind: 'rectangle',
+    start: { x: 0, y: 0 },
+    end: { x: 2, y: 2 },
+    color: B,
+    width: 1,
+  });
+  const session = createEditorSession({ document, save: null });
+
+  session.resizeDocument(5, 5, 'center');
+  const expanded = session.bitmap.state;
+  expect(expanded).not.toBe(document);
+  expect(expanded.pixels[2 * 5 + 2]).toBe(A);
+  expect(annotationsFor(expanded).shapes[0]?.start).toEqual({ x: 1, y: 1 });
+  expect(session.state.state.canUndo).toBe(true);
+
+  session.run({ type: 'undo' });
+  expect(session.bitmap.state).toBe(document);
+  expect(document.pixels[4]).toBe(A);
+  expect(annotationsFor(document).shapes[0]?.start).toEqual({ x: 0, y: 0 });
+  expect(session.state.state.canRedo).toBe(true);
+
+  session.run({ type: 'redo' });
+  expect(session.bitmap.state).toBe(expanded);
+  expect(annotationsFor(expanded).shapes[0]?.start).toEqual({ x: 1, y: 1 });
 });
 
 test('duplicate floats in place without replacing the clipboard', () => {

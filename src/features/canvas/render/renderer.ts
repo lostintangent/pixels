@@ -1,5 +1,6 @@
 import type { BitmapDocument, DocumentColorSpace, PixelRect } from '../../document';
 import { intersectRect, unionRect } from '../../document';
+import { annotationsFor, type AnnotationSet } from '../../annotations/model';
 import type { Viewport } from '../core/contracts';
 import type { CanvasRenderer, OverlayPreview, OverlayState, RendererSurface } from './contracts';
 
@@ -70,6 +71,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   const colorSpace = surface.colorSpace ?? 'srgb';
   const documentCtx = context(surface.documentCanvas, colorSpace);
   const viewportCtx = context(surface.viewportCanvas, colorSpace);
+  const annotationCtx = context(surface.annotationCanvas, colorSpace);
   const overlayCtx = context(surface.overlayCanvas, colorSpace);
   let checker = checkerPattern(viewportCtx, '#fff', '#d6d6d6');
   let overlayChecker = checkerPattern(overlayCtx, '#fff', '#d6d6d6');
@@ -81,10 +83,15 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   let viewport: Viewport | null = null;
   let overlay = EMPTY_OVERLAY;
   let unsubscribe: (() => void) | null = null;
+  let annotationUnsubscribe: (() => void) | null = null;
+  let annotations: AnnotationSet | null = null;
+  let painter: typeof import('../../annotations') | null = null;
+  let painterLoading = false;
   let imageData: ImageData | null = null;
   const mipmaps: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }[] = [];
   let pendingDirty: PixelRect | null = null;
   let viewportDirty = true;
+  let annotationDirty = true;
   let overlayDirty = true;
   let previewImage: ImageData | null = null;
   let previewBuffer: ArrayBufferLike | null = null;
@@ -103,17 +110,32 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     frame = requestAnimationFrame(render);
   }
 
+  function loadPainter(): void {
+    if (painter || painterLoading) return;
+    painterLoading = true;
+    void import('../../annotations').then((module) => {
+      if (disposed) return;
+      painter = module;
+      annotationDirty = overlayDirty = true;
+      schedule();
+    });
+  }
+
   function updateBackingStore(view: Viewport): void {
     const width = Math.max(1, Math.round(view.cssWidth * view.devicePixelRatio));
     const height = Math.max(1, Math.round(view.cssHeight * view.devicePixelRatio));
-    for (const canvas of [surface.viewportCanvas, surface.overlayCanvas]) {
+    for (const canvas of [
+      surface.viewportCanvas,
+      surface.annotationCanvas,
+      surface.overlayCanvas,
+    ]) {
       if (canvas.width !== width) {
         canvas.width = width;
-        viewportDirty = overlayDirty = true;
+        viewportDirty = annotationDirty = overlayDirty = true;
       }
       if (canvas.height !== height) {
         canvas.height = height;
-        viewportDirty = overlayDirty = true;
+        viewportDirty = annotationDirty = overlayDirty = true;
       }
     }
   }
@@ -311,6 +333,35 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       drawGrid(viewportCtx, bitmap, view);
       viewportDirty = false;
     }
+    if (annotationDirty) {
+      annotationCtx.setTransform(1, 0, 0, 1, 0, 0);
+      annotationCtx.clearRect(
+        0,
+        0,
+        surface.annotationCanvas.width,
+        surface.annotationCanvas.height,
+      );
+      if (annotations && (annotations.shapes.length || annotations.preview)) {
+        if (!painter) loadPainter();
+        else {
+          annotationCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
+          annotationCtx.save();
+          annotationCtx.beginPath();
+          annotationCtx.rect(
+            view.panX,
+            view.panY,
+            bitmap.width * view.zoom,
+            bitmap.height * view.zoom,
+          );
+          annotationCtx.clip();
+          annotationCtx.translate(view.panX, view.panY);
+          annotationCtx.scale(view.zoom, view.zoom);
+          painter.paintVisibleAnnotations(annotationCtx, annotations, colorSpace);
+          annotationCtx.restore();
+        }
+      }
+      annotationDirty = false;
+    }
     if (!overlayDirty) return;
     overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
     overlayCtx.clearRect(0, 0, surface.overlayCanvas.width, surface.overlayCanvas.height);
@@ -319,6 +370,27 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     if (overlay.preview) drawPreview(view, overlay.preview);
     if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, phase);
     if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, phase);
+    if (overlay.selectedAnnotationId && annotations) {
+      const selected =
+        annotations.preview?.id === overlay.selectedAnnotationId
+          ? annotations.preview
+          : annotations.get(overlay.selectedAnnotationId);
+      if (selected) {
+        if (!painter) loadPainter();
+        else
+          painter.paintAnnotationSelection(
+            overlayCtx,
+            selected,
+            colorSpace,
+            view.zoom,
+            view.panX,
+            view.panY,
+            bitmap.width,
+            bitmap.height,
+            Boolean(overlay.coarseAnnotationHandles),
+          );
+      }
+    }
     overlayDirty = false;
     if (overlay.marquee && !(overlay.reducedMotion ?? systemReducedMotion) && !timer) {
       timer = globalThis.setTimeout(() => {
@@ -336,22 +408,34 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         throw new Error('Canvas renderer color space must match its document');
       }
       unsubscribe?.();
+      annotationUnsubscribe?.();
       document = bitmap;
+      annotations = annotationsFor(bitmap);
       imageData = null;
       pendingDirty = { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
-      viewportDirty = overlayDirty = true;
+      viewportDirty = annotationDirty = overlayDirty = true;
       unsubscribe = bitmap.events.subscribe((rect) => {
         if (!pendingDirty) pendingDirty = { ...rect };
         else unionRect(pendingDirty, rect, pendingDirty);
         viewportDirty = true;
         schedule();
       });
+      annotationUnsubscribe = annotations.subscribe(() => {
+        annotationDirty = overlayDirty = true;
+        schedule();
+      });
       schedule();
     },
     setViewport(next) {
       viewport = next;
-      viewportDirty = true;
-      if (overlay.preview || overlay.sourceClear || overlay.marquee || overlay.cursor)
+      viewportDirty = annotationDirty = true;
+      if (
+        overlay.preview ||
+        overlay.sourceClear ||
+        overlay.marquee ||
+        overlay.cursor ||
+        overlay.selectedAnnotationId
+      )
         overlayDirty = true;
       schedule();
     },
@@ -386,6 +470,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     dispose() {
       disposed = true;
       unsubscribe?.();
+      annotationUnsubscribe?.();
       if (frame) cancelAnimationFrame(frame);
       if (timer) clearTimeout(timer);
     },

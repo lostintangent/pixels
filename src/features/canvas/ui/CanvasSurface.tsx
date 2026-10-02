@@ -65,6 +65,7 @@ export function CanvasSurface({
 }: CanvasSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLCanvasElement>(null);
+  const annotationRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const latest = useRef({ input, cursorAt });
   latest.current = { input, cursorAt };
@@ -74,6 +75,7 @@ export function CanvasSurface({
     const renderer = createCanvasRenderer({
       documentCanvas: globalThis.document.createElement('canvas'),
       viewportCanvas: viewportRef.current!,
+      annotationCanvas: annotationRef.current!,
       overlayCanvas: overlayRef.current!,
       colorSpace: document.state.colorSpace,
     });
@@ -450,6 +452,7 @@ export function CanvasSurface({
       {...stylex.props(styles.host)}
     >
       <canvas ref={viewportRef} {...stylex.props(styles.layer)} />
+      <canvas ref={annotationRef} {...stylex.props(styles.layer)} />
       <canvas ref={overlayRef} {...stylex.props(styles.layer)} />
     </div>
   );

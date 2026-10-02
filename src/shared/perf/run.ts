@@ -22,7 +22,7 @@ for (let run = 0; run < repeat; run++) {
     if (!result.passed) failed = true;
     const status = result.passed ? 'PASS' : 'FAIL';
     console.log(
-      `${status} ${result.name}: min ${result.minMs.toFixed(3)} ms, median ${result.medianMs.toFixed(3)} ms, p95 ${result.p95Ms.toFixed(3)} ms [${result.blockP95Ms.map((value) => value.toFixed(3)).join(', ')}], target ${result.targetP95Ms.toFixed(3)} ms`,
+      `${status} ${result.name}: min ${result.minMs.toFixed(4)} ms, median ${result.medianMs.toFixed(4)} ms, p95 ${result.p95Ms.toFixed(4)} ms [${result.blockP95Ms.map((value) => value.toFixed(4)).join(', ')}], target ${result.targetP95Ms.toFixed(4)} ms`,
     );
   }
 }

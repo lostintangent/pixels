@@ -1,6 +1,6 @@
 import type { BitmapDocument, PixelRect } from '../../document';
 import { intersectRect, unionRect } from '../../document';
-import type { DocumentHistory, HistoryTransaction } from './contracts';
+import type { DocumentHistory, HistoryExternalState, HistoryTransaction } from './contracts';
 
 const TILE_SIZE = 64;
 const DEFAULT_BUDGET = 256 * 1024 * 1024;
@@ -17,6 +17,8 @@ interface Entry {
   bounds: PixelRect;
   tiles: TileSnapshot[];
   full: Uint32Array | null;
+  external: { adapter: HistoryExternalState; snapshot: unknown } | null;
+  replacement: BitmapDocument | null;
   bytes: number;
 }
 
@@ -43,7 +45,12 @@ function swapEntry(document: BitmapDocument, entry: Entry): void {
       }
     }
   }
-  document.events.invalidate(entry.bounds);
+  if (entry.external) {
+    const current = entry.external.adapter.snapshot();
+    entry.external.adapter.restore(entry.external.snapshot);
+    entry.external.snapshot = current;
+  }
+  if (entry.bounds.width && entry.bounds.height) document.events.invalidate(entry.bounds);
 }
 
 export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistory {
@@ -65,7 +72,7 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
     get maxBytes() {
       return maxBytes;
     },
-    begin(label, document): HistoryTransaction {
+    begin(label, document, external): HistoryTransaction {
       if (active) throw new Error('A history transaction is already active');
       active = true;
       const tiles = new Map<number, TileSnapshot>();
@@ -79,6 +86,7 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
       };
       let bounds: PixelRect | null = null;
       let full: Uint32Array | null = null;
+      let extra = external ? { adapter: external, snapshot: external.snapshot() } : null;
       let closed = false;
       const close = () => {
         if (closed) throw new Error('History transaction is closed');
@@ -87,12 +95,16 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
       };
       const entry = (): Entry => ({
         label,
-        bounds: bounds!,
+        bounds: bounds ?? { x: 0, y: 0, width: 0, height: 0 },
         tiles: [...tiles.values()],
         full,
-        bytes: full
-          ? full.byteLength
-          : [...tiles.values()].reduce((n, tile) => n + tile.saved.byteLength, 0),
+        external: extra,
+        replacement: null,
+        bytes:
+          (full
+            ? full.byteLength
+            : [...tiles.values()].reduce((n, tile) => n + tile.saved.byteLength, 0)) +
+          (extra?.adapter.byteSize(extra.snapshot) ?? 0),
       });
       return {
         capture(rect) {
@@ -134,7 +146,8 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
         },
         commit() {
           close();
-          if (!bounds) return false;
+          if (extra && extra.adapter.equals(extra.snapshot, extra.adapter.snapshot())) extra = null;
+          if (!bounds && !extra) return false;
           const committed = entry();
           for (const redo of future) usedBytes -= redo.bytes;
           future.length = 0;
@@ -145,14 +158,43 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
         },
         cancel() {
           close();
-          if (bounds) swapEntry(document, entry());
+          if (
+            bounds ||
+            (extra && !extra.adapter.equals(extra.snapshot, extra.adapter.snapshot()))
+          ) {
+            swapEntry(document, entry());
+          }
         },
       };
+    },
+    pushReplacement(label, before, after) {
+      if (active) throw new Error('Cannot replace a document during a history transaction');
+      if (before === after) return;
+      for (const redo of future) usedBytes -= redo.bytes;
+      future.length = 0;
+      const bytes = Math.max(before.pixels.byteLength, after.pixels.byteLength);
+      past.push({
+        label,
+        bounds: { x: 0, y: 0, width: 0, height: 0 },
+        tiles: [],
+        full: null,
+        external: null,
+        replacement: before,
+        bytes,
+      });
+      usedBytes += bytes;
+      while (past.length > 1 && usedBytes > maxBytes) usedBytes -= past.shift()!.bytes;
     },
     undo(document) {
       if (active) throw new Error('Cannot undo during a history transaction');
       const item = past.pop();
       if (!item) return null;
+      if (item.replacement) {
+        const next = item.replacement;
+        item.replacement = document;
+        future.push(item);
+        return { document: next };
+      }
       swapEntry(document, item);
       future.push(item);
       return item.bounds;
@@ -161,6 +203,12 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
       if (active) throw new Error('Cannot redo during a history transaction');
       const item = future.pop();
       if (!item) return null;
+      if (item.replacement) {
+        const next = item.replacement;
+        item.replacement = document;
+        past.push(item);
+        return { document: next };
+      }
       swapEntry(document, item);
       past.push(item);
       return item.bounds;

@@ -7,13 +7,29 @@ export interface HistoryTransaction {
   cancel(): void;
 }
 
+/** A feature can join the pixel undo stack without becoming a history dependency. */
+export interface HistoryExternalState {
+  snapshot(): unknown;
+  restore(snapshot: unknown): void;
+  equals(before: unknown, after: unknown): boolean;
+  byteSize(snapshot: unknown): number;
+}
+
+export type HistoryChange = PixelRect | { document: BitmapDocument };
+
 export interface DocumentHistory {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly usedBytes: number;
   readonly maxBytes: number;
-  begin(label: string, document: BitmapDocument): HistoryTransaction;
-  undo(document: BitmapDocument): PixelRect | null;
-  redo(document: BitmapDocument): PixelRect | null;
+  begin(
+    label: string,
+    document: BitmapDocument,
+    external?: HistoryExternalState,
+  ): HistoryTransaction;
+  /** A dimension change swaps whole document objects in the same ordered stack. */
+  pushReplacement(label: string, before: BitmapDocument, after: BitmapDocument): void;
+  undo(document: BitmapDocument): HistoryChange | null;
+  redo(document: BitmapDocument): HistoryChange | null;
   clear(): void;
 }

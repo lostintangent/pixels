@@ -1,15 +1,35 @@
 import type { Viewport } from '../core/contracts';
 import { createCanvasRenderer } from '../render/renderer';
 import { createBitmapDocument, packRgba } from '../../document';
+import { annotationsFor, type Annotation } from '../../annotations';
 import { createDocumentHistory } from '../../history';
 import { beginStroke, FillWorkspace, floodFill } from '../../tools';
-import { checkColorConversion, checkP3Canvas, checkZoomOutQuality } from './quality';
+import {
+  checkAnnotationLayer,
+  checkColorConversion,
+  checkP3Canvas,
+  checkZoomOutQuality,
+} from './quality';
 
 const SIDE = 1024;
 const INK = packRgba(18, 111, 202);
 const WALL = packRgba(25, 25, 25);
 const bitmap = createBitmapDocument('browser-perf', SIDE, SIDE);
 const largeBitmap = createBitmapDocument('browser-perf-large', 4096, 4096);
+const largeAnnotations = annotationsFor(largeBitmap);
+const handleShape: Annotation = {
+  id: 'handle-drag',
+  kind: 'rectangle',
+  start: { x: 512, y: 512 },
+  end: { x: 3584, y: 3584 },
+  width: 12,
+  color: INK,
+};
+const handlePreview: Annotation = {
+  ...handleShape,
+  start: { ...handleShape.start },
+  end: { ...handleShape.end },
+};
 largeBitmap.pixels.fill(packRgba(48, 96, 160));
 const history = createDocumentHistory();
 const fillWorkspace = new FillWorkspace();
@@ -31,6 +51,7 @@ for (let y = 8; y < SIDE - 8; y += 8) {
 const renderer = createCanvasRenderer({
   documentCanvas: document.createElement('canvas'),
   viewportCanvas: document.querySelector<HTMLCanvasElement>('#viewport')!,
+  annotationCanvas: document.querySelector<HTMLCanvasElement>('#annotations')!,
   overlayCanvas: document.querySelector<HTMLCanvasElement>('#overlay')!,
 });
 renderer.setDocument(bitmap);
@@ -54,15 +75,20 @@ export interface BrowserPerfApi {
   runPanZoom(): Promise<void>;
   runMazeFill(): Promise<void>;
   runLargePan(): Promise<void>;
+  prepareShapeDrag(): Promise<void>;
+  runShapeHandleDrag(): Promise<void>;
   checkZoomOutQuality(): Promise<Record<string, number>>;
   checkP3Canvas(): Promise<boolean>;
   checkColorConversion(): number;
+  checkAnnotationLayer: typeof checkAnnotationLayer;
 }
 
 const api: BrowserPerfApi = {
   async reset(kind) {
     history.clear();
     if (kind === 'large') {
+      largeAnnotations.replace([]);
+      renderer.setOverlay({ grid: 'off', cursor: null, marquee: null, preview: null });
       if (activeBitmap !== largeBitmap) {
         renderer.setDocument(largeBitmap);
         activeBitmap = largeBitmap;
@@ -150,9 +176,39 @@ const api: BrowserPerfApi = {
       requestAnimationFrame(next);
     });
   },
+  async prepareShapeDrag() {
+    largeAnnotations.commit(handleShape);
+    renderer.setOverlay({
+      grid: 'off',
+      cursor: null,
+      marquee: null,
+      preview: null,
+      selectedAnnotationId: handleShape.id,
+    });
+    await frames(4);
+  },
+  runShapeHandleDrag() {
+    return new Promise((resolve) => {
+      let frame = 0;
+      const next = () => {
+        const phase = (frame / 90) * Math.PI * 2;
+        handlePreview.end.x = 3584 + 300 * Math.sin(phase);
+        handlePreview.end.y = 3584 + 300 * Math.cos(phase);
+        largeAnnotations.showPreview(handlePreview);
+        frame++;
+        if (frame < 90) requestAnimationFrame(next);
+        else {
+          largeAnnotations.showPreview(null);
+          void frames().then(resolve);
+        }
+      };
+      requestAnimationFrame(next);
+    });
+  },
   checkZoomOutQuality,
   checkP3Canvas,
   checkColorConversion,
+  checkAnnotationLayer,
   async runMazeFill() {
     floodFill(bitmap, { at: { x: 0, y: 0 }, color: INK }, history, fillWorkspace);
     await frames();

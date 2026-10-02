@@ -22,6 +22,8 @@ export interface OverlayState {
   cursor: PixelRect | null;
   marquee: PixelRect | null;
   preview: OverlayPreview | null;
+  selectedAnnotationId?: string | null;
+  coarseAnnotationHandles?: boolean;
   /** Cover committed source pixels while a lifted selection floats above them. */
   sourceClear?: PixelRect | null;
   reducedMotion?: boolean;
@@ -36,6 +38,7 @@ export interface OverlayState {
 export interface RendererSurface {
   documentCanvas: HTMLCanvasElement;
   viewportCanvas: HTMLCanvasElement;
+  annotationCanvas: HTMLCanvasElement;
   overlayCanvas: HTMLCanvasElement;
   colorSpace?: DocumentColorSpace;
 }
