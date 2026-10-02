@@ -97,22 +97,54 @@ test('touch handles are 44 px targets and overlapping ones go to the nearest cen
 
 test('a press on nothing draws, a body moves, Option copies, and a handle reshapes', () => {
   const at = { x: 10.4, y: 19.6 };
-  expect(beginShapeDrag(null, at, 'arrow', ids, false)).toEqual({
+  // An odd arrow starts on the pixel under the press, where its cap is drawn. Rectangles and even
+  // arrows start on the nearest grid line.
+  expect(beginShapeDrag(null, at, { kind: 'arrow', width: 3 }, ids, false)).toEqual({
     mode: 'draw',
     kind: 'arrow',
     id: 'new',
+    start: { x: 10, y: 19 },
+  });
+  expect(beginShapeDrag(null, at, { kind: 'arrow', width: 4 }, ids, false)).toMatchObject({
     start: { x: 10, y: 20 },
   });
-  expect(beginShapeDrag({ shape: box, handle: null }, at, 'arrow', ids, false)).toMatchObject({
+  expect(beginShapeDrag(null, at, { kind: 'rectangle', width: 3 }, ids, false)).toMatchObject({
+    start: { x: 10, y: 20 },
+  });
+  expect(
+    beginShapeDrag(
+      { shape: box, handle: null },
+      at,
+      { kind: 'arrow', width: style.width },
+      ids,
+      false,
+    ),
+  ).toMatchObject({
     mode: 'move',
     id: 'box',
   });
-  expect(beginShapeDrag({ shape: box, handle: null }, at, 'arrow', ids, true)).toMatchObject({
+  expect(
+    beginShapeDrag(
+      { shape: box, handle: null },
+      at,
+      { kind: 'arrow', width: style.width },
+      ids,
+      true,
+    ),
+  ).toMatchObject({
     mode: 'move',
     id: 'copy',
   });
   // Option on a handle reshapes rather than copying.
-  expect(beginShapeDrag({ shape: box, handle: 'se' }, at, 'arrow', ids, true)).toMatchObject({
+  expect(
+    beginShapeDrag(
+      { shape: box, handle: 'se' },
+      at,
+      { kind: 'arrow', width: style.width },
+      ids,
+      true,
+    ),
+  ).toMatchObject({
     mode: 'handle',
     handle: 'se',
   });
@@ -127,7 +159,13 @@ test('a press stays a tap until it travels 3 screen px with a mouse or 8 with a 
 });
 
 test('drawing uses the current style and Shift squares rectangles or snaps arrows', () => {
-  const rect = beginShapeDrag(null, { x: 10, y: 10 }, 'rectangle', ids, false);
+  const rect = beginShapeDrag(
+    null,
+    { x: 10, y: 10 },
+    { kind: 'rectangle', width: style.width },
+    ids,
+    false,
+  );
   expect(liveShape(rect, { x: 40.4, y: 25.6 }, none, style)).toEqual({
     id: 'new',
     kind: 'rectangle',
@@ -144,7 +182,13 @@ test('drawing uses the current style and Shift squares rectangles or snaps arrow
     end: { x: 40, y: 26 },
   });
 
-  const line = beginShapeDrag(null, { x: 0, y: 0 }, 'arrow', ids, false);
+  const line = beginShapeDrag(
+    null,
+    { x: 0, y: 0 },
+    { kind: 'arrow', width: style.width },
+    ids,
+    false,
+  );
   expect(liveShape(line, { x: 50, y: 6 }, { shift: true, alt: false }, style).end).toEqual({
     x: 50,
     y: 0,
@@ -160,7 +204,7 @@ test('moving keeps the shape style and Shift locks the dominant axis', () => {
   const move = beginShapeDrag(
     { shape: box, handle: null },
     { x: 150, y: 101 },
-    'arrow',
+    { kind: 'arrow', width: style.width },
     ids,
     false,
   );
@@ -173,7 +217,13 @@ test('moving keeps the shape style and Shift locks the dominant axis', () => {
     start: { x: 110, y: 100 },
     end: { x: 210, y: 160 },
   });
-  const copy = beginShapeDrag({ shape: box, handle: null }, { x: 150, y: 101 }, 'arrow', ids, true);
+  const copy = beginShapeDrag(
+    { shape: box, handle: null },
+    { x: 150, y: 101 },
+    { kind: 'arrow', width: style.width },
+    ids,
+    true,
+  );
   expect(liveShape(copy, { x: 150, y: 111 }, none, style)).toMatchObject({
     id: 'copy',
     start: { x: 100, y: 110 },
@@ -184,7 +234,7 @@ test('arrow endpoints move alone and snap around the fixed end', () => {
   const drag = beginShapeDrag(
     { shape: arrow, handle: 'end' },
     { x: 180, y: 130 },
-    'arrow',
+    { kind: 'arrow', width: style.width },
     ids,
     false,
   );
@@ -196,15 +246,37 @@ test('arrow endpoints move alone and snap around the fixed end', () => {
     start: arrow.start,
     end: { x: 159, y: 169 },
   });
-  const start = beginShapeDrag({ shape: arrow, handle: 'start' }, arrow.start, 'arrow', ids, false);
+  const start = beginShapeDrag(
+    { shape: arrow, handle: 'start' },
+    arrow.start,
+    { kind: 'arrow', width: style.width },
+    ids,
+    false,
+  );
   expect(liveShape(start, { x: 100, y: 100 }, none, style)).toMatchObject({
     start: { x: 100, y: 100 },
     end: arrow.end,
   });
+  // An odd arrow's dragged end lands on the pixel under the pointer, even in its right half.
+  const odd = { ...arrow, width: 1 };
+  const oddEnd = beginShapeDrag(
+    { shape: odd, handle: 'end' },
+    odd.end,
+    { kind: 'arrow', width: 1 },
+    ids,
+    false,
+  );
+  expect(liveShape(oddEnd, { x: 190.8, y: 170.9 }, none, style).end).toEqual({ x: 190, y: 170 });
 });
 
 test('rectangle handles resize from the opposite side, and edges move one side', () => {
-  const corner = beginShapeDrag({ shape: box, handle: 'nw' }, box.start, 'arrow', ids, false);
+  const corner = beginShapeDrag(
+    { shape: box, handle: 'nw' },
+    box.start,
+    { kind: 'arrow', width: style.width },
+    ids,
+    false,
+  );
   expect(liveShape(corner, { x: 90, y: 80 }, none, style)).toMatchObject({
     id: 'box',
     start: { x: 90, y: 80 },
@@ -212,7 +284,13 @@ test('rectangle handles resize from the opposite side, and edges move one side',
     width: 4,
     color,
   });
-  const edge = beginShapeDrag({ shape: box, handle: 'e' }, { x: 200, y: 130 }, 'arrow', ids, false);
+  const edge = beginShapeDrag(
+    { shape: box, handle: 'e' },
+    { x: 200, y: 130 },
+    { kind: 'arrow', width: style.width },
+    ids,
+    false,
+  );
   expect(liveShape(edge, { x: 230, y: 50 }, none, style)).toMatchObject({
     start: { x: 100, y: 100 },
     end: { x: 230, y: 160 },

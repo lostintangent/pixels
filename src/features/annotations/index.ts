@@ -34,6 +34,8 @@ export {
   rectOf,
   resizeRect,
   snap45,
+  snapToShapeGrid,
   square,
+  strokeOffset,
   targetsOf,
 } from './core/geometry';

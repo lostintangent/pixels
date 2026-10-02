@@ -8,6 +8,27 @@ export interface RectangleGeometry {
   height: number;
 }
 
+/**
+ * Shapes are stored on whole numbers. An even stroke centers on grid lines, but an odd one would
+ * straddle two pixels and export as two half-alpha lines, so it is drawn half a pixel over, on
+ * pixel centers. Painting, hit testing, and handles all read this, so they agree with the ink.
+ */
+export const strokeOffset = (width: number): number => (width % 2 === 1 ? 0.5 : 0);
+
+/**
+ * The stored point whose drawn position is nearest the pointer. Rectangle corners stay on grid
+ * lines, since an odd stroke insets inside them. An odd-width arrow endpoint is the pixel under
+ * the pointer, the one its round cap is drawn on.
+ */
+export function snapToShapeGrid(
+  point: PixelPoint,
+  kind: Annotation['kind'],
+  width: number,
+): PixelPoint {
+  const axis = kind === 'arrow' && strokeOffset(width) ? Math.floor : Math.round;
+  return { x: axis(point.x), y: axis(point.y) };
+}
+
 export function rectOf(shape: Annotation): RectangleGeometry {
   return {
     x: Math.min(shape.start.x, shape.end.x),
@@ -55,7 +76,7 @@ function distanceToSegment(
   return Math.hypot(px - ax - t * dx, py - ay - t * dy);
 }
 
-/** No allocation on the 200-shape hit-test path. */
+/** No allocation on the 200-shape hit-test path. Bands follow the drawn stroke, not storage. */
 export function hitShape(
   shape: Annotation,
   point: PixelPoint,
@@ -63,11 +84,12 @@ export function hitShape(
   selected = false,
 ): boolean {
   const halfStroke = shape.width / 2 + tolerance;
+  const offset = strokeOffset(shape.width);
   if (shape.kind === 'rectangle') {
-    const x0 = Math.min(shape.start.x, shape.end.x);
-    const x1 = Math.max(shape.start.x, shape.end.x);
-    const y0 = Math.min(shape.start.y, shape.end.y);
-    const y1 = Math.max(shape.start.y, shape.end.y);
+    const x0 = Math.min(shape.start.x, shape.end.x) + offset;
+    const x1 = Math.max(x0, Math.max(shape.start.x, shape.end.x) - offset);
+    const y0 = Math.min(shape.start.y, shape.end.y) + offset;
+    const y1 = Math.max(y0, Math.max(shape.start.y, shape.end.y) - offset);
     if (
       point.x < x0 - halfStroke ||
       point.x > x1 + halfStroke ||
@@ -83,10 +105,10 @@ export function hitShape(
       point.y < y1 - halfStroke
     );
   }
-  const ax = shape.start.x;
-  const ay = shape.start.y;
-  const bx = shape.end.x;
-  const by = shape.end.y;
+  const ax = shape.start.x + offset;
+  const ay = shape.start.y + offset;
+  const bx = shape.end.x + offset;
+  const by = shape.end.y + offset;
   if (distanceToSegment(point.x, point.y, ax, ay, bx, by) <= halfStroke) return true;
   const dx = bx - ax;
   const dy = by - ay;
@@ -95,17 +117,31 @@ export function hitShape(
   const uy = length ? dy / length : 0;
   const head = Math.min(length * 0.5, shape.width * 4.7);
   const half = head * 0.42 + shape.width * 0.3;
+  // Inside the filled head, measured back from the tip, or within its outline stroke.
+  const back = (bx - point.x) * ux + (by - point.y) * uy;
+  const across = Math.abs((point.y - by) * ux - (point.x - bx) * uy);
+  if (head > 0 && back >= 0 && back <= head && across <= (half * back) / head) return true;
+  const cx = bx - ux * head;
+  const cy = by - uy * head;
+  const lx = cx - uy * half;
+  const ly = cy + ux * half;
+  const rx = cx + uy * half;
+  const ry = cy - ux * half;
+  const reach = Math.max(1, shape.width * 0.35) / 2 + tolerance;
   return (
-    distanceToSegment(point.x, point.y, bx - ux * head, by - uy * head, bx, by) <=
-    half * 0.8 + tolerance
+    distanceToSegment(point.x, point.y, bx, by, lx, ly) <= reach ||
+    distanceToSegment(point.x, point.y, lx, ly, rx, ry) <= reach ||
+    distanceToSegment(point.x, point.y, rx, ry, bx, by) <= reach
   );
 }
 
 export function handlesOf(shape: Annotation, zoom: number, coarse: boolean): AnnotationHandle[] {
   if (shape.kind === 'arrow') {
+    // On the shaft's ends. Rectangle handles stay on the outer corners the stroke insets from.
+    const offset = strokeOffset(shape.width);
     return [
-      { id: 'start', x: shape.start.x, y: shape.start.y },
-      { id: 'end', x: shape.end.x, y: shape.end.y },
+      { id: 'start', x: shape.start.x + offset, y: shape.start.y + offset },
+      { id: 'end', x: shape.end.x + offset, y: shape.end.y + offset },
     ];
   }
   const rect = rectOf(shape);

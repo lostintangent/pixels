@@ -2,27 +2,25 @@ import type { DocumentColorSpace } from '../../document';
 import { toCss } from '../../palette/model';
 import { compositeAnnotationLayer } from '../core/composite';
 import type { Annotation, AnnotationSet } from '../core/contracts';
-import { arrowGeom, handlesOf, rectOf } from '../core/geometry';
+import { arrowGeom, handlesOf, rectOf, strokeOffset } from '../core/geometry';
 
 type ShapeContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 /**
- * Shapes are stored on grid lines, so an odd stroke width would straddle two pixels and
- * export as two half-alpha lines. Odd widths move half a pixel onto pixel centers.
+ * `grow` widens only the stroke, in document pixels, so a selection halo outlines the real
+ * geometry instead of a bigger arrowhead.
  */
-const pixelOffset = (width: number) => (width % 2 === 1 ? 0.5 : 0);
-
-/** `offset` comes from the stored width, so a widened selection halo stays centered on it. */
 export function paintAnnotation(
   ctx: ShapeContext,
   shape: Annotation,
   colorSpace: DocumentColorSpace,
-  offset = pixelOffset(shape.width),
+  grow = 0,
 ): void {
+  const offset = strokeOffset(shape.width);
   const color = toCss(shape.color, colorSpace);
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
-  ctx.lineWidth = shape.width;
+  ctx.lineWidth = shape.width + grow;
   if (shape.kind === 'rectangle') {
     const rect = rectOf(shape);
     ctx.lineJoin = 'miter';
@@ -46,7 +44,7 @@ export function paintAnnotation(
   );
   ctx.stroke();
   ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(1, shape.width * 0.35);
+  ctx.lineWidth = Math.max(1, shape.width * 0.35) + grow;
   ctx.beginPath();
   ctx.moveTo(shape.end.x + offset, shape.end.y + offset);
   ctx.lineTo(head.left.x + offset, head.left.y + offset);
@@ -90,19 +88,13 @@ export function paintAnnotationSelection(
   ctx.clip();
   ctx.translate(panX, panY);
   ctx.scale(zoom, zoom);
-  const offset = pixelOffset(shape.width);
   for (const [grow, color] of [
     [3.5, 0x52000000],
     [2, 0xf2ffffff],
   ] as const) {
-    paintAnnotation(
-      ctx,
-      { ...shape, width: shape.width + (2 * grow) / zoom, color },
-      'srgb',
-      offset,
-    );
+    paintAnnotation(ctx, { ...shape, color }, 'srgb', (2 * grow) / zoom);
   }
-  paintAnnotation(ctx, shape, colorSpace, offset);
+  paintAnnotation(ctx, shape, colorSpace);
   ctx.restore();
   ctx.fillStyle = '#fff';
   ctx.strokeStyle = '#1f1d2b';

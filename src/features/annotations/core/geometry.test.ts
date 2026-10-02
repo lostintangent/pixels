@@ -1,7 +1,16 @@
 import { expect, test } from 'bun:test';
 import { packRgba } from '../../document';
 import type { Annotation } from './contracts';
-import { arrowGeom, handlesOf, hitShape, resizeRect, snap45, square, targetsOf } from './geometry';
+import {
+  arrowGeom,
+  handlesOf,
+  hitShape,
+  resizeRect,
+  snap45,
+  snapToShapeGrid,
+  square,
+  targetsOf,
+} from './geometry';
 import { annotationsFor, createAnnotationSet, isValidAnnotation } from './set';
 import { hitAnnotationSet } from './hit';
 import { findAnnotationsFor, watchAnnotationSet } from './registry';
@@ -44,8 +53,41 @@ test('arrow head scales with width, and shaft and head both hit', () => {
   expect(arrowGeom(thin).head).toBeCloseTo(4.7);
   expect(arrowGeom(thick).head).toBeCloseTo(28.2);
   expect(hitShape(thin, { x: 25, y: 0 }, 0)).toBe(true);
-  expect(hitShape(thick, { x: 90, y: 9 }, 0)).toBe(true);
+  expect(hitShape(thick, { x: 80, y: 9 }, 0)).toBe(true);
+  expect(hitShape(thick, { x: 90, y: 9 }, 0)).toBe(false);
   expect(hitShape(thin, { x: 25, y: 5 }, 0)).toBe(false);
+});
+
+test('odd strokes hit and grab where they are drawn, half a pixel inside storage', () => {
+  // A 1 px rectangle from 10 to 30 inks columns 10 and 29, so both whole pixels hit.
+  const thin: Annotation = { ...rectangle, width: 1 };
+  expect(hitShape(thin, { x: 10.95, y: 20 }, 0)).toBe(true);
+  expect(hitShape(thin, { x: 29.05, y: 20 }, 0)).toBe(true);
+  expect(hitShape(thin, { x: 30.2, y: 20 }, 0)).toBe(false);
+  expect(hitShape(thin, { x: 20, y: 29.5 }, 0)).toBe(true);
+  // Its handles stay on the outer corners the stroke insets from.
+  expect(handlesOf(thin, 1, false)[0]).toEqual({ id: 'nw', x: 10, y: 10 });
+  // A 1 px arrow at row 0 inks pixel row 0, and its handles sit on the shaft's ends.
+  const arrow: Annotation = {
+    ...thin,
+    kind: 'arrow',
+    start: { x: 0, y: 0 },
+    end: { x: 100, y: 0 },
+  };
+  expect(hitShape(arrow, { x: 25, y: 0.95 }, 0)).toBe(true);
+  expect(hitShape(arrow, { x: 25, y: -0.2 }, 0)).toBe(false);
+  // The whole head hits, out to its back corners, and nothing beyond its outline.
+  const { left, right } = arrowGeom(arrow);
+  expect(hitShape(arrow, { x: left.x + 0.5, y: left.y + 0.5 }, 0)).toBe(true);
+  expect(hitShape(arrow, { x: right.x + 0.5, y: right.y + 0.5 }, 0)).toBe(true);
+  expect(hitShape(arrow, { x: left.x + 0.5, y: left.y + 1.2 }, 0)).toBe(false);
+  expect(handlesOf(arrow, 1, false)).toEqual([
+    { id: 'start', x: 0.5, y: 0.5 },
+    { id: 'end', x: 100.5, y: 0.5 },
+  ]);
+  expect(snapToShapeGrid({ x: 9.9, y: 4.1 }, 'arrow', 1)).toEqual({ x: 9, y: 4 });
+  expect(snapToShapeGrid({ x: 9.9, y: 4.1 }, 'arrow', 2)).toEqual({ x: 10, y: 4 });
+  expect(snapToShapeGrid({ x: 9.9, y: 4.1 }, 'rectangle', 1)).toEqual({ x: 10, y: 4 });
 });
 
 test('handles hide on short sides and touch targets leave a 24 px body', () => {

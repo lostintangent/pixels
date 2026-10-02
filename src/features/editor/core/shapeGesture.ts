@@ -2,6 +2,7 @@ import {
   hitAnnotationSet,
   resizeRect,
   snap45,
+  snapToShapeGrid,
   square,
   targetsOf,
   translateAnnotation,
@@ -82,17 +83,20 @@ const snap = (point: PixelPoint): PixelPoint => ({
 
 /**
  * Starts a drag from a press. A target moves or reshapes that shape. An Option press on a body
- * moves a copy under `copyId`. A press on nothing draws a new `kind` under `newId`.
+ * moves a copy under `copyId`. A press on nothing draws a new `kind` at `width` under `newId`.
  */
 export function beginShapeDrag(
   target: ShapeTarget | null,
   point: PixelPoint,
-  kind: AnnotationKind,
+  draw: { kind: AnnotationKind; width: number },
   ids: { newId: string; copyId: string },
   alt: boolean,
 ): ShapeDrag {
+  if (!target) {
+    const start = snapToShapeGrid(point, draw.kind, draw.width);
+    return { mode: 'draw', kind: draw.kind, id: ids.newId, start };
+  }
   const start = snap(point);
-  if (!target) return { mode: 'draw', kind, id: ids.newId, start };
   if (target.handle)
     return { mode: 'handle', original: target.shape, handle: target.handle, start };
   return { mode: 'move', original: target.shape, id: alt ? ids.copyId : target.shape.id, start };
@@ -119,15 +123,17 @@ export function liveShape(
   { shift, alt }: ShapeDragModifiers,
   style: ShapeStyle,
 ): Annotation {
-  const at = snap(point);
   if (drag.mode === 'draw') {
     const { start, kind } = drag;
+    const at = snapToShapeGrid(point, kind, style.width);
     const end = shift ? (kind === 'rectangle' ? square(start, at) : snap45(start, at)) : at;
     const from =
       alt && kind === 'rectangle' ? { x: 2 * start.x - end.x, y: 2 * start.y - end.y } : start;
     return { id: drag.id, kind, start: from, end, ...style };
   }
   const { original } = drag;
+  const at =
+    drag.mode === 'handle' ? snapToShapeGrid(point, original.kind, original.width) : snap(point);
   if (drag.mode === 'move') {
     let dx = at.x - drag.start.x;
     let dy = at.y - drag.start.y;

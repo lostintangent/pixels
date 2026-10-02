@@ -171,7 +171,13 @@ export function createShapeController(host: ShapeHost): ShapeController {
       select(target?.shape ?? null);
       const ids = { newId: createAnnotationId(), copyId: createAnnotationId() };
       drag = {
-        drag: beginShapeDrag(target, point, draw ?? 'rectangle', ids, alt),
+        drag: beginShapeDrag(
+          target,
+          point,
+          { kind: draw ?? 'rectangle', width: style.width },
+          ids,
+          alt,
+        ),
         press: point,
         touch,
         style,
