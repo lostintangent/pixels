@@ -18,6 +18,7 @@ export {
 } from './core/commands';
 export type { AnnotationEdit } from './core/commands';
 export { compositeAnnotationLayer } from './core/composite';
+export { hitAnnotationSet } from './core/hit';
 export {
   arrowGeom,
   handlesOf,

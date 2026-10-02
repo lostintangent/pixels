@@ -3,6 +3,7 @@ import { packRgba } from '../../document';
 import type { Annotation } from './contracts';
 import { arrowGeom, handlesOf, hitShape, resizeRect, snap45, square, targetsOf } from './geometry';
 import { annotationsFor, createAnnotationSet, isValidAnnotation } from './set';
+import { hitAnnotationSet } from './hit';
 import { createBitmapDocument } from '../../document';
 import { createDocumentHistory } from '../../history';
 import {
@@ -100,10 +101,10 @@ test('one set owns committed shapes, preview changes, and topmost hits', () => {
   const unsubscribe = set.subscribe((change) => changes.push(change.kind));
   set.commit(rectangle);
   set.commit({ ...rectangle, id: 'top', color: packRgba(20, 50, 200) });
-  expect(set.hitTest({ x: 10, y: 20 }, 0)?.id).toBe('top');
+  expect(hitAnnotationSet(set, { x: 10, y: 20 }, 0)?.id).toBe('top');
   set.showPreview({ ...rectangle, id: 'top', start: { x: 40, y: 40 }, end: { x: 50, y: 50 } });
-  expect(set.hitTest({ x: 10, y: 20 }, 0)?.id).toBe('rect');
-  expect(set.hitTest({ x: 40, y: 45 }, 0)?.id).toBe('top');
+  expect(hitAnnotationSet(set, { x: 10, y: 20 }, 0)?.id).toBe('rect');
+  expect(hitAnnotationSet(set, { x: 40, y: 45 }, 0)?.id).toBe('top');
   expect(set.snapshot().find((shape) => shape.id === 'top')?.start).toEqual({ x: 10, y: 10 });
   set.showPreview(null);
   expect(changes).toEqual(['commit', 'commit', 'preview', 'preview']);

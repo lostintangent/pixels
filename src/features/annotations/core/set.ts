@@ -1,6 +1,5 @@
 import type { BitmapDocument } from '../../document';
 import type { Annotation, AnnotationChange, AnnotationSet } from './contracts';
-import { hitShape } from './geometry';
 
 function copy(shape: Annotation): Annotation {
   return { ...shape, start: { ...shape.start }, end: { ...shape.end } };
@@ -80,17 +79,6 @@ export function createAnnotationSet(): AnnotationSet {
       preview = null;
       emit(commitChange);
       return true;
-    },
-    hitTest(point, tolerance, selectedId) {
-      if (preview && hitShape(preview, point, tolerance, preview.id === selectedId)) {
-        return preview;
-      }
-      for (let index = shapes.length - 1; index >= 0; index--) {
-        const shape = shapes[index]!;
-        if (preview?.id === shape.id) continue;
-        if (hitShape(shape, point, tolerance, shape.id === selectedId)) return shape;
-      }
-      return null;
     },
   };
 }

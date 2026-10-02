@@ -45,6 +45,4 @@ export interface AnnotationSet {
   /** Add or replace a shape, preserving its original z-order. */
   commit(shape: Annotation): void;
   remove(id: string): boolean;
-  /** Topmost hit. Tolerance is already converted from screen pixels to document pixels. */
-  hitTest(point: PixelPoint, tolerance: number, selectedId?: string): Annotation | null;
 }

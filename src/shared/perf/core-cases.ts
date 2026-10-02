@@ -1,5 +1,5 @@
 import { createBitmapDocument, packRgba } from '../../features/document';
-import { createAnnotationSet } from '../../features/annotations';
+import { createAnnotationSet, hitAnnotationSet } from '../../features/annotations/model';
 import { createDocumentHistory } from '../../features/history';
 import { beginSelection, beginStroke, FillWorkspace, floodFill } from '../../features/tools';
 import type { PerfCase } from './harness';
@@ -174,12 +174,12 @@ function annotationHitCase(): PerfCase {
     targetP95Ms: 0.0016,
     samples: 1000,
     prepare() {
-      if (annotations.hitTest(point, 0)?.id !== 'shape-0')
+      if (hitAnnotationSet(annotations, point, 0)?.id !== 'shape-0')
         throw new Error('Hit-test fixture must scan all 200 shapes');
     },
     reset() {},
     run() {
-      annotations.hitTest(point, 0);
+      hitAnnotationSet(annotations, point, 0);
     },
   };
 }

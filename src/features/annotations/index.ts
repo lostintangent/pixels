@@ -24,6 +24,7 @@ export {
   paintAnnotationSelection,
   paintVisibleAnnotations,
 } from './browser/paint';
+export { hitAnnotationSet } from './core/hit';
 export {
   arrowGeom,
   handlesOf,
