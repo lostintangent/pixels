@@ -38,6 +38,7 @@
     "perf:app": "bun src/shared/perf/browser/run-app.ts",
     "perf:export": "bun src/features/files/perf/run.ts",
     "perf:import": "bun src/features/files/perf/run-import.ts",
+    "golden:export": "bun src/features/files/golden/run.ts",
     "durability": "bun src/features/files/durability/run.ts"
   },
   "overrides": {
