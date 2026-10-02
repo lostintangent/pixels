@@ -2,6 +2,7 @@ import { defineConfig } from 'vite-plus';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
 import { Features } from 'lightningcss';
+import { astryxIcons } from './src/shared/build/astryxIcons';
 import { astryxMessages } from './src/shared/build/astryxMessages';
 import { modulePreload } from './src/shared/build/modulePreload';
 
@@ -38,6 +39,7 @@ export default defineConfig({
   plugins: [
     preload.plugin,
     astryxMessages(),
+    astryxIcons(),
     stylex({
       devMode: 'full',
       useCSSLayers: true,
