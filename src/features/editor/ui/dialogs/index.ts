@@ -12,6 +12,15 @@ export const ShapesPopover = deferred(() => dialogs().then((m) => m.ShapesPopove
 export const DropCard = deferred(() => dialogs().then((m) => m.DropCard));
 export const ToolActions = deferred(() => dialogs().then((m) => m.ToolActions));
 
+/** Every surface in the chunk resolves on its own, so a cached chunk still needs each one warmed. */
 export function preloadDialogs(): void {
-  NewCanvasDialog.preload();
+  for (const surface of [
+    NewCanvasDialog,
+    ResizeDialog,
+    ExportDialog,
+    ShapesPopover,
+    DropCard,
+    ToolActions,
+  ])
+    surface.preload();
 }

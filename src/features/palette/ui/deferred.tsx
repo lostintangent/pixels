@@ -19,4 +19,5 @@ export function ColorSheet(props: ColorSheetProps) {
 /** Warms the picker when the user heads toward it. */
 export function preloadColorPicker(): void {
   LazyPopover.preload();
+  LazySheet.preload();
 }
