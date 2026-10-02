@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import type { DocumentColorSpace } from '../../document';
+import { convertUnknownIccPngToDisplayP3 } from '../browser/pngColorManagement';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
 import { decodePng, encodePng } from '../core/png';
 
@@ -19,6 +20,14 @@ interface DecodeRequest {
   bytes: ArrayBuffer;
 }
 
+interface ConvertUnknownIccRequest {
+  kind: 'convertUnknownIcc';
+  id: number;
+  bytes: ArrayBuffer;
+  width: number;
+  height: number;
+}
+
 interface EncodeSuccess {
   kind: 'encode';
   id: number;
@@ -34,16 +43,28 @@ interface DecodeSuccess {
   colorTag: DocumentColorSpace | 'unknown-icc';
 }
 
+interface ConvertUnknownIccSuccess {
+  kind: 'convertUnknownIcc';
+  id: number;
+  /** `null` when the worker host lacks the APIs this conversion needs (e.g. under `bun test`). */
+  pixels: ArrayBuffer | null;
+}
+
 interface Failure {
-  kind: 'encode' | 'decode';
+  kind: 'encode' | 'decode' | 'convertUnknownIcc';
   id: number;
   error: { name: string; message: string; reason?: ImportErrorReason };
 }
 
 export type EncodeResponse = EncodeSuccess | Failure;
 export type DecodeResponse = DecodeSuccess | Failure;
+export type ConvertUnknownIccResponse = ConvertUnknownIccSuccess | Failure;
 
-function failureOf(kind: 'encode' | 'decode', id: number, error: unknown): Failure {
+function failureOf(
+  kind: 'encode' | 'decode' | 'convertUnknownIcc',
+  id: number,
+  error: unknown,
+): Failure {
   return {
     kind,
     id,
@@ -61,40 +82,59 @@ function failureOf(kind: 'encode' | 'decode', id: number, error: unknown): Failu
  * (unfiltering plus per-pixel sample expansion) is squarely main-thread work too — both would
  * otherwise be long tasks blocking input and paint, which a dedicated worker removes entirely.
  */
-self.addEventListener('message', (event: MessageEvent<EncodeRequest | DecodeRequest>) => {
-  const request = event.data;
-  if (request.kind === 'encode') {
-    const { id, width, height, scale, colorSpace, pixels } = request;
-    void encodePng(width, height, new Uint32Array(pixels), scale, colorSpace).then(
-      (bytes) => {
-        // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
-        // of whether `bytes` happens to be a view over a larger backing buffer.
-        const owned = bytes.slice().buffer as ArrayBuffer;
-        const response: EncodeSuccess = { kind: 'encode', id, bytes: owned };
-        (self as unknown as Worker).postMessage(response, [owned]);
-      },
-      (error: unknown) => {
-        (self as unknown as Worker).postMessage(failureOf('encode', id, error));
-      },
-    );
-  } else {
-    const { id, bytes } = request;
-    void decodePng(bytes).then(
-      (decoded) => {
-        const owned = decoded.pixels.buffer as ArrayBuffer;
-        const response: DecodeSuccess = {
-          kind: 'decode',
-          id,
-          width: decoded.width,
-          height: decoded.height,
-          pixels: owned,
-          colorTag: decoded.colorTag,
-        };
-        (self as unknown as Worker).postMessage(response, [owned]);
-      },
-      (error: unknown) => {
-        (self as unknown as Worker).postMessage(failureOf('decode', id, error));
-      },
-    );
-  }
-});
+self.addEventListener(
+  'message',
+  (event: MessageEvent<EncodeRequest | DecodeRequest | ConvertUnknownIccRequest>) => {
+    const request = event.data;
+    if (request.kind === 'encode') {
+      const { id, width, height, scale, colorSpace, pixels } = request;
+      void encodePng(width, height, new Uint32Array(pixels), scale, colorSpace).then(
+        (bytes) => {
+          // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
+          // of whether `bytes` happens to be a view over a larger backing buffer.
+          const owned = bytes.slice().buffer as ArrayBuffer;
+          const response: EncodeSuccess = { kind: 'encode', id, bytes: owned };
+          (self as unknown as Worker).postMessage(response, [owned]);
+        },
+        (error: unknown) => {
+          (self as unknown as Worker).postMessage(failureOf('encode', id, error));
+        },
+      );
+    } else if (request.kind === 'decode') {
+      const { id, bytes } = request;
+      void decodePng(bytes).then(
+        (decoded) => {
+          const owned = decoded.pixels.buffer as ArrayBuffer;
+          const response: DecodeSuccess = {
+            kind: 'decode',
+            id,
+            width: decoded.width,
+            height: decoded.height,
+            pixels: owned,
+            colorTag: decoded.colorTag,
+          };
+          (self as unknown as Worker).postMessage(response, [owned]);
+        },
+        (error: unknown) => {
+          (self as unknown as Worker).postMessage(failureOf('decode', id, error));
+        },
+      );
+    } else {
+      const { id, bytes, width, height } = request;
+      void convertUnknownIccPngToDisplayP3(new Uint8Array(bytes), width, height).then(
+        (pixels) => {
+          const owned = pixels ? (pixels.slice().buffer as ArrayBuffer) : null;
+          const response: ConvertUnknownIccSuccess = {
+            kind: 'convertUnknownIcc',
+            id,
+            pixels: owned,
+          };
+          (self as unknown as Worker).postMessage(response, owned ? [owned] : []);
+        },
+        (error: unknown) => {
+          (self as unknown as Worker).postMessage(failureOf('convertUnknownIcc', id, error));
+        },
+      );
+    }
+  },
+);

@@ -7,8 +7,8 @@ import type {
   LoadedDocument,
   TileSnapshot,
 } from '../core/contracts';
-import { encodePng } from '../core/png';
 import { buildThumbnail, writeTile } from '../core/tiles';
+import { encodePngOffMainThread } from '../runtime/pngWorkerClient';
 
 const DB_NAME = 'pixels-files';
 const DB_VERSION = 1;
@@ -198,7 +198,8 @@ class WriteChain {
 }
 
 /** A cheap, one-shot thumbnail for a document recovered from the crash journal that never had a
- *  real one — recovery is rare, so an inline (not off-main-thread) encode here is fine. */
+ *  real one — recovery is rare, so this never needed its own fast path; it already goes through
+ *  the same off-main-thread encoder every other save uses. */
 async function buildRecoveredThumbnail(
   pixels: Uint8Array,
   width: number,
@@ -207,7 +208,7 @@ async function buildRecoveredThumbnail(
 ): Promise<Uint8Array> {
   const pixels32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.length / 4);
   const thumbnailPixels = buildThumbnail(pixels32, width, height);
-  return encodePng(
+  return encodePngOffMainThread(
     thumbnailPixels.width,
     thumbnailPixels.height,
     thumbnailPixels.pixels,

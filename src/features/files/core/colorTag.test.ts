@@ -152,6 +152,11 @@ describe('classifyColorTag', () => {
     expect(await classify({ iccp })).toBe('unknown-icc');
   });
 
+  test('a DCI-P3 profile is unknown-icc, not classified as display-p3 by a loose "p3" substring match', async () => {
+    const iccp = await buildIccpChunk('DCI(P3)');
+    expect(await classify({ iccp })).toBe('unknown-icc');
+  });
+
   test('a corrupt iCCP chunk (truncated, no name terminator) is unknown-icc, not a crash', async () => {
     expect(await classify({ iccp: new Uint8Array([1, 2, 3]) })).toBe('unknown-icc');
   });

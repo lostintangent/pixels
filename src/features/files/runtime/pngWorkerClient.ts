@@ -1,7 +1,7 @@
 import type { DocumentColorSpace } from '../../document';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
-import { decodePng, type DecodedPng, encodePng } from '../core/png';
-import type { DecodeResponse, EncodeResponse } from './pngWorker';
+import type { DecodedPng } from '../core/png';
+import type { ConvertUnknownIccResponse, DecodeResponse, EncodeResponse } from './pngWorker';
 
 export interface PngWorkerClient {
   encode(
@@ -12,6 +12,11 @@ export interface PngWorkerClient {
     colorSpace?: DocumentColorSpace,
   ): Promise<Uint8Array>;
   decode(bytes: Uint8Array): Promise<DecodedPng>;
+  convertUnknownIccToDisplayP3(
+    bytes: Uint8Array,
+    width: number,
+    height: number,
+  ): Promise<Uint32Array | null>;
   /** Terminates the underlying worker, if any. Tests use this to avoid leaking workers. */
   terminate(): void;
 }
@@ -28,7 +33,13 @@ interface PendingDecode {
   reject(error: unknown): void;
 }
 
-type Pending = PendingEncode | PendingDecode;
+interface PendingConvertUnknownIcc {
+  kind: 'convertUnknownIcc';
+  resolve(pixels: Uint32Array | null): void;
+  reject(error: unknown): void;
+}
+
+type Pending = PendingEncode | PendingDecode | PendingConvertUnknownIcc;
 
 function reviveError(error: { name: string; message: string; reason?: ImportErrorReason }): Error {
   if (error.reason) return new ImportError(error.reason, error.message);
@@ -50,24 +61,29 @@ function createWorkerBackedClient(): PngWorkerClient {
   let nextRequestId = 1;
   const pending = new Map<number, Pending>();
 
-  worker.addEventListener('message', (event: MessageEvent<EncodeResponse | DecodeResponse>) => {
-    const response = event.data;
-    const request = pending.get(response.id);
-    if (!request) return;
-    pending.delete(response.id);
-    if ('error' in response) {
-      request.reject(reviveError(response.error));
-    } else if (request.kind === 'encode' && response.kind === 'encode') {
-      request.resolve(new Uint8Array(response.bytes));
-    } else if (request.kind === 'decode' && response.kind === 'decode') {
-      request.resolve({
-        width: response.width,
-        height: response.height,
-        pixels: new Uint32Array(response.pixels),
-        colorTag: response.colorTag,
-      });
-    }
-  });
+  worker.addEventListener(
+    'message',
+    (event: MessageEvent<EncodeResponse | DecodeResponse | ConvertUnknownIccResponse>) => {
+      const response = event.data;
+      const request = pending.get(response.id);
+      if (!request) return;
+      pending.delete(response.id);
+      if ('error' in response) {
+        request.reject(reviveError(response.error));
+      } else if (request.kind === 'encode' && response.kind === 'encode') {
+        request.resolve(new Uint8Array(response.bytes));
+      } else if (request.kind === 'decode' && response.kind === 'decode') {
+        request.resolve({
+          width: response.width,
+          height: response.height,
+          pixels: new Uint32Array(response.pixels),
+          colorTag: response.colorTag,
+        });
+      } else if (request.kind === 'convertUnknownIcc' && response.kind === 'convertUnknownIcc') {
+        request.resolve(response.pixels ? new Uint32Array(response.pixels) : null);
+      }
+    },
+  );
   worker.addEventListener('error', (event: ErrorEvent) => {
     // A worker-level failure (e.g. a load error) can't be correlated to one request; fail every
     // request still in flight rather than hanging them forever.
@@ -98,6 +114,16 @@ function createWorkerBackedClient(): PngWorkerClient {
         worker.postMessage({ kind: 'decode', id, bytes: copy.buffer }, [copy.buffer]);
       });
     },
+    convertUnknownIccToDisplayP3(bytes, width, height) {
+      const copy = bytes.slice();
+      const id = nextRequestId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { kind: 'convertUnknownIcc', resolve, reject });
+        worker.postMessage({ kind: 'convertUnknownIcc', id, bytes: copy.buffer, width, height }, [
+          copy.buffer,
+        ]);
+      });
+    },
     terminate() {
       worker.terminate();
     },
@@ -105,14 +131,23 @@ function createWorkerBackedClient(): PngWorkerClient {
 }
 
 /** No `Worker` global (e.g. a non-browser SSR context): fall back to encoding/decoding inline.
- *  Behavior is identical, just without the off-main-thread guarantee. */
+ *  Behavior is identical, just without the off-main-thread guarantee. Every method imports
+ *  `core/png` dynamically: real browsers always have `Worker`, so this path is a rare fallback,
+ *  and a static import here would pull the whole codec (and its color-tag classifier) into the
+ *  main bundle's initial graph for every user, not just the ones who ever hit this branch. */
 function createInlineClient(): PngWorkerClient {
   return {
-    encode(width, height, pixels, scale = 1, colorSpace: DocumentColorSpace = 'srgb') {
+    async encode(width, height, pixels, scale = 1, colorSpace: DocumentColorSpace = 'srgb') {
+      const { encodePng } = await import('../core/png');
       return encodePng(width, height, pixels, scale, colorSpace);
     },
-    decode(bytes) {
+    async decode(bytes) {
+      const { decodePng } = await import('../core/png');
       return decodePng(bytes);
+    },
+    async convertUnknownIccToDisplayP3(bytes, width, height) {
+      const { convertUnknownIccPngToDisplayP3 } = await import('../browser/pngColorManagement');
+      return convertUnknownIccPngToDisplayP3(bytes, width, height);
     },
     terminate() {},
   };
@@ -159,4 +194,20 @@ export function encodePngOffMainThread(
  */
 export function decodePngOffMainThread(bytes: Uint8Array): Promise<DecodedPng> {
   return getClient().decode(bytes);
+}
+
+/**
+ * Converts a PNG with an unrecognized embedded ICC profile to Display P3 pixels, using the
+ * browser's own color management (`createImageBitmap` + an `OffscreenCanvas`). Runs in the PNG
+ * worker, since decoding and re-encoding a full-size bitmap through canvas APIs is real
+ * main-thread work at photo sizes. Resolves `null` only when the host has neither `Worker` nor
+ * `OffscreenCanvas`/`createImageBitmap`, in which case the caller keeps the already-decoded
+ * pixels as plain sRGB rather than failing the import.
+ */
+export function convertUnknownIccPngToDisplayP3OffMainThread(
+  bytes: Uint8Array,
+  width: number,
+  height: number,
+): Promise<Uint32Array | null> {
+  return getClient().convertUnknownIccToDisplayP3(bytes, width, height);
 }

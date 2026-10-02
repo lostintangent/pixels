@@ -3,6 +3,7 @@ import { packRgba } from '../../document';
 import { ImportError } from '../core/contracts';
 import { decodePng, encodePng } from '../core/png';
 import {
+  convertUnknownIccPngToDisplayP3OffMainThread,
   decodePngOffMainThread,
   encodePngOffMainThread,
   terminatePngWorkerClient,
@@ -131,5 +132,40 @@ describe('decodePngOffMainThread', () => {
     expect(offMainThreadError).toBeInstanceOf(ImportError);
     expect((offMainThreadError as ImportError).reason).toBe((directError as ImportError).reason);
     expect((offMainThreadError as ImportError).message).toBe((directError as Error).message);
+  });
+});
+
+describe('convertUnknownIccPngToDisplayP3OffMainThread', () => {
+  test(
+    'resolves null under bun test (no OffscreenCanvas/createImageBitmap), the same as a direct, ' +
+      'main-thread call to the underlying conversion — proving the round trip through the real ' +
+      'worker (request, convertUnknownIcc branch, response) completes rather than hanging or throwing',
+    async () => {
+      const pixels = new Uint32Array([packRgba(1, 2, 3, 255)]);
+      const bytes = await encodePng(1, 1, pixels);
+      const result = await convertUnknownIccPngToDisplayP3OffMainThread(bytes.slice(), 1, 1);
+      expect(result).toBeNull();
+    },
+  );
+
+  test('does not mutate or detach the caller’s bytes', async () => {
+    const pixels = new Uint32Array([packRgba(4, 5, 6, 255)]);
+    const bytes = await encodePng(1, 1, pixels);
+    const before = [...bytes];
+    await convertUnknownIccPngToDisplayP3OffMainThread(bytes, 1, 1);
+    expect([...bytes]).toEqual(before); // still readable: proves it was copied, not transferred
+  });
+
+  test('runs alongside encode/decode requests on the same worker without crossing up responses', async () => {
+    const pixels = new Uint32Array([packRgba(7, 8, 9, 255), packRgba(10, 11, 12, 255)]);
+    const bytes = await encodePng(2, 1, pixels);
+    const [convertResult, decodeResult, encodeResult] = await Promise.all([
+      convertUnknownIccPngToDisplayP3OffMainThread(bytes.slice(), 2, 1),
+      decodePngOffMainThread(bytes.slice()),
+      encodePngOffMainThread(2, 1, pixels.slice()),
+    ]);
+    expect(convertResult).toBeNull();
+    expect([...decodeResult.pixels]).toEqual([...pixels]);
+    expect([...encodeResult]).toEqual([...bytes]);
   });
 });

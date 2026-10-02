@@ -6,6 +6,7 @@ out
 dist
 dist-perf
 dist-perf-export
+dist-perf-import
 *.tgz
 
 # code coverage

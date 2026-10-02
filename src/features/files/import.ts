@@ -4,9 +4,11 @@ import {
   type DocumentColorSpace,
   MAX_DOCUMENT_SIDE,
 } from '../document';
-import { convertUnknownIccPngToDisplayP3 } from './browser/pngColorManagement';
 import { ImportError } from './core/contracts';
-import { decodePngOffMainThread } from './runtime/pngWorkerClient';
+import {
+  convertUnknownIccPngToDisplayP3OffMainThread,
+  decodePngOffMainThread,
+} from './runtime/pngWorkerClient';
 
 /**
  * Decodes a PNG and builds a live document from it. Byte-in only: the file picker, drag and
@@ -31,10 +33,15 @@ export async function importPng(
   let pixels = decoded.pixels;
   if (decoded.colorTag === 'unknown-icc') {
     // A real, embedded profile we can't classify ourselves: hand the original bytes to the
-    // browser's own ICC color management rather than guessing. `converted` is `null` only when
-    // the DOM APIs it needs aren't available, in which case the already-decoded pixels (exact,
-    // just not color-corrected) are kept as plain sRGB.
-    const converted = await convertUnknownIccPngToDisplayP3(bytes, decoded.width, decoded.height);
+    // browser's own ICC color management rather than guessing, off the main thread (a full
+    // canvas round-trip at photo sizes is real work). `converted` is `null` only when the host
+    // has neither a worker nor the canvas APIs the conversion needs, in which case the
+    // already-decoded pixels (exact, just not color-corrected) are kept as plain sRGB.
+    const converted = await convertUnknownIccPngToDisplayP3OffMainThread(
+      bytes,
+      decoded.width,
+      decoded.height,
+    );
     if (converted) {
       colorSpace = 'display-p3';
       pixels = converted;

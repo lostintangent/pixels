@@ -64,11 +64,20 @@ async function classifyIccp(data: Uint8Array): Promise<PngColorTag> {
   }
   const description = readIccDescription(profile);
   if (!description) return 'unknown-icc';
-  const lower = description.toLowerCase();
-  if (lower.includes('p3')) return 'display-p3';
-  if (lower.includes('srgb')) return 'srgb';
+  if (DISPLAY_P3_DESCRIPTIONS.has(description)) return 'display-p3';
+  if (SRGB_DESCRIPTIONS.has(description)) return 'srgb';
   return 'unknown-icc';
 }
+
+/** Exact profile-description allowlists, not substring matches: a substring match on "p3" would
+ *  also catch DCI-P3 and PQ P3 profiles (different white point or transfer curve from Display
+ *  P3), and "srgb" would catch a linear-sRGB profile. "Display P3" is confirmed against macOS's
+ *  own `Display P3.icc`. "sRGB IEC61966-2.1" is the canonical ICC sRGB v2 profile description
+ *  (also macOS's `sRGB Profile.icc`); "sRGB built-in" covers another common real-world sRGB
+ *  description. Anything else goes to `unknown-icc`, so the browser's own color management
+ *  converts it correctly instead of this app guessing. */
+const DISPLAY_P3_DESCRIPTIONS = new Set(['Display P3']);
+const SRGB_DESCRIPTIONS = new Set(['sRGB IEC61966-2.1', 'sRGB built-in']);
 
 /** Decompresses a plain zlib/deflate stream (the format `iCCP` always uses per the spec, and the
  *  same one `IDAT` uses). Kept local to this module, separate from `png.ts`'s own copy, so the
