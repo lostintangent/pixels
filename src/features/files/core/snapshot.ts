@@ -1,3 +1,4 @@
+import { findAnnotationsFor } from '../../annotations/model';
 import type { BitmapDocument } from '../../document';
 import type { DocumentSnapshot, TileCoord } from './contracts';
 import { buildThumbnail, extractTile } from './tiles';
@@ -14,6 +15,10 @@ export function snapshotDocument(
   fullResave: boolean,
 ): DocumentSnapshot {
   const thumbnailPixels = buildThumbnail(document.pixels, document.width, document.height);
+  // A read-only lookup: never creates a set (and never pulls in its mutable implementation) for a
+  // document no gesture has touched this session. `.snapshot()` returns already-detached copies,
+  // so this is just as safe across an `await` as the pixel copies below.
+  const shapes = findAnnotationsFor(document)?.snapshot() ?? [];
   const base = {
     id: document.id,
     name: document.name,
@@ -21,6 +26,7 @@ export function snapshotDocument(
     height: document.height,
     updatedAt: Date.now(),
     fullResave,
+    shapes,
     thumbnailPixels,
     colorSpace: document.colorSpace,
   };

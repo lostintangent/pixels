@@ -1,3 +1,4 @@
+import type { Annotation } from '../../annotations/model';
 import type { DocumentColorSpace } from '../../document';
 
 /** File IO is intentionally outside the pixel hot path. */
@@ -40,6 +41,10 @@ export interface DocumentSnapshot {
   tiles: TileSnapshot[];
   /** True when every tile must be written and any stale tiles from a previous, larger size removed. */
   fullResave: boolean;
+  /** Every committed shape, captured synchronously alongside pixels (not tiled — there's always
+   *  just one current list, regardless of `fullResave`). Empty for a document with no shapes, or
+   *  one no gesture has ever touched this session (see `findAnnotationsFor`). */
+  shapes: Annotation[];
   /** Only set when `fullResave` is true: one synchronous copy of the whole live buffer, captured
    *  before any await so a later stroke or undo swapping the document's buffer can't corrupt it —
    *  the same guarantee eager per-tile extraction gave, but without paying for splitting every
@@ -68,6 +73,9 @@ export interface LoadedDocument {
   /** Raw RGBA bytes, width * height * 4, reassembled from tiles. */
   pixels: Uint8Array;
   colorSpace: DocumentColorSpace;
+  /** Already validated with `isValidAnnotation`; a record with corrupt entries just drops them,
+   *  never fails the whole load. Empty for a document with no shapes. */
+  shapes: Annotation[];
 }
 
 export interface DocumentStore {

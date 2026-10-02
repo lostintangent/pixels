@@ -6,7 +6,7 @@ import { withProductionPreview } from '../../../shared/preview';
  * A stroke must survive whatever destroys the page next, against the real production app and a
  * real IndexedDB: `documentStore.saveNow()` cannot open its transaction until the thumbnail
  * round trip through the PNG Worker resolves, so `pagehide`'s synchronous-looking `flushNow()`
- * still has an await in front of the write that actually persists tiles. Four cases, each five
+ * still has an await in front of the write that actually persists tiles. Five cases, each five
  * times in its own fresh `browser.newContext()` (its own IndexedDB), each proven pixel-exact by
  * composited screenshot bytes rather than `getImageData` — repeated reads of the display canvas
  * can move it off the GPU, the same hazard the app-load perf harness hit:
@@ -16,6 +16,9 @@ import { withProductionPreview } from '../../../shared/preview';
  *    with the browser's own Back — this is the in-app unmount/dispose flush, not a page teardown.
  *  - CPU-throttle the page after a first stroke's debounce fires, paint a second stroke while
  *    the first flush is artificially stretched out, then reload immediately.
+ *  - Draw a shape through the real Shapes popover, then reload inside the debounce window — a
+ *    shape commit dirties no pixel tile, so this is the only case that exercises the
+ *    shapes-dirty half of the autosave/crash-recovery path rather than the pixel-dirty half.
  */
 
 const headed = !process.argv.includes('--headless');
@@ -264,11 +267,75 @@ const reloadDuringInFlightSave: Case = {
   },
 };
 
+/**
+ * Draw a shape through the real Shapes popover, then reload immediately, well inside the
+ * debounce. A committed shape dirties no pixel tile, so this is the one case that only passes if
+ * `attachAutosave` treats a shape commit as its own reason to stash and flush — a plain pixel
+ * stroke case would never exercise that path.
+ */
+const drawShapeThenReload: Case = {
+  name: 'draw a shape, then reload inside the debounce window',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    try {
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/d/${crypto.randomUUID()}`, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+
+      await page.getByRole('radio', { name: 'Shapes' }).click();
+      await page.getByRole('menuitemradio', { name: 'Rectangle' }).click();
+
+      const start = await clipNear(page, -20, -20);
+      const end = await clipNear(page, 20, 20);
+      const before = await page.screenshot({
+        clip: start.clip,
+        animations: 'disabled',
+        scale: 'device',
+      });
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 5 });
+      await page.mouse.up();
+      await page.mouse.move(0, 0);
+      // Deselect before comparing: the selection overlay draws handles at this same corner, and
+      // those handles correctly vanish on reload since only shape geometry persists, not
+      // selection state. Comparing with them still showing would be a false mismatch.
+      await page.keyboard.press('Escape');
+
+      const deadline = Date.now() + 2_000;
+      let painted: Buffer | undefined;
+      for (;;) {
+        const after = await page.screenshot({
+          clip: start.clip,
+          animations: 'disabled',
+          scale: 'device',
+        });
+        if (!after.equals(before)) {
+          painted = after;
+          break;
+        }
+        if (Date.now() >= deadline) throw new Error('Shape did not change displayed pixels');
+        await Bun.sleep(16);
+      }
+
+      await page.reload({ waitUntil: 'load' });
+      await waitForCanvasReady(page);
+      return await samePixels(page, start.clip, painted);
+    } finally {
+      await context.close();
+    }
+  },
+};
+
 const allCases: Case[] = [
   reloadDuringDebounce,
   closeAndReopen,
   switchDocumentsAndReturn,
   reloadDuringInFlightSave,
+  drawShapeThenReload,
 ];
 const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
 const cases = onlyArg ? [allCases[Number(onlyArg.slice('--only='.length))]!] : allCases;

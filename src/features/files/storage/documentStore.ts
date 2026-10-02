@@ -1,3 +1,4 @@
+import { isValidAnnotation, type Annotation } from '../../annotations/model';
 import type { DocumentColorSpace } from '../../document';
 import type {
   DocumentId,
@@ -48,6 +49,8 @@ interface DocumentRecord {
   /** Missing on a record written before color tagging landed; `load()` defaults it to `'srgb'`,
    *  the color space every document was implicitly in before this field existed. */
   colorSpace?: DocumentColorSpace;
+  /** Missing on a record written before shapes landed; `load()` defaults it to `[]`. */
+  shapes?: Annotation[];
 }
 
 interface TileRecord {
@@ -125,6 +128,9 @@ interface CrashRecoveryPayload {
   fullResave: boolean;
   tiles: { tx: number; ty: number; pixels: string }[];
   colorSpace: DocumentColorSpace;
+  /** Plain JSON already, unlike tile pixels — no base64 needed. Always the complete current list,
+   *  not a diff: there's no per-tile partial concept for shapes. */
+  shapes: Annotation[];
 }
 
 // Measured directly, with the journal disabled, against real Chromium: once `saveNow` issues its
@@ -174,6 +180,7 @@ function stashForCrashRecovery(snapshot: DocumentSnapshot): void {
         pixels: bytesToBase64(tile.pixels),
       })),
       colorSpace: snapshot.colorSpace,
+      shapes: snapshot.shapes,
     };
     localStorage.setItem(crashRecoveryKey(snapshot.id), JSON.stringify(payload));
   } catch {
@@ -289,6 +296,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       // document) until the real one resolves below — it's a preview icon, not document data.
       thumbnail: lastKnownThumbnail.get(snapshot.id) ?? new Uint8Array(0),
       colorSpace: snapshot.colorSpace,
+      shapes: snapshot.shapes,
     };
     documents.put(record);
     // Queuing every tile `.put()` in one synchronous loop is exactly what makes a large full
@@ -440,6 +448,11 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
 
         const recoveryColorSpace: DocumentColorSpace =
           recovery.colorSpace ?? record?.colorSpace ?? 'srgb';
+        // The exit stash always captures the whole current shape list, not a diff — unlike
+        // tiles, there's no partial/merge concept for shapes, so this recovery entry's list
+        // (once validated) is simply the authoritative replacement whenever recovery applies at
+        // all. Missing on a journal entry written before shapes landed.
+        const recoveryShapes = (recovery.shapes ?? []).filter(isValidAnnotation);
         const recoverySnapshot: DocumentSnapshot = {
           id,
           name: recovery.name,
@@ -448,6 +461,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
           updatedAt: recovery.updatedAt,
           tiles: recoveredTiles,
           fullResave: !record || recovery.fullResave,
+          shapes: recoveryShapes,
           thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
           colorSpace: recoveryColorSpace,
         };
@@ -459,7 +473,15 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
           (await buildRecoveredThumbnail(pixels, width, height, recoveryColorSpace));
         await writes.run(id, () => saveNow(recoverySnapshot, thumbnail));
         clearCrashRecovery(id);
-        return { id, name: recovery.name, width, height, pixels, colorSpace: recoveryColorSpace };
+        return {
+          id,
+          name: recovery.name,
+          width,
+          height,
+          pixels,
+          colorSpace: recoveryColorSpace,
+          shapes: recoveryShapes,
+        };
       }
       if (recovery) clearCrashRecovery(id);
 
@@ -478,6 +500,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
         height: record.height,
         pixels,
         colorSpace: record.colorSpace ?? 'srgb',
+        shapes: (record.shapes ?? []).filter(isValidAnnotation),
       };
     },
 

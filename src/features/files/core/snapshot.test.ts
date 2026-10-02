@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { annotationsFor } from '../../annotations/model';
 import { createBitmapDocument, packRgba } from '../../document';
 import { snapshotDocument } from './snapshot';
 import { extractAllTiles } from './tiles';
@@ -55,5 +56,30 @@ describe('snapshotDocument', () => {
     const snapshot = snapshotDocument(document, [], true);
     expect(snapshot.thumbnailPixels.width).toBeLessThanOrEqual(64);
     expect(snapshot.thumbnailPixels.height).toBeLessThanOrEqual(64);
+  });
+
+  test('captures the committed shapes alongside pixels, on both the partial and full-resave paths', () => {
+    const document = createBitmapDocument('doc-5', 64, 64);
+    const shape = {
+      id: 'r1',
+      kind: 'rectangle' as const,
+      start: { x: 1, y: 1 },
+      end: { x: 10, y: 10 },
+      width: 1,
+      color: packRgba(255, 0, 0),
+    };
+    annotationsFor(document).commit(shape);
+
+    const partial = snapshotDocument(document, [{ tx: 0, ty: 0 }], false);
+    expect(partial.shapes).toEqual([shape]);
+
+    const full = snapshotDocument(document, [], true);
+    expect(full.shapes).toEqual([shape]);
+  });
+
+  test('a document with no shapes ever drawn captures an empty shapes list, without creating an AnnotationSet', () => {
+    const document = createBitmapDocument('doc-6', 32, 32);
+    const snapshot = snapshotDocument(document, [], true);
+    expect(snapshot.shapes).toEqual([]);
   });
 });

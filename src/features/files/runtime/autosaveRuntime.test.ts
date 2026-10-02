@@ -390,6 +390,103 @@ describe('attachAutosave', () => {
     await store.waitForIdle();
     expect(store.saves).toHaveLength(1);
   });
+
+  test('committing a shape schedules a save, with zero dirty tiles since no pixel changed', async () => {
+    const { annotationsFor } = await import('../../annotations/model');
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock, advance } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+
+    annotationsFor(document).commit({
+      id: 'r1',
+      kind: 'rectangle',
+      start: { x: 0, y: 0 },
+      end: { x: 5, y: 5 },
+      width: 1,
+      color: packRgba(1, 2, 3),
+    });
+    await advance(100, store);
+
+    expect(store.saves).toHaveLength(1);
+    expect(store.saves[0]!.tiles).toHaveLength(0);
+    expect(store.saves[0]!.shapes).toHaveLength(1);
+    autosave.dispose();
+  });
+
+  test('a shape still in preview (mid-drag) never schedules a save on its own', async () => {
+    const { annotationsFor } = await import('../../annotations/model');
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock, advance } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+
+    annotationsFor(document).showPreview({
+      id: 'preview',
+      kind: 'rectangle',
+      start: { x: 0, y: 0 },
+      end: { x: 5, y: 5 },
+      width: 1,
+      color: packRgba(1, 2, 3),
+    });
+    await advance(1000, store);
+
+    expect(store.saves).toHaveLength(0);
+    autosave.dispose();
+  });
+
+  test('a failed shapes-only save keeps the shape list dirty, so a retry saves it', async () => {
+    const { annotationsFor } = await import('../../annotations/model');
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock, advance } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 50, maxWaitMs: 200 });
+
+    store.failNext = true;
+    annotationsFor(document).commit({
+      id: 'r1',
+      kind: 'rectangle',
+      start: { x: 0, y: 0 },
+      end: { x: 5, y: 5 },
+      width: 1,
+      color: packRgba(1, 2, 3),
+    });
+    await advance(50, store);
+    expect(store.saves).toHaveLength(0); // the one attempt failed
+
+    await autosave.flush(); // retry
+    expect(store.saves).toHaveLength(1);
+    expect(store.saves[0]!.shapes).toHaveLength(1);
+    autosave.dispose();
+  });
+
+  test('restoring a prior shape list (as undo/redo does, via replace) schedules a save', async () => {
+    const { annotationsFor } = await import('../../annotations/model');
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock, advance } = createManualClock();
+    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+    const shape = {
+      id: 'r1',
+      kind: 'rectangle' as const,
+      start: { x: 0, y: 0 },
+      end: { x: 5, y: 5 },
+      width: 1,
+      color: packRgba(1, 2, 3),
+    };
+
+    // Undo/redo restores a prior snapshot via `AnnotationSet.replace`, the same call this
+    // simulates directly — see `annotationHistoryState` in `annotations/core/commands.ts`.
+    annotationsFor(document).replace([shape]);
+    await advance(100, store);
+    expect(store.saves).toHaveLength(1);
+
+    annotationsFor(document).replace([]); // an "undo" back to no shapes
+    await advance(100, store);
+    expect(store.saves).toHaveLength(2);
+    expect(store.saves[1]!.shapes).toEqual([]);
+    autosave.dispose();
+  });
 });
 
 /** A minimal `EventTarget`-alike: `attachAutosave` only ever calls `addEventListener`,
@@ -466,6 +563,37 @@ describe('crash-recovery journal: stashed only at page exit', () => {
 
       release();
       await firstFlush;
+      autosave.dispose();
+    });
+  });
+
+  test('a committed shape with no dirty pixel tile is still stashed on pagehide', async () => {
+    await withFakeWindow(async (fakeWindow) => {
+      const { annotationsFor } = await import('../../annotations/model');
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const { clock } = createManualClock();
+      const autosave = attachAutosave(document, store, {
+        clock,
+        debounceMs: 5000,
+        maxWaitMs: 20000,
+      });
+
+      annotationsFor(document).commit({
+        id: 'r1',
+        kind: 'rectangle',
+        start: { x: 0, y: 0 },
+        end: { x: 5, y: 5 },
+        width: 1,
+        color: packRgba(1, 2, 3),
+      });
+
+      fakeWindow.dispatch('pagehide');
+      expect(store.stashes).toHaveLength(1);
+      expect(store.stashes[0]!.tiles).toHaveLength(0);
+      expect(store.stashes[0]!.shapes).toHaveLength(1);
+
+      await store.waitForIdle(); // let the triggered flush settle
       autosave.dispose();
     });
   });

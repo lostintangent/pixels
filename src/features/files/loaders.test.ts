@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, test } from 'bun:test';
+import { annotationsFor, findAnnotationsFor } from '../annotations/model';
 import { createBitmapDocument, packRgba } from '../document';
 import { snapshotDocument } from './core/snapshot';
 import { createDocumentStore } from './storage/documentStore';
@@ -35,6 +36,33 @@ describe('loadDocument', () => {
 
     const loaded = await loadDocument(store, 'doc-p3');
     expect(loaded!.colorSpace).toBe('display-p3');
+  });
+
+  test('hydrates persisted shapes into a live AnnotationSet on load', async () => {
+    const store = freshStore();
+    const original = createBitmapDocument('doc-shapes', 32, 32, 'Shapes');
+    const shape = {
+      id: 'r1',
+      kind: 'rectangle' as const,
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      width: 1,
+      color: packRgba(1, 2, 3),
+    };
+    annotationsFor(original).commit(shape);
+    await store.save(snapshotDocument(original, [], true), new Uint8Array([1]));
+
+    const loaded = await loadDocument(store, 'doc-shapes');
+    expect(findAnnotationsFor(loaded!)?.snapshot()).toEqual([shape]);
+  });
+
+  test('never creates an AnnotationSet for a document with no persisted shapes', async () => {
+    const store = freshStore();
+    const original = createBitmapDocument('doc-plain', 32, 32, 'Plain');
+    await store.save(snapshotDocument(original, [], true), new Uint8Array([1]));
+
+    const loaded = await loadDocument(store, 'doc-plain');
+    expect(findAnnotationsFor(loaded!)).toBeNull();
   });
 });
 

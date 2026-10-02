@@ -1,3 +1,4 @@
+import { watchAnnotationSet } from '../../annotations/model';
 import type { BitmapDocument } from '../../document';
 import { createAutosaveScheduler } from '../core/autosave';
 import type { AutosaveOptions, DocumentStore, TileCoord } from '../core/contracts';
@@ -80,6 +81,27 @@ export function attachAutosave(
   let pendingTiles = new Map<string, TileCoord>();
   let pendingFullResave = options.initialResave ?? false;
   let inFlightFlushes = 0;
+  // Shapes have no per-tile diff: a 'commit' change (add, edit, delete, or an undo/redo that
+  // restores a prior list — all of which route through `AnnotationSet.replace`/`commit`/`remove`,
+  // every one of which emits 'commit') means "the current shape list differs from what's
+  // persisted," independent of whether any pixel tile is also dirty. `'preview'` changes (a
+  // shape still being dragged) are deliberately not included — see `AttachAutosaveOptions`.
+  let shapesDirty = false;
+  let pendingShapesDirty = false;
+  let unsubscribeShapes: (() => void) | null = null;
+  // A document with no shapes ever drawn this session has no `AnnotationSet` yet; `watchAnnotationSet`
+  // fires once a gesture (or a loader hydrating persisted shapes) creates one, however late that is.
+  // Declared after `unsubscribeShapes` itself: `watchAnnotationSet` calls its listener synchronously
+  // when a set already exists, which would otherwise assign into `unsubscribeShapes` before its own
+  // `let` had run.
+  const unwatchShapes = watchAnnotationSet(document, (set) => {
+    unsubscribeShapes = set.subscribe((change) => {
+      if (change.kind !== 'commit') return;
+      shapesDirty = true;
+      pendingShapesDirty = true;
+      scheduler.noteChange();
+    });
+  });
 
   const unsubscribe = document.events.subscribe((rect) => {
     for (const coord of tilesForRect(rect, document.width, document.height)) {
@@ -92,7 +114,7 @@ export function attachAutosave(
   async function flush(): Promise<void> {
     if (disposed) return;
     const fullResave = fullResavePending;
-    if (!fullResave && dirtyTiles.size === 0) return;
+    if (!fullResave && dirtyTiles.size === 0 && !shapesDirty) return;
     // Take ownership of exactly what's dirty right now, then hand the live state a fresh map
     // immediately — before this function's first await — so an edit that lands while this save
     // is in flight accumulates in the new map instead of being wiped out when this save
@@ -101,6 +123,8 @@ export function attachAutosave(
     const coords = [...captured.values()];
     dirtyTiles = new Map();
     fullResavePending = false;
+    const capturedShapesDirty = shapesDirty;
+    shapesDirty = false;
     // This flush now owns every tile that's currently dirty, including any an earlier failure
     // already merged back (if that merge-back landed before this line ran): its own outcome will
     // account for them, so any pending "failed ground" carried by an in-between failure is moot.
@@ -132,6 +156,7 @@ export function attachAutosave(
       if (inFlightFlushes === 0) {
         pendingTiles = new Map(dirtyTiles);
         pendingFullResave = fullResavePending;
+        pendingShapesDirty = shapesDirty;
       }
       // A newer flush may have started (and possibly already finished) while this one was
       // writing. Only the newest started flush's outcome should reach the UI: this write did
@@ -151,6 +176,10 @@ export function attachAutosave(
       if (fullResave) {
         fullResavePending = true;
         pendingFullResave = true;
+      }
+      if (capturedShapesDirty) {
+        shapesDirty = true;
+        pendingShapesDirty = true;
       }
       failedGround = true;
       failedGroundError = error;
@@ -179,7 +208,7 @@ export function attachAutosave(
   // one. `document` here is the local `BitmapDocument` parameter, not the DOM global — the actual
   // `visibilityState` check below goes through `globalThis.document` for that reason.
   function stashForExit(): void {
-    if (pendingTiles.size === 0 && !pendingFullResave) return;
+    if (pendingTiles.size === 0 && !pendingFullResave && !pendingShapesDirty) return;
     const snapshot = snapshotDocument(document, pendingTiles.values(), pendingFullResave);
     store.stashForRecovery(snapshot);
   }
@@ -204,6 +233,8 @@ export function attachAutosave(
     dispose() {
       if (disposed) return;
       unsubscribe();
+      unwatchShapes();
+      unsubscribeShapes?.();
       scheduler.cancel();
       if (hasWindow) {
         window.removeEventListener('pagehide', handlePageHide);

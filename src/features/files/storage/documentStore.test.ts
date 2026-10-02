@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { Annotation } from '../../annotations/model';
 import { createBitmapDocument, packRgba } from '../../document';
 import type { DocumentSnapshot, TileSnapshot } from '../core/contracts';
 import { extractTile } from '../core/tiles';
@@ -195,6 +196,62 @@ describe('createDocumentStore', () => {
       }
     }
   });
+
+  test('saves and loads committed shapes alongside pixels, byte-for-byte', async () => {
+    const { annotationsFor } = await import('../../annotations/model');
+    const store = freshStore();
+    const document = createBitmapDocument('doc-shapes', 64, 64, 'Shapes');
+    const rectangle: Annotation = {
+      id: 'r1',
+      kind: 'rectangle',
+      start: { x: 2, y: 2 },
+      end: { x: 20, y: 20 },
+      width: 1,
+      color: packRgba(255, 0, 0),
+    };
+    const arrow: Annotation = {
+      id: 'a1',
+      kind: 'arrow',
+      start: { x: 0, y: 0 },
+      end: { x: 30, y: 30 },
+      width: 2,
+      color: packRgba(0, 0, 255),
+    };
+    annotationsFor(document).replace([rectangle, arrow]);
+
+    await saveFull(document, store);
+    const loaded = await store.load('doc-shapes');
+
+    expect(loaded!.shapes).toEqual([rectangle, arrow]);
+  });
+
+  test('a document with no shapes ever drawn loads an empty shapes list', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-no-shapes', 32, 32, 'Plain');
+    await saveFull(document, store);
+
+    const loaded = await store.load('doc-no-shapes');
+    expect(loaded!.shapes).toEqual([]);
+  });
+
+  test('drops an invalid shape on load rather than surfacing corrupt data, e.g. from a future format', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-bad-shape', 32, 32, 'BadShape');
+    const valid: Annotation = {
+      id: 'ok',
+      kind: 'rectangle',
+      start: { x: 0, y: 0 },
+      end: { x: 5, y: 5 },
+      width: 1,
+      color: packRgba(1, 2, 3),
+    };
+    const invalid = { id: 'bad', kind: 'rectangle' } as unknown as Annotation; // missing start/end/width/color
+    const snapshot = { ...snapshotDocument(document, [], true), shapes: [valid, invalid] };
+    await store.save(snapshot, new Uint8Array());
+
+    const loaded = await store.load('doc-bad-shape');
+    expect(loaded!.shapes).toEqual([valid]);
+  });
 });
 
 describe('per-id write chain', () => {
@@ -354,6 +411,7 @@ function recoveryStash(options: {
   updatedAt: number;
   fullResave: boolean;
   tiles: TileSnapshot[];
+  shapes?: Annotation[];
 }): DocumentSnapshot {
   return {
     id: options.id,
@@ -363,6 +421,7 @@ function recoveryStash(options: {
     updatedAt: options.updatedAt,
     tiles: options.tiles,
     fullResave: options.fullResave,
+    shapes: options.shapes ?? [],
     thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
     colorSpace: 'srgb',
   };
@@ -423,6 +482,36 @@ describe('crash-recovery journal', () => {
     const farCorner = (127 * 128 + 127) * 4;
     expect([...loaded!.pixels.subarray(0, 4)]).toEqual([9, 9, 9, 9]);
     expect([...loaded!.pixels.subarray(farCorner, farCorner + 4)]).toEqual([0, 0, 0, 0]);
+  });
+
+  test('a journal entry carries shapes too, replacing whatever shape list is already stored', async () => {
+    const store = freshStore();
+    const document = createBitmapDocument('doc-shape-recover', 64, 64, 'ShapeRecover');
+    document.pixels.fill(packRgba(1, 1, 1, 255));
+    await saveFull(document, store); // stored with no shapes
+
+    const recoveredShape: Annotation = {
+      id: 'r1',
+      kind: 'rectangle',
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      width: 1,
+      color: packRgba(9, 9, 9),
+    };
+    store.stashForRecovery(
+      recoveryStash({
+        id: 'doc-shape-recover',
+        width: 64,
+        height: 64,
+        updatedAt: Date.now() + 1000,
+        fullResave: false,
+        tiles: [],
+        shapes: [recoveredShape],
+      }),
+    );
+
+    const loaded = await store.load('doc-shape-recover');
+    expect(loaded!.shapes).toEqual([recoveredShape]);
   });
 
   test('a journal entry no newer than the stored record is ignored, and cleared rather than left behind', async () => {

@@ -22,6 +22,13 @@ export async function loadDocument(
     loaded.colorSpace,
   );
   document.rgbaBytes.set(loaded.pixels);
+  // Dynamic: a document with no persisted shapes never pulls in the mutable `AnnotationSet`
+  // implementation. `../annotations`, not `../../annotations/model` — hydration needs the live,
+  // replaceable set (`annotationsFor`), not just the read-only lookup `core/` code uses.
+  if (loaded.shapes.length > 0) {
+    const { annotationsFor } = await import('../annotations');
+    annotationsFor(document).replace(loaded.shapes);
+  }
   return document;
 }
 
