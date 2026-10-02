@@ -14,14 +14,17 @@ export async function loadDocument(
 ): Promise<BitmapDocument | null> {
   const loaded = await store.load(id);
   if (!loaded) return null;
+  // `store.load` always allocates `loaded.pixels` fresh, at byte offset 0, exactly
+  // `width * height * 4` bytes — safe to adopt as the document's own buffer instead of
+  // allocating and copying a second full-size buffer on the main thread.
   const document = createBitmapDocument(
     loaded.id,
     loaded.width,
     loaded.height,
     loaded.name,
     loaded.colorSpace,
+    new Uint32Array(loaded.pixels.buffer),
   );
-  document.rgbaBytes.set(loaded.pixels);
   // Dynamic: a document with no persisted shapes never pulls in the mutable `AnnotationSet`
   // implementation. `../annotations`, not `../../annotations/model` — hydration needs the live,
   // replaceable set (`annotationsFor`), not just the read-only lookup `core/` code uses.
