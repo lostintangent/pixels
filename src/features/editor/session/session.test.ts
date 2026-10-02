@@ -80,6 +80,55 @@ test('resize shifts shapes with pixels and undoes as one document change', async
   expect(annotationsFor(expanded).shapes[0]?.start).toEqual({ x: 1, y: 1 });
 });
 
+test('a Fill tap survives a cold tool import and remains one undo step', async () => {
+  const document = createBitmapDocument('queued-fill', 3, 1);
+  const session = createEditorSession({
+    document,
+    save: null,
+    preferences: { ...DEFAULT_TOOL_PREFERENCES, primary: A },
+  });
+  session.run({ type: 'tool', tool: 'fill' });
+  session.beginGesture(input(0, 0));
+  session.endGesture();
+  for (let attempt = 0; !session.state.state.canUndo && attempt < 100; attempt++)
+    await Bun.sleep(1);
+  expect(Array.from(document.pixels)).toEqual([A, A, A]);
+  session.run({ type: 'undo' });
+  expect(Array.from(document.pixels)).toEqual([0, 0, 0]);
+});
+
+test('a queued Line drag commits its final point, while cancel discards it', async () => {
+  const document = createBitmapDocument('queued-line', 4, 2);
+  const session = createEditorSession({
+    document,
+    save: null,
+    preferences: { ...DEFAULT_TOOL_PREFERENCES, primary: A },
+  });
+  session.run({ type: 'tool', tool: 'line' });
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(3, 0)]);
+  session.endGesture();
+  for (let attempt = 0; !session.state.state.canUndo && attempt < 100; attempt++)
+    await Bun.sleep(1);
+  expect(Array.from(document.pixels.subarray(0, 4))).toEqual([A, A, A, A]);
+  session.run({ type: 'undo' });
+  expect(document.pixels.every((pixel) => pixel === 0)).toBe(true);
+
+  const canceled = createBitmapDocument('canceled-line', 4, 2);
+  const other = createEditorSession({
+    document: canceled,
+    save: null,
+    preferences: { ...DEFAULT_TOOL_PREFERENCES, primary: A },
+  });
+  other.run({ type: 'tool', tool: 'line' });
+  other.beginGesture(input(0, 1));
+  other.extendGesture([input(3, 1)]);
+  other.cancelGesture();
+  await Bun.sleep(1);
+  expect(canceled.pixels.every((pixel) => pixel === 0)).toBe(true);
+  expect(other.state.state.canUndo).toBe(false);
+});
+
 test('duplicate floats in place without replacing the clipboard', () => {
   const document = createBitmapDocument('duplicate', 3, 1);
   document.pixels[0] = A;

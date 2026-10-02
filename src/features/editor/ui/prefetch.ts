@@ -1,4 +1,5 @@
 import { preloadColorPicker } from '../../palette';
+import { preloadPaintExtras } from '../session/session';
 import { preloadDialogs } from './dialogs';
 import { preloadMenus } from './menus';
 import { preloadToasts } from './toasts';
@@ -26,6 +27,7 @@ export function prefetchWhenIdle(): void {
     preloadToasts();
     preloadDialogs();
     preloadColorPicker();
+    preloadPaintExtras();
   };
   const idle = () =>
     typeof requestIdleCallback === 'function'

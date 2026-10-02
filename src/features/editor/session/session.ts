@@ -20,16 +20,14 @@ import type {
 } from '../../document';
 import { createDocumentHistory } from '../../history';
 import { alpha, TRANSPARENT } from '../../palette/model';
-import {
-  beginLinePreview,
-  LinePreviewWorkspace,
-  beginSelection,
-  beginStroke,
-  copySelection,
-  FillWorkspace,
-  floodFill,
-} from '../../tools';
-import type { FloatingSelection, LinePreview, SelectionSession, StrokeSession } from '../../tools';
+import { beginSelection, beginStroke, copySelection } from '../../tools/model';
+import type {
+  Brush,
+  FloatingSelection,
+  LinePreview,
+  SelectionSession,
+  StrokeSession,
+} from '../../tools/model';
 import { fitAroundIslands, frameCenter } from '../core/fit';
 import type { IslandRect } from '../core/fit';
 import { usesBrush } from '../core/tools';
@@ -55,6 +53,19 @@ import type {
 import { appClipboard } from './clipboard';
 import type { PixelClipboard } from './clipboard';
 import type { ShapeController } from './shapes';
+import type { PaintExtras } from './paintExtras';
+
+let paintModule: Promise<typeof import('./paintExtras')> | null = null;
+
+function importPaintExtras(): Promise<typeof import('./paintExtras')> {
+  paintModule ??= import('./paintExtras');
+  return paintModule;
+}
+
+/** Idle prefetch keeps the first Fill or Line gesture instant without adding to initial JS. */
+export function preloadPaintExtras(): void {
+  void importPaintExtras();
+}
 
 /** Modifier state for one canvas gesture sample. */
 export interface GestureInput {
@@ -87,12 +98,24 @@ type Gesture =
   | { kind: 'fill' }
   | { kind: 'shape'; shapes: ShapeController }
   /** A Shapes press that landed before the controller loaded. It replays once the module arrives. */
-  | { kind: 'shape-queued'; press: QueuedPress };
+  | { kind: 'shape-queued'; press: QueuedPress }
+  | { kind: 'paint-queued'; press: QueuedPaint };
 
 interface QueuedPress {
   input: GestureInput;
   touch: boolean;
   latest: GestureInput | null;
+  ended: boolean;
+}
+
+interface QueuedPaint {
+  tool: 'fill' | 'line';
+  document: BitmapDocument;
+  at: PixelPoint;
+  latest: PixelPoint;
+  shift: boolean;
+  color: PackedColor;
+  brush: Brush;
   ended: boolean;
 }
 
@@ -154,8 +177,6 @@ export function createEditorSession({
   preferences,
 }: EditorSessionOptions): EditorSession {
   const history = createDocumentHistory();
-  const fillWorkspace = new FillWorkspace();
-  const lineWorkspace = new LinePreviewWorkspace();
   const scratchRect: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
   const state = createStore({
     ...initialEditorState(
@@ -194,6 +215,9 @@ export function createEditorSession({
   let shapes: ShapeController | null = null;
   let shapesLoading: Promise<void> | null = null;
   let queuedPress: QueuedPress | null = null;
+  let paintExtras: PaintExtras | null = null;
+  let paintLoading: Promise<void> | null = null;
+  let queuedPaint: QueuedPaint | null = null;
 
   const update = (transition: (current: EditorState) => EditorState) => state.setState(transition);
   const setOverlay = (patch: Partial<OverlayState>) =>
@@ -268,6 +292,37 @@ export function createEditorSession({
     } else if (gesture?.kind === 'shape-queued' && gesture.press === press) {
       gesture = { kind: 'shape', shapes };
     }
+  }
+
+  function loadPaintExtras(): Promise<void> {
+    paintLoading ??= importPaintExtras().then(({ createPaintExtras }) => {
+      paintExtras = createPaintExtras();
+      replayQueuedPaint();
+    });
+    return paintLoading;
+  }
+
+  function replayQueuedPaint(): void {
+    const press = queuedPaint;
+    queuedPaint = null;
+    if (!press || !paintExtras || press.document !== document()) return;
+    if (press.tool === 'fill') {
+      if (paintExtras.fill(press.document, press.at, press.color, history).dirty) {
+        update((current) => recordPaintedColor(current, press.color));
+        syncHistory();
+      }
+      if (gesture?.kind === 'paint-queued' && gesture.press === press) gesture = { kind: 'fill' };
+      return;
+    }
+    const preview = paintExtras.line(press.document, press.at, press.brush, history);
+    const dirty = preview.update(press.latest, press.shift);
+    if (press.ended) {
+      if (preview.commit()) update((current) => recordPaintedColor(current, press.color));
+      syncHistory();
+    } else if (gesture?.kind === 'paint-queued' && gesture.press === press) {
+      gesture = { kind: 'line', preview, color: press.color };
+      setOverlay({ preview: linePreview(preview, dirty) });
+    } else preview.cancel();
   }
 
   function hasShapes(bitmap: BitmapDocument = document()): boolean {
@@ -511,6 +566,7 @@ export function createEditorSession({
       if (command.type !== 'nudge' && command.type !== 'brush-size') shapes?.flush();
       switch (command.type) {
         case 'tool':
+          if (command.tool === 'fill' || command.tool === 'line') void loadPaintExtras();
           if (command.tool !== 'select') commitFloating();
           // Pixel tools paint beneath shapes, so only Select keeps a shape selected.
           if (command.tool !== 'select') shapes?.deselect();
@@ -765,19 +821,49 @@ export function createEditorSession({
       const color = tool === 'eraser' ? TRANSPARENT : primary;
       if (tool === 'fill') {
         if (!contains(documentRect(), cell)) return;
-        if (floodFill(document(), { at: cell, color }, history, fillWorkspace).dirty) {
-          update((current) => recordPaintedColor(current, color));
-          syncHistory();
+        if (paintExtras) {
+          if (paintExtras.fill(document(), cell, color, history).dirty) {
+            update((current) => recordPaintedColor(current, color));
+            syncHistory();
+          }
+          gesture = { kind: 'fill' };
+        } else {
+          queuedPaint = {
+            tool: 'fill',
+            document: document(),
+            at: cell,
+            latest: cell,
+            shift: false,
+            color,
+            brush: { color, size: brushSize, pixelPerfect: brushSize === 1 },
+            ended: false,
+          };
+          gesture = { kind: 'paint-queued', press: queuedPaint };
+          void loadPaintExtras();
         }
-        gesture = { kind: 'fill' };
         return;
       }
       const brush = { color, size: brushSize, pixelPerfect: brushSize === 1 };
       if (tool === 'line') {
-        const preview = beginLinePreview(document(), cell, brush, history, lineWorkspace);
-        const dirty = preview.update(cell);
-        gesture = { kind: 'line', preview, color };
-        setOverlay({ preview: linePreview(preview, dirty) });
+        if (paintExtras) {
+          const preview = paintExtras.line(document(), cell, brush, history);
+          const dirty = preview.update(cell);
+          gesture = { kind: 'line', preview, color };
+          setOverlay({ preview: linePreview(preview, dirty) });
+        } else {
+          queuedPaint = {
+            tool: 'line',
+            document: document(),
+            at: cell,
+            latest: cell,
+            shift: false,
+            color,
+            brush,
+            ended: false,
+          };
+          gesture = { kind: 'paint-queued', press: queuedPaint };
+          void loadPaintExtras();
+        }
         return;
       }
       const stroke = beginStroke(document(), brush, history);
@@ -830,6 +916,10 @@ export function createEditorSession({
         case 'shape-queued':
           current.press.latest = latest;
           return;
+        case 'paint-queued':
+          current.press.latest = cell;
+          current.press.shift = latest.shift;
+          return;
       }
     },
 
@@ -861,6 +951,9 @@ export function createEditorSession({
           current.shapes.lift();
           break;
         case 'shape-queued':
+          current.press.ended = true;
+          break;
+        case 'paint-queued':
           current.press.ended = true;
           break;
         case 'move':
@@ -897,6 +990,9 @@ export function createEditorSession({
         case 'shape-queued':
           queuedPress = null;
           break;
+        case 'paint-queued':
+          queuedPaint = null;
+          break;
         case 'move':
         case 'fill':
           break;
@@ -906,6 +1002,7 @@ export function createEditorSession({
   };
 
   if (state.state.tool === 'shapes' || hasShapes(initial)) void loadShapes();
+  if (state.state.tool === 'fill' || state.state.tool === 'line') void loadPaintExtras();
   return session;
 }
 
