@@ -219,7 +219,17 @@ export function createEditorSession({
   let paintLoading: Promise<void> | null = null;
   let queuedPaint: QueuedPaint | null = null;
 
-  const update = (transition: (current: EditorState) => EditorState) => state.setState(transition);
+  // The last hover sample, so a tool or size change from the keyboard redraws the brush in place.
+  let hovering = false;
+  const hoverCell = { x: 0, y: 0 };
+  let hoverAlt = false;
+  const update = (transition: (current: EditorState) => EditorState) => {
+    const before = state.state;
+    state.setState(transition);
+    const after = state.state;
+    if (hovering && (after.tool !== before.tool || after.brushSize !== before.brushSize))
+      showCursor();
+  };
   const setOverlay = (patch: Partial<OverlayState>) =>
     overlay.setState((current) => ({ ...current, ...patch }));
   const document = () => bitmap.state;
@@ -364,6 +374,15 @@ export function createEditorSession({
     }));
     syncHistory();
     fit();
+  }
+
+  function showCursor(): void {
+    const { tool } = state.state;
+    // A brush previews its full footprint while any part of it can still paint.
+    const cursor =
+      hovering && tool !== 'select' && tool !== 'shapes' ? footprint(hoverCell, hoverAlt) : null;
+    const paints = cursor && intersectRect(cursor, documentRect(), scratchRect);
+    setOverlay({ cursor: paints ? cursor : null });
   }
 
   function footprint(point: PixelPoint, picking = false): PixelRect {
@@ -747,11 +766,13 @@ export function createEditorSession({
       const inside = cell && contains(documentRect(), cell) ? cell : null;
       const previous = pointer.state;
       if (previous?.x !== inside?.x || previous?.y !== inside?.y) pointer.setState(() => inside);
-      const { tool } = state.state;
-      // A brush previews its full footprint while any part of it can still paint.
-      const cursor = cell && tool !== 'select' && tool !== 'shapes' ? footprint(cell, alt) : null;
-      const paints = cursor && intersectRect(cursor, documentRect(), scratchRect);
-      setOverlay({ cursor: paints ? cursor : null });
+      hovering = cell !== null;
+      if (cell) {
+        hoverCell.x = cell.x;
+        hoverCell.y = cell.y;
+      }
+      hoverAlt = alt;
+      showCursor();
     },
 
     beginGesture({ point, alt }, pointer = 'mouse') {

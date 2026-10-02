@@ -441,3 +441,36 @@ test('a touch pick that turns into a pinch keeps the tool and the earlier color'
   session.cancelGesture();
   expect(session.state.state).toMatchObject({ primary: before, tool: 'eyedropper' });
 });
+
+test('the brush cursor follows keyboard size and tool changes without a pointer move', () => {
+  const document = createBitmapDocument('cursor', 16, 16);
+  const preferences = { ...DEFAULT_TOOL_PREFERENCES, tool: 'pencil' as const, brushSize: 1 };
+  const session = createEditorSession({ document, save: null, preferences });
+  const cursor = () => session.overlay.state.cursor;
+  session.hover({ x: 8.5, y: 8.5 });
+  expect(cursor()).toEqual({ x: 8, y: 8, width: 1, height: 1 });
+
+  session.setBrushSize(5);
+  expect(cursor()).toEqual({ x: 6, y: 6, width: 5, height: 5 });
+  session.run({ type: 'brush-size', direction: 1 });
+  const stepped = session.state.state.brushSize;
+  expect(stepped).toBeGreaterThan(5);
+  expect(cursor()).toMatchObject({ width: stepped, height: stepped });
+
+  session.run({ type: 'tool', tool: 'eyedropper' });
+  expect(cursor()).toEqual({ x: 8, y: 8, width: 1, height: 1 });
+  session.run({ type: 'tool', tool: 'eraser' });
+  expect(cursor()).toMatchObject({ width: stepped, height: stepped });
+  session.run({ type: 'tool', tool: 'select' });
+  expect(cursor()).toBeNull();
+  session.run({ type: 'tool', tool: 'pencil' });
+  expect(cursor()).toMatchObject({ width: stepped });
+  session.run({ type: 'shape-tool', kind: 'arrow' });
+  expect(cursor()).toBeNull();
+
+  session.run({ type: 'tool', tool: 'pencil' });
+  session.hover(null);
+  expect(cursor()).toBeNull();
+  session.setBrushSize(3);
+  expect(cursor()).toBeNull();
+});

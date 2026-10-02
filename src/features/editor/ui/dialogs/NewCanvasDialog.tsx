@@ -25,6 +25,8 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
   const files = useFileActions();
   const isOpen = useEditorState((state) => state.panel === 'new');
   const primary = useEditorState((state) => state.primary);
+  // A blank canvas that was never edited isn't stored, so only a kept one can promise Recent.
+  const isKept = useEditorState((state) => state.save === 'saved' || state.save === 'saving');
   const [width, setWidth] = useState(64);
   const [height, setHeight] = useState(64);
   const [isLinked, setLinked] = useState(true);
@@ -48,7 +50,7 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
       isOpen={isOpen}
       onOpenChange={(open) => !open && close()}
       title="New canvas"
-      subtitle="Your current canvas stays in Recent."
+      subtitle={isKept ? 'Your current canvas stays in Recent.' : undefined}
     >
       <Form>
         <div role="radiogroup" aria-label="Preset sizes" {...stylex.props(styles.presets)}>
