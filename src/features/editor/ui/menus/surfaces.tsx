@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
+import { colorVars, sizeVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { DropdownMenuItemData, DropdownMenuOption } from '@astryxdesign/core/DropdownMenu';
 import { Kbd } from '@astryxdesign/core/Kbd';
@@ -278,7 +278,7 @@ const styles = stylex.create({
     alignItems: 'center',
     gap: spacingVars['--spacing-2'],
     boxSizing: 'border-box',
-    height: { default: 32, '@media (pointer: coarse)': 44 },
+    height: sizeVars['--size-element-md'],
     paddingInline: spacingVars['--spacing-3'],
     borderRadius: 10,
     backgroundColor: colorVars['--color-background-surface'],

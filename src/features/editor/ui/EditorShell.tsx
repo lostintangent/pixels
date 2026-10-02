@@ -272,7 +272,7 @@ function DesktopChrome() {
 
   return (
     <>
-      <Island as="header" ref={doc} xstyle={[styles.doc, fade]}>
+      <Island as="header" ref={doc} xstyle={[styles.doc, styles.topRow, fade]}>
         <DocMenu layout="desktop" />
         <DocumentMeta />
       </Island>
@@ -280,7 +280,7 @@ function DesktopChrome() {
         role="toolbar"
         aria-label="Tool options"
         ref={options}
-        xstyle={[styles.options, fade]}
+        xstyle={[styles.options, styles.topRow, fade]}
       >
         <ToolOptions layout="desktop" />
       </Island>
@@ -288,7 +288,7 @@ function DesktopChrome() {
         role="toolbar"
         aria-label="History and view"
         ref={actions}
-        xstyle={[styles.actions, fade]}
+        xstyle={[styles.actions, styles.topRow, fade]}
       >
         <HistoryButtons hasTooltips />
         <IslandDivider />
@@ -703,6 +703,8 @@ const styles = stylex.create({
     transitionTimingFunction: pixelVars.ease,
   },
   hidden: { opacity: 0, pointerEvents: 'none' },
+  // Top-row controls are tool-sized like the rail's, so every island is one thickness.
+  topRow: { [sizeVars['--size-element-md']]: pixelVars.tool },
   doc: {
     top: pixelVars.safeTop,
     left: pixelVars.edge,
