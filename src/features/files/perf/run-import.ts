@@ -21,6 +21,10 @@ interface Metrics {
   tasks: Task[];
   loafs: Loaf[];
 }
+interface ImportResult {
+  passed: boolean;
+  renderMs: number;
+}
 declare global {
   interface Window {
     __pixelsImportGate?: {
@@ -49,6 +53,16 @@ const injectOpenMs = Number(option('--inject-open-ms') ?? 0);
 if (!Number.isFinite(injectOpenMs) || injectOpenMs < 0 || injectOpenMs > 100)
   throw new RangeError('--inject-open-ms must be between 0 and 100');
 const headed = !args.includes('--headless');
+const firstRenderLimits: Partial<Record<CaseName, number>> = {
+  'photo-3456': 500,
+  'photo-4096': 1000,
+  p3: 250,
+};
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)]!;
+}
 
 /** Run on every document, before startup scripts, so reload includes its first browser tasks. */
 function observe(): void {
@@ -247,7 +261,7 @@ async function runOne(
   profile: Profile,
   run: number,
   inject: boolean,
-): Promise<boolean> {
+): Promise<ImportResult> {
   const context: BrowserContext = await browser.newContext(
     profile === 'phone'
       ? {
@@ -293,6 +307,7 @@ async function runOne(
     await page.waitForURL((url) => url.href !== previousUrl, { timeout: 30_000 });
     await page.getByRole('button', { name: /^\d+%$/ }).waitFor({ timeout: 30_000 });
     const shown = await afterPaint(page);
+    const renderMs = shown - start;
     const docId = new URL(page.url()).pathname.split('/').at(-1)!;
     const beforeSave = await page.evaluate((id) => window.__pixelsImportGate!.stored(id), docId);
     const host = page.getByRole('application', { name: 'Canvas' });
@@ -347,7 +362,7 @@ async function runOne(
       ? `open ${worst(opened)?.duration.toFixed(1) ?? 'none'} ms, reload ${worst(reload)?.duration.toFixed(1) ?? 'none'} ms`
       : 'no task > 50 ms';
     console.log(
-      `${passed ? 'PASS' : 'FAIL'} import ${caseName} ${profile} ${loadText(profile)} run ${run}: render ${(shown - start).toFixed(0)} ms, first autosave ${(saved - strokeAt).toFixed(0)} ms, reload ${reloaded.toFixed(0)} ms, ${taskText}, ${shapes ? `visible shapes ${shapes.join('/')}, ` : ''}${colorspace ? `color ${colorspace}, ` : ''}loadavg ${loadavg()
+      `${passed ? 'PASS' : 'FAIL'} import ${caseName} ${profile} ${loadText(profile)} run ${run}: render ${renderMs.toFixed(0)} ms, first autosave ${(saved - strokeAt).toFixed(0)} ms, reload ${reloaded.toFixed(0)} ms, ${taskText}, ${shapes ? `visible shapes ${shapes.join('/')}, ` : ''}${colorspace ? `color ${colorspace}, ` : ''}loadavg ${loadavg()
         .map((n) => n.toFixed(2))
         .join('/')}`,
     );
@@ -357,7 +372,7 @@ async function runOne(
       if (errors.length) console.log(`  page errors: ${errors.join(' | ')}`);
       if (!sameDocument) console.log(`  reloaded URL changed from ${docUrl} to ${page.url()}`);
     }
-    return passed;
+    return { passed, renderMs };
   } finally {
     await context.close();
   }
@@ -379,25 +394,40 @@ try {
           ? [onlyCase]
           : ['photo-2400', 'photo-3456', 'photo-4096', 'p3', 'shapes']) as CaseName[]) {
           const runs = caseName === 'shapes' ? 1 : repeat;
+          const renderSamples: number[] = [];
           for (let run = 1; run <= runs; run++) {
             try {
               const inject: boolean = injectOpenMs > 0 && !injected;
               if (inject) injected = true;
-              if (
-                !(await runOne(
-                  browser,
-                  baseUrl,
-                  fixtures[caseName],
-                  caseName,
-                  profile,
-                  run,
-                  inject,
-                ))
-              )
-                failed = true;
+              const result = await runOne(
+                browser,
+                baseUrl,
+                fixtures[caseName],
+                caseName,
+                profile,
+                run,
+                inject,
+              );
+              renderSamples.push(result.renderMs);
+              if (!result.passed) failed = true;
             } catch (error) {
               failed = true;
               console.log(`FAIL import ${caseName} ${profile} run ${run}: ${String(error)}`);
+            }
+          }
+          const limit = firstRenderLimits[caseName];
+          if (limit !== undefined) {
+            if (renderSamples.length >= 3) {
+              const observed = median(renderSamples);
+              const passed = observed < limit;
+              if (!passed) failed = true;
+              console.log(
+                `${passed ? 'PASS' : 'FAIL'} import first render ${caseName} ${profile}: median ${observed.toFixed(0)} ms [${renderSamples.map((value) => value.toFixed(0)).join(', ')}], target < ${limit} ms`,
+              );
+            } else {
+              console.log(
+                `DIAGNOSTIC import first render ${caseName} ${profile}: ${renderSamples.length} completed run(s), need at least 3 for the median gate`,
+              );
             }
           }
         }
