@@ -1,3 +1,4 @@
+import type { Annotation } from '../../annotations';
 import type { DocumentColorSpace } from '../../document';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
 import type { DecodedPng } from '../core/png';
@@ -10,6 +11,7 @@ export interface PngWorkerClient {
     pixels: Uint32Array,
     scale?: number,
     colorSpace?: DocumentColorSpace,
+    shapes?: readonly Annotation[],
   ): Promise<Uint8Array>;
   decode(bytes: Uint8Array): Promise<DecodedPng>;
   convertUnknownIccToDisplayP3(
@@ -94,13 +96,29 @@ function createWorkerBackedClient(): PngWorkerClient {
   });
 
   return {
-    encode(width, height, pixels, scale = 1, colorSpace: DocumentColorSpace = 'srgb') {
+    encode(
+      width,
+      height,
+      pixels,
+      scale = 1,
+      colorSpace: DocumentColorSpace = 'srgb',
+      shapes: readonly Annotation[],
+    ) {
       const copy = pixels.slice(); // owns its buffer; safe to transfer
       const id = nextRequestId++;
       return new Promise((resolve, reject) => {
         pending.set(id, { kind: 'encode', resolve, reject });
         worker.postMessage(
-          { kind: 'encode', id, width, height, scale, colorSpace, pixels: copy.buffer },
+          {
+            kind: 'encode',
+            id,
+            width,
+            height,
+            scale,
+            colorSpace,
+            pixels: copy.buffer,
+            shapes,
+          },
           [copy.buffer],
         );
       });
@@ -137,7 +155,17 @@ function createWorkerBackedClient(): PngWorkerClient {
  *  main bundle's initial graph for every user, not just the ones who ever hit this branch. */
 function createInlineClient(): PngWorkerClient {
   return {
-    async encode(width, height, pixels, scale = 1, colorSpace: DocumentColorSpace = 'srgb') {
+    async encode(
+      width,
+      height,
+      pixels,
+      scale = 1,
+      colorSpace: DocumentColorSpace = 'srgb',
+      shapes: readonly Annotation[],
+    ) {
+      // A Worker-less host can't flatten shapes (no OffscreenCanvas-in-worker guarantee); this
+      // branch is otherwise never reached, since every real browser has `Worker`.
+      if (shapes.length) throw new Error('Shape flattening requires a Worker-backed client');
       const { encodePng } = await import('../core/png');
       return encodePng(width, height, pixels, scale, colorSpace);
     },
@@ -173,7 +201,9 @@ export function terminatePngWorkerClient(): void {
 /**
  * Encodes a PNG off the main thread. Behaves exactly like `core/png`'s `encodePng`, but the
  * actual deflate work happens in a worker, so a worst-case (near-random) encode can never become
- * a long task on the thread the user is interacting with.
+ * a long task on the thread the user is interacting with. When `shapes` is non-empty, they're
+ * rasterized and composited onto the pixels in the worker before encoding, so the exported file
+ * always matches exactly what the canvas shows.
  */
 export function encodePngOffMainThread(
   width: number,
@@ -181,8 +211,9 @@ export function encodePngOffMainThread(
   pixels: Uint32Array,
   scale = 1,
   colorSpace: DocumentColorSpace = 'srgb',
+  shapes: readonly Annotation[] = [],
 ): Promise<Uint8Array> {
-  return getClient().encode(width, height, pixels, scale, colorSpace);
+  return getClient().encode(width, height, pixels, scale, colorSpace, shapes);
 }
 
 /**

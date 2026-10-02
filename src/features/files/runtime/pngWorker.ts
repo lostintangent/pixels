@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
+import type { Annotation } from '../../annotations';
 import type { DocumentColorSpace } from '../../document';
+import { flattenShapesForExport } from '../browser/flattenForExport';
 import { convertUnknownIccPngToDisplayP3 } from '../browser/pngColorManagement';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
 import { decodePng, encodePng } from '../core/png';
@@ -12,6 +14,9 @@ interface EncodeRequest {
   scale: number;
   colorSpace: DocumentColorSpace;
   pixels: ArrayBuffer;
+  /** Committed shapes to bake into the exported bytes; omitted (or empty) for a document with
+   *  none, which is the common case. */
+  shapes?: readonly Annotation[];
 }
 
 interface DecodeRequest {
@@ -87,8 +92,23 @@ self.addEventListener(
   (event: MessageEvent<EncodeRequest | DecodeRequest | ConvertUnknownIccRequest>) => {
     const request = event.data;
     if (request.kind === 'encode') {
-      const { id, width, height, scale, colorSpace, pixels } = request;
-      void encodePng(width, height, new Uint32Array(pixels), scale, colorSpace).then(
+      const { id, width, height, scale, colorSpace, pixels, shapes = [] } = request;
+      let flattened: Uint32Array;
+      try {
+        // Synchronous: a missing canvas API (only possible under `bun test`, never in a real
+        // browser worker) throws here, before any promise chain exists to catch it.
+        flattened = flattenShapesForExport(
+          new Uint32Array(pixels),
+          width,
+          height,
+          colorSpace,
+          shapes,
+        );
+      } catch (error) {
+        (self as unknown as Worker).postMessage(failureOf('encode', id, error));
+        return;
+      }
+      void encodePng(width, height, flattened, scale, colorSpace).then(
         (bytes) => {
           // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
           // of whether `bytes` happens to be a view over a larger backing buffer.

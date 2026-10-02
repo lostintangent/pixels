@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import type { Annotation } from '../../annotations';
 import { packRgba } from '../../document';
 import { ImportError } from '../core/contracts';
 import { decodePng, encodePng } from '../core/png';
@@ -12,6 +13,15 @@ import {
 afterAll(() => {
   terminatePngWorkerClient();
 });
+
+const rectangle: Annotation = {
+  id: 'r1',
+  kind: 'rectangle',
+  start: { x: 0, y: 0 },
+  end: { x: 1, y: 1 },
+  width: 1,
+  color: packRgba(255, 0, 0, 255),
+};
 
 describe('encodePngOffMainThread', () => {
   test('matches encodePng byte-for-byte for the same input', async () => {
@@ -72,6 +82,40 @@ describe('encodePngOffMainThread', () => {
     }
     expect(offMainThreadError).toBeInstanceOf(RangeError);
     expect((offMainThreadError as Error).message).toBe((directError as Error).message);
+  });
+
+  test('an empty (or omitted) shapes list is byte-identical to the no-shapes call', async () => {
+    const pixels = new Uint32Array([packRgba(1, 2, 3, 255), packRgba(4, 5, 6, 255)]);
+    const omitted = await encodePngOffMainThread(2, 1, pixels.slice());
+    const explicitlyEmpty = await encodePngOffMainThread(2, 1, pixels.slice(), 1, 'srgb', []);
+    expect([...explicitlyEmpty]).toEqual([...omitted]);
+  });
+
+  test(
+    'a non-empty shapes list rejects with a clear error under bun test (no OffscreenCanvas), ' +
+      'rather than hanging or crossing the worker — real browsers always have OffscreenCanvas ' +
+      'in a worker, so this path only ever exercises the error, never silently drops the shape',
+    async () => {
+      const pixels = new Uint32Array([packRgba(1, 2, 3, 255), packRgba(4, 5, 6, 255)]);
+      let error: unknown;
+      try {
+        await encodePngOffMainThread(2, 1, pixels, 1, 'srgb', [rectangle]);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/OffscreenCanvas/);
+    },
+  );
+
+  test('runs alongside a plain encode without crossing up which request gets flattened', async () => {
+    const pixels = new Uint32Array([packRgba(7, 8, 9, 255), packRgba(10, 11, 12, 255)]);
+    const [plain, flattenedRejection] = await Promise.allSettled([
+      encodePngOffMainThread(2, 1, pixels.slice()),
+      encodePngOffMainThread(2, 1, pixels.slice(), 1, 'srgb', [rectangle]),
+    ]);
+    expect(plain.status).toBe('fulfilled');
+    expect(flattenedRejection.status).toBe('rejected');
   });
 });
 
