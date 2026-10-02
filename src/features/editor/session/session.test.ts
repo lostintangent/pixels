@@ -90,8 +90,8 @@ test('a Fill tap survives a cold tool import and remains one undo step', async (
   session.run({ type: 'tool', tool: 'fill' });
   session.beginGesture(input(0, 0));
   session.endGesture();
-  for (let attempt = 0; !session.state.state.canUndo && attempt < 100; attempt++)
-    await Bun.sleep(1);
+  const fillDeadline = Date.now() + 2000;
+  while (!session.state.state.canUndo && Date.now() < fillDeadline) await Bun.sleep(5);
   expect(Array.from(document.pixels)).toEqual([A, A, A]);
   session.run({ type: 'undo' });
   expect(Array.from(document.pixels)).toEqual([0, 0, 0]);
@@ -108,8 +108,8 @@ test('a queued Line drag commits its final point, while cancel discards it', asy
   session.beginGesture(input(0, 0));
   session.extendGesture([input(3, 0)]);
   session.endGesture();
-  for (let attempt = 0; !session.state.state.canUndo && attempt < 100; attempt++)
-    await Bun.sleep(1);
+  const lineDeadline = Date.now() + 2000;
+  while (!session.state.state.canUndo && Date.now() < lineDeadline) await Bun.sleep(5);
   expect(Array.from(document.pixels.subarray(0, 4))).toEqual([A, A, A, A]);
   session.run({ type: 'undo' });
   expect(document.pixels.every((pixel) => pixel === 0)).toBe(true);

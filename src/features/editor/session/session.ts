@@ -819,40 +819,12 @@ export function createEditorSession({
       commitFloating();
       if (selection.floating === null && state.state.selection) setSelection(null);
       const color = tool === 'eraser' ? TRANSPARENT : primary;
-      if (tool === 'fill') {
-        if (!contains(documentRect(), cell)) return;
-        if (paintExtras) {
-          if (paintExtras.fill(document(), cell, color, history).dirty) {
-            update((current) => recordPaintedColor(current, color));
-            syncHistory();
-          }
-          gesture = { kind: 'fill' };
-        } else {
-          queuedPaint = {
-            tool: 'fill',
-            document: document(),
-            at: cell,
-            latest: cell,
-            shift: false,
-            color,
-            brush: { color, size: brushSize, pixelPerfect: brushSize === 1 },
-            ended: false,
-          };
-          gesture = { kind: 'paint-queued', press: queuedPaint };
-          void loadPaintExtras();
-        }
-        return;
-      }
       const brush = { color, size: brushSize, pixelPerfect: brushSize === 1 };
-      if (tool === 'line') {
-        if (paintExtras) {
-          const preview = paintExtras.line(document(), cell, brush, history);
-          const dirty = preview.update(cell);
-          gesture = { kind: 'line', preview, color };
-          setOverlay({ preview: linePreview(preview, dirty) });
-        } else {
+      if (tool === 'fill' || tool === 'line') {
+        if (tool === 'fill' && !contains(documentRect(), cell)) return;
+        if (!paintExtras) {
           queuedPaint = {
-            tool: 'line',
+            tool,
             document: document(),
             at: cell,
             latest: cell,
@@ -863,6 +835,17 @@ export function createEditorSession({
           };
           gesture = { kind: 'paint-queued', press: queuedPaint };
           void loadPaintExtras();
+        } else if (tool === 'fill') {
+          if (paintExtras.fill(document(), cell, color, history).dirty) {
+            update((current) => recordPaintedColor(current, color));
+            syncHistory();
+          }
+          gesture = { kind: 'fill' };
+        } else {
+          const preview = paintExtras.line(document(), cell, brush, history);
+          const dirty = preview.update(cell);
+          gesture = { kind: 'line', preview, color };
+          setOverlay({ preview: linePreview(preview, dirty) });
         }
         return;
       }
