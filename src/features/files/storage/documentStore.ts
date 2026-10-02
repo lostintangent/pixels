@@ -147,6 +147,12 @@ function crashRecoveryKey(id: DocumentId): string {
 
 function stashForCrashRecovery(snapshot: DocumentSnapshot): void {
   if (typeof localStorage === 'undefined') return;
+  // Check the cheap bound first: the whole-buffer copy's own byte length. A 4096² full resave's
+  // buffer is already well over CRASH_RECOVERY_MAX_BYTES on its own, so without this, every such
+  // exit pays the ~30ms of splitting it into tiles only to throw the result away a moment later.
+  if (snapshot.fullResaveBytes && snapshot.fullResaveBytes.byteLength > CRASH_RECOVERY_MAX_BYTES) {
+    return;
+  }
   // A full resave's tiles are deferred (see `fullResaveBytes` on `DocumentSnapshot`); this is the
   // one consumer that still needs every tile's actual bytes materialized at once, since it's a
   // one-shot synchronous stash on page exit, not a paced loop like `saveNow`'s.
