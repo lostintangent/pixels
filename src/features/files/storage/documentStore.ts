@@ -15,6 +15,12 @@ const DB_VERSION = 1;
 const DOCUMENTS_STORE = 'documents';
 const TILES_STORE = 'tiles';
 const TILES_BY_ID_INDEX = 'by_id';
+// Every tile `.put()` up to this many per transaction can queue in one synchronous task with no
+// yield; a save with fewer dirty tiles than this (the common case: one stroke's worth) behaves
+// exactly as before. Chosen so the slowest realistic batch (a 4096x4096 full resave, 4096 tiles)
+// splits into roughly 8 yields — enough to keep each task comfortably under a 50ms budget without
+// adding meaningful task-switch overhead to the common small-save path.
+const SAVE_BATCH_TILE_COUNT = 512;
 
 interface DocumentRecord {
   id: DocumentId;
@@ -257,6 +263,20 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       colorSpace: snapshot.colorSpace,
     };
     documents.put(record);
+    // Queuing every tile `.put()` in one synchronous loop is exactly what makes a large full
+    // resave (thousands of tiles) one long main-thread task: each `.put()` structured-clones its
+    // tile synchronously, back to back, with nothing to let the browser schedule a frame or input
+    // in between. Awaiting one request every SAVE_BATCH_TILE_COUNT tiles splits that into several
+    // much smaller tasks instead — IndexedDB request completions are dispatched as separate tasks,
+    // not microtasks, so this is a real yield, not just an `await` that resolves in the same tick.
+    // The transaction stays open and atomic across those yields (verified directly against real
+    // Chromium: a request made from inside an earlier request's success handler keeps a
+    // transaction active), so a crash mid-save still aborts the whole thing rather than leaving a
+    // partial tile grid — the same all-or-nothing guarantee as before, just spread over more,
+    // smaller tasks. A save with few dirty tiles (the overwhelmingly common case: one stroke's
+    // worth) never crosses the batch boundary, so it stays exactly as before: one synchronous loop,
+    // zero added yields.
+    let tileCount = 0;
     for (const tile of snapshot.tiles) {
       const tileRecord: TileRecord = {
         id: snapshot.id,
@@ -264,7 +284,9 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
         ty: tile.ty,
         pixels: tile.pixels,
       };
-      tiles.put(tileRecord);
+      const request = tiles.put(tileRecord);
+      tileCount++;
+      if (tileCount % SAVE_BATCH_TILE_COUNT === 0) await requestToPromise(request);
     }
     // Commits the instant every put above is queued, instead of leaving it to auto-commit once
     // the microtask queue drains: that implicit drain is exactly the gap a fast reload could win

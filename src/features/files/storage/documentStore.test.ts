@@ -158,6 +158,43 @@ describe('createDocumentStore', () => {
     const tile = extractTile(document.rgbaBytes, 64, 64, { tx: 0, ty: 0 });
     expect(tile.pixels[0]).toBe(3);
   });
+
+  test('a full resave spanning more tiles than one save batch still round-trips every tile byte-exact', async () => {
+    // 1536² is 24x24 = 576 tiles at TILE_SIZE 64 — more than SAVE_BATCH_TILE_COUNT (512), so this
+    // save's tile puts cross at least one internal batch boundary (an awaited request mid-loop,
+    // not just one synchronous pass). Distinct per-tile colors prove no tile is skipped,
+    // duplicated, or overwritten by a neighboring batch.
+    const store = freshStore();
+    const side = 1536;
+    const document = createBitmapDocument('doc-batch', side, side, 'Big Batch');
+    const tilesPerAxis = side / 64;
+    for (let ty = 0; ty < tilesPerAxis; ty++) {
+      for (let tx = 0; tx < tilesPerAxis; tx++) {
+        const value = (ty * tilesPerAxis + tx) % 255;
+        for (let y = 0; y < 64; y++) {
+          for (let x = 0; x < 64; x++) {
+            document.pixels[(ty * 64 + y) * side + (tx * 64 + x)] = packRgba(value, value, value);
+          }
+        }
+      }
+    }
+    await saveFull(document, store);
+
+    const loaded = await store.load('doc-batch');
+    expect(loaded).not.toBeNull();
+    for (let ty = 0; ty < tilesPerAxis; ty++) {
+      for (let tx = 0; tx < tilesPerAxis; tx++) {
+        const expectedValue = (ty * tilesPerAxis + tx) % 255;
+        const offset = ((ty * 64 + 7) * side + (tx * 64 + 7)) * 4;
+        expect([...loaded!.pixels.subarray(offset, offset + 4)]).toEqual([
+          expectedValue,
+          expectedValue,
+          expectedValue,
+          255,
+        ]);
+      }
+    }
+  });
 });
 
 describe('per-id write chain', () => {
