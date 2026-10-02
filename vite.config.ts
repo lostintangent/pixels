@@ -3,12 +3,16 @@ import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
 import { Features } from 'lightningcss';
 import { astryxMessages } from './src/shared/build/astryxMessages';
+import { modulePreload } from './src/shared/build/modulePreload';
+
+const preload = modulePreload();
 
 export default defineConfig({
-  // All lazy surfaces' CSS is extracted into the entry stylesheet. Vite's automatic JS
-  // dependency preload map duplicates paths already in the initial graph and costs ~0.8 KiB.
-  // Let native module imports fetch those dependencies when a lazy surface is opened.
-  build: { modulePreload: false },
+  // Native modulepreload is available in every browser Pixels supports. Keep lazy dependencies
+  // parallel, but avoid sending the entry's already-loaded JS paths in every preload map.
+  build: {
+    modulePreload: { polyfill: false, resolveDependencies: preload.resolveDependencies },
+  },
   // Reachable from other devices over Tailscale. `vp preview` inherits both settings.
   server: { host: true, allowedHosts: ['.ts.net'] },
   lint: {
@@ -32,6 +36,7 @@ export default defineConfig({
     ignorePatterns: ['node_modules', 'dist', '.playwright-cli', 'bun.lock'],
   },
   plugins: [
+    preload.plugin,
     astryxMessages(),
     stylex({
       devMode: 'full',
