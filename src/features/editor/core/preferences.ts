@@ -1,10 +1,10 @@
 import type { PackedColor } from '../../document';
 import { RECENT_LIMIT } from '../../palette/model';
-import type { ToolKind } from '../../tools';
 import { BRUSH_SIZES } from './brush';
 import { DEFAULT_TOOL_PREFERENCES } from './state';
 import type { ToolPreferences } from './state';
-import { TOOLS } from './tools';
+import { SHAPES, SHAPES_IN_RAIL, TOOLS } from './tools';
+import type { EditorTool, ShapeKind } from './tools';
 
 /**
  * Reads preferences saved by an earlier visit, which may come from an older build. Each field is
@@ -15,8 +15,9 @@ export function decodeToolPreferences(value: unknown): ToolPreferences {
   if (typeof value !== 'object' || value === null) return fallback;
   const saved = value as Partial<Record<keyof ToolPreferences, unknown>>;
   return {
-    tool: isToolKind(saved.tool) ? saved.tool : fallback.tool,
+    tool: isEditorTool(saved.tool) ? saved.tool : fallback.tool,
     brushSize: isBrushSize(saved.brushSize) ? saved.brushSize : fallback.brushSize,
+    shapeKind: isShapeKind(saved.shapeKind) ? saved.shapeKind : fallback.shapeKind,
     primary: isColor(saved.primary) ? saved.primary : fallback.primary,
     secondary: isColor(saved.secondary) ? saved.secondary : fallback.secondary,
     recent: Array.isArray(saved.recent) ? decodeRecent(saved.recent) : fallback.recent,
@@ -28,6 +29,7 @@ export function sameToolPreferences(a: ToolPreferences, b: ToolPreferences): boo
   return (
     a.tool === b.tool &&
     a.brushSize === b.brushSize &&
+    a.shapeKind === b.shapeKind &&
     a.primary === b.primary &&
     a.secondary === b.secondary &&
     a.gridEnabled === b.gridEnabled &&
@@ -45,8 +47,12 @@ function decodeRecent(values: readonly unknown[]): readonly PackedColor[] {
   return recent;
 }
 
-function isToolKind(value: unknown): value is ToolKind {
-  return TOOLS.some((tool) => tool.kind === value);
+function isEditorTool(value: unknown): value is EditorTool {
+  return TOOLS.some((tool) => tool.kind === value) || (SHAPES_IN_RAIL && value === 'shapes');
+}
+
+function isShapeKind(value: unknown): value is ShapeKind {
+  return SHAPES.some((shape) => shape.kind === value);
 }
 
 function isBrushSize(value: unknown): value is number {

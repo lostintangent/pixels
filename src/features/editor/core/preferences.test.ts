@@ -3,6 +3,7 @@ import { packRgba } from '../../document';
 import { RECENT_LIMIT } from '../../palette/model';
 import { decodeToolPreferences, sameToolPreferences } from './preferences';
 import { DEFAULT_TOOL_PREFERENCES } from './state';
+import { SHAPES_IN_RAIL } from './tools';
 import type { ToolPreferences } from './state';
 
 const red = packRgba(255, 0, 0, 255);
@@ -11,6 +12,7 @@ const blue = packRgba(0, 0, 255, 255);
 const saved: ToolPreferences = {
   tool: 'fill',
   brushSize: 8,
+  shapeKind: 'arrow',
   primary: red,
   secondary: blue,
   recent: [red, blue],
@@ -34,6 +36,17 @@ describe('decodeToolPreferences', () => {
       tool: DEFAULT_TOOL_PREFERENCES.tool,
       brushSize: DEFAULT_TOOL_PREFERENCES.brushSize,
     });
+  });
+
+  test('keeps a known shape and drops an unknown one', () => {
+    expect(decodeToolPreferences({ ...saved, shapeKind: 'ellipse' }).shapeKind).toBe(
+      DEFAULT_TOOL_PREFERENCES.shapeKind,
+    );
+  });
+
+  test('restores the Shapes tool only while the rail offers it', () => {
+    const decoded = decodeToolPreferences({ ...saved, tool: 'shapes' }).tool;
+    expect(decoded).toBe(SHAPES_IN_RAIL ? 'shapes' : DEFAULT_TOOL_PREFERENCES.tool);
   });
 
   test('rejects colors outside 32-bit unsigned integers', () => {
@@ -60,5 +73,6 @@ describe('sameToolPreferences', () => {
     expect(sameToolPreferences(saved, { ...saved, recent: [red, blue] })).toBe(true);
     expect(sameToolPreferences(saved, { ...saved, recent: [blue, red] })).toBe(false);
     expect(sameToolPreferences(saved, { ...saved, gridEnabled: true })).toBe(false);
+    expect(sameToolPreferences(saved, { ...saved, shapeKind: 'rectangle' })).toBe(false);
   });
 });

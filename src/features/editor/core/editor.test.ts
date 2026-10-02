@@ -8,11 +8,13 @@ import {
   finishPick,
   initialEditorState,
   recordPaintedColor,
+  selectShape,
   selectTool,
   stepBrush,
   swapColors,
   toolPreferences,
 } from './state';
+import { defaultShapeWidth } from './tools';
 import { displayZoom, formatZoom } from './zoom';
 
 const press = (key: string, modifiers: Partial<KeyPress> = {}): KeyPress => ({
@@ -24,6 +26,7 @@ const press = (key: string, modifiers: Partial<KeyPress> = {}): KeyPress => ({
 });
 const idle = { hasSelection: false };
 const selecting = { hasSelection: true };
+const shaping = { hasSelection: false, hasShapeSelection: true };
 
 describe('brush ladder', () => {
   test('gives every size from 1 to 4 px its own step', () => {
@@ -73,6 +76,38 @@ describe('shortcuts', () => {
   test('select tools by letter', () => {
     expect(resolveShortcut(press('b'), idle)).toEqual({ type: 'tool', tool: 'pencil' });
     expect(resolveShortcut(press('M'), idle)).toEqual({ type: 'tool', tool: 'select' });
+  });
+
+  test('arm shapes by letter', () => {
+    expect(resolveShortcut(press('r'), idle)).toEqual({ type: 'shape-tool', kind: 'rectangle' });
+    expect(resolveShortcut(press('A'), idle)).toEqual({ type: 'shape-tool', kind: 'arrow' });
+    expect(resolveShortcut(press('a', { shift: true }), idle)).toBeNull();
+  });
+
+  test('act on a selected shape', () => {
+    for (const key of ['Escape', 'Enter'])
+      expect(resolveShortcut(press(key), shaping)).toEqual({ type: 'shape', action: 'deselect' });
+    for (const key of ['Delete', 'Backspace'])
+      expect(resolveShortcut(press(key), shaping)).toEqual({ type: 'shape', action: 'delete' });
+    expect(resolveShortcut(press('d', { mod: true }), shaping)).toEqual({
+      type: 'shape',
+      action: 'duplicate',
+    });
+    expect(resolveShortcut(press('ArrowLeft', { shift: true }), shaping)).toEqual({
+      type: 'nudge',
+      dx: -10,
+      dy: 0,
+    });
+    expect(resolveShortcut(press('ArrowUp'), { ...shaping, gesturing: true })).toBeNull();
+  });
+
+  test('⌘D still deselects pixels and does nothing with no selection', () => {
+    expect(resolveShortcut(press('d', { mod: true }), selecting)).toEqual({
+      type: 'selection',
+      action: 'cancel',
+    });
+    expect(resolveShortcut(press('d', { mod: true }), idle)).toBeNull();
+    expect(resolveShortcut(press('Delete'), idle)).toBeNull();
   });
 
   test('cover colors, brush size, and zoom', () => {
@@ -227,6 +262,33 @@ describe('editor state', () => {
     expect(finishPick(drawing, 'touch')).toBe(drawing);
   });
 
+  test('picking a shape arms the Shapes tool and remembers the shape', () => {
+    const arrow = selectShape(selectTool(base, 'fill'), 'arrow');
+    expect([arrow.tool, arrow.previousTool, arrow.shapeKind]).toEqual(['shapes', 'fill', 'arrow']);
+    expect(selectShape(arrow, 'arrow')).toBe(arrow);
+    expect(selectTool(arrow, 'pencil').shapeKind).toBe('arrow');
+  });
+
+  test('brackets size the shape stroke while Shapes is armed and leave the brush alone', () => {
+    const armed = { ...selectShape(base, 'rectangle'), shapeWidth: 6, brushSize: 2 };
+    const wider = stepBrush(armed, 1);
+    expect([wider.shapeWidth, wider.brushSize]).toEqual([8, 2]);
+    expect(stepBrush(stepBrush(armed, -1), -1).shapeWidth).toBe(4);
+  });
+
+  test('each document starts with a stroke width that reads at fit', () => {
+    expect(defaultShapeWidth(16, 16)).toBe(1);
+    expect(defaultShapeWidth(1440, 900)).toBe(5);
+    expect(defaultShapeWidth(1990, 1192)).toBe(6);
+    expect(defaultShapeWidth(2980, 1860)).toBe(8);
+    expect(defaultShapeWidth(4096, 4096)).toBe(12);
+    const screenshot = initialEditorState({ name: 'Shot', width: 2980, height: 1860 }, null, {
+      ...toolPreferences(base),
+    });
+    expect(screenshot.shapeWidth).toBe(8);
+    expect(base.shapeWidth).toBe(1);
+  });
+
   test('records painted colors as recents', () => {
     expect(recordPaintedColor(base, red).recent).toEqual([red]);
   });
@@ -249,6 +311,7 @@ describe('editor state', () => {
     expect(toolPreferences(next)).toEqual({
       tool: 'fill',
       brushSize: 3,
+      shapeKind: 'rectangle',
       primary: red,
       secondary: base.secondary,
       recent: [red],

@@ -2,8 +2,9 @@ import type { PointerKind } from '../../canvas/model';
 import type { PackedColor, PixelRect } from '../../document';
 import { DEFAULT_PALETTE, rememberColor } from '../../palette/model';
 import type { PaletteState } from '../../palette/model';
-import type { ToolKind } from '../../tools';
 import { stepBrushSize } from './brush';
+import { defaultShapeWidth } from './tools';
+import type { EditorTool, ShapeKind } from './tools';
 
 export type EditorPanel = 'new' | 'export' | 'resize' | 'colors';
 /** Mirrors autosave's reports. Null until a document has been saved or edited at all. */
@@ -18,10 +19,17 @@ export interface DocumentSummary {
 
 /** Everything React renders. Pointer-rate state (hover, viewport pan) lives elsewhere. */
 export interface EditorState extends PaletteState {
-  tool: ToolKind;
+  tool: EditorTool;
   /** The tool before this one, where a one-shot eyedropper returns. Null after a reload. */
-  previousTool: ToolKind | null;
+  previousTool: EditorTool | null;
   brushSize: number;
+  /** The last shape picked, which the Shapes rail item arms. */
+  shapeKind: ShapeKind;
+  /**
+   * Stroke width for the next shape, separate from the brush. Each document starts at its own
+   * default, since a width that suits a screenshot would swamp a sprite.
+   */
+  shapeWidth: number;
   gridEnabled: boolean;
   chromeHidden: boolean;
   panel: EditorPanel | null;
@@ -39,12 +47,13 @@ export interface EditorState extends PaletteState {
  */
 export type ToolPreferences = Pick<
   EditorState,
-  'tool' | 'brushSize' | 'primary' | 'secondary' | 'recent' | 'gridEnabled'
+  'tool' | 'brushSize' | 'shapeKind' | 'primary' | 'secondary' | 'recent' | 'gridEnabled'
 >;
 
 export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
   tool: 'pencil',
   brushSize: 1,
+  shapeKind: 'rectangle',
   primary: DEFAULT_PALETTE[11]!,
   secondary: DEFAULT_PALETTE[1]!,
   recent: [],
@@ -59,6 +68,7 @@ export function initialEditorState(
   return {
     ...toolPreferences(preferences),
     previousTool: null,
+    shapeWidth: defaultShapeWidth(document.width, document.height),
     chromeHidden: false,
     panel: null,
     selection: null,
@@ -71,12 +81,18 @@ export function initialEditorState(
 }
 
 export function toolPreferences(state: ToolPreferences): ToolPreferences {
-  const { tool, brushSize, primary, secondary, recent, gridEnabled } = state;
-  return { tool, brushSize, primary, secondary, recent, gridEnabled };
+  const { tool, brushSize, shapeKind, primary, secondary, recent, gridEnabled } = state;
+  return { tool, brushSize, shapeKind, primary, secondary, recent, gridEnabled };
 }
 
-export function selectTool(state: EditorState, tool: ToolKind): EditorState {
+export function selectTool(state: EditorState, tool: EditorTool): EditorState {
   return state.tool === tool ? state : { ...state, tool, previousTool: state.tool };
+}
+
+/** Picking a shape arms the Shapes tool with it. */
+export function selectShape(state: EditorState, shapeKind: ShapeKind): EditorState {
+  const next = selectTool(state, 'shapes');
+  return next.shapeKind === shapeKind ? next : { ...next, shapeKind };
 }
 
 /**
@@ -89,7 +105,12 @@ export function finishPick(state: EditorState, pointer: PointerKind): EditorStat
   return selectTool(state, state.previousTool ?? 'pencil');
 }
 
+/** `[` and `]` size whatever the current tool draws with: the shape stroke or the brush. */
 export function stepBrush(state: EditorState, direction: -1 | 1): EditorState {
+  if (state.tool === 'shapes') {
+    const shapeWidth = stepBrushSize(state.shapeWidth, direction);
+    return shapeWidth === state.shapeWidth ? state : { ...state, shapeWidth };
+  }
   const brushSize = stepBrushSize(state.brushSize, direction);
   return brushSize === state.brushSize ? state : { ...state, brushSize };
 }

@@ -4,9 +4,11 @@ import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex'
 import { Eraser, PaintBucket, Pencil, Pipette, Slash, SquareDashed } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useRef } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, Ref } from 'react';
 import type { ToolKind } from '../../tools';
-import { TOOLS } from '../core/tools';
+import { SHAPES_IN_RAIL, shapeInfo, TOOLS } from '../core/tools';
+import type { EditorTool, ShapeKind } from '../core/tools';
+import { SHAPE_ICONS } from './ShapeIcons';
 import { pixelVars } from './tokens.stylex';
 
 const ICONS: Record<ToolKind, LucideIcon> = {
@@ -19,21 +21,66 @@ const ICONS: Record<ToolKind, LucideIcon> = {
 };
 
 export interface ToolRailProps {
-  tool: ToolKind;
-  onSelect: (tool: ToolKind) => void;
+  tool: EditorTool;
+  /** Arrow keys arm the Shapes item with `'shapes'` like any other tool. */
+  onSelect: (tool: EditorTool) => void;
   orientation: 'vertical' | 'horizontal';
   /** Touch layouts skip hover tooltips: there's no hover to reveal them. */
   hasTooltips: boolean;
+  /** The Shapes item's icon and tooltip follow the last shape used. */
+  shapeKind: ShapeKind;
+  /** A press on the Shapes item, which arms it and toggles the popover. */
+  onShapesPress: () => void;
+  /** Anchors the Shapes popover. */
+  shapesRef?: Ref<HTMLButtonElement>;
+}
+
+interface RailItem {
+  kind: EditorTool;
+  label: string;
+  /** What the tooltip names: the tool, or the shape the Shapes item will draw. */
+  tip: string;
+  keys: string;
+  Icon: LucideIcon;
+}
+
+function railItems(shapeKind: ShapeKind): RailItem[] {
+  const items: RailItem[] = TOOLS.map((info) => ({
+    kind: info.kind,
+    label: info.label,
+    tip: `${info.label}  ·  ${info.key.toUpperCase()}`,
+    keys: info.key.toUpperCase(),
+    Icon: ICONS[info.kind],
+  }));
+  if (!SHAPES_IN_RAIL) return items;
+  const shape = shapeInfo(shapeKind);
+  items.push({
+    kind: 'shapes',
+    label: 'Shapes',
+    tip: `${shape.label}  ·  ${shape.key.toUpperCase()}`,
+    keys: 'R A',
+    Icon: SHAPE_ICONS[shapeKind],
+  });
+  return items;
 }
 
 /**
  * A radio group rather than Astryx's ToggleButtonGroup: the selected tool is the
  * loudest thing in the chrome, so it gets an accent fill and roving arrow keys.
  */
-export function ToolRail({ tool, onSelect, orientation, hasTooltips }: ToolRailProps) {
+export function ToolRail({
+  tool,
+  onSelect,
+  orientation,
+  hasTooltips,
+  shapeKind,
+  onShapesPress,
+  shapesRef,
+}: ToolRailProps) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
+  const items = railItems(shapeKind);
   const onKeyDown = (event: KeyboardEvent) => {
-    const index = TOOLS.findIndex((info) => info.kind === tool);
+    const index = items.findIndex((info) => info.kind === tool);
     const step =
       event.key === 'ArrowDown' || event.key === 'ArrowRight'
         ? 1
@@ -44,13 +91,13 @@ export function ToolRail({ tool, onSelect, orientation, hasTooltips }: ToolRailP
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? TOOLS.length - 1
+          ? items.length - 1
           : step
-            ? (index + step + TOOLS.length) % TOOLS.length
+            ? (index + step + items.length) % items.length
             : -1;
     if (target < 0) return;
     event.preventDefault();
-    onSelect(TOOLS[target]!.kind);
+    onSelect(items[target]!.kind);
     buttons.current[target]?.focus();
   };
   return (
@@ -59,34 +106,45 @@ export function ToolRail({ tool, onSelect, orientation, hasTooltips }: ToolRailP
       aria-label="Tools"
       aria-orientation={orientation}
       onKeyDown={onKeyDown}
-      {...stylex.props(styles.rail, orientation === 'vertical' && styles.vertical)}
+      {...stylex.props(
+        styles.rail,
+        orientation === 'vertical' ? styles.vertical : styles.horizontal,
+      )}
     >
-      {TOOLS.map((info, index) => {
-        const Icon = ICONS[info.kind];
+      {items.map((info, index) => {
+        const { Icon } = info;
         const selected = info.kind === tool;
+        const shapes = info.kind === 'shapes';
         const button = (
           <button
             key={info.kind}
             ref={(node) => {
               buttons.current[index] = node;
+              if (shapes) assignRef(shapesRef, node);
             }}
             type="button"
             role="radio"
             aria-checked={selected}
             aria-label={info.label}
-            aria-keyshortcuts={info.key.toUpperCase()}
+            aria-keyshortcuts={info.keys}
             tabIndex={selected ? 0 : -1}
-            onClick={() => onSelect(info.kind)}
-            {...stylex.props(styles.tool, selected && styles.selected)}
+            onClick={() => (shapes ? onShapesPress() : onSelect(info.kind))}
+            {...stylex.props(
+              styles.tool,
+              orientation === 'horizontal' && styles.dockTool,
+              selected && styles.selected,
+            )}
           >
             <Icon size={18} strokeWidth={1.75} aria-hidden />
+            {/* A corner nub says there's more inside, like a Figma or Photoshop tool group. */}
+            {shapes && <span aria-hidden {...stylex.props(styles.nub)} />}
           </button>
         );
         if (!hasTooltips) return button;
         return (
           <Tooltip
             key={info.kind}
-            content={`${info.label}  ·  ${info.key.toUpperCase()}`}
+            content={info.tip}
             placement={orientation === 'vertical' ? 'end' : 'above'}
             hasHoverIndication={false}
             delay={400}
@@ -99,12 +157,21 @@ export function ToolRail({ tool, onSelect, orientation, hasTooltips }: ToolRailP
   );
 }
 
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (typeof ref === 'function') ref(value);
+  else if (ref) (ref as { current: T | null }).current = value;
+}
+
 const styles = stylex.create({
-  rail: { display: 'flex', gap: 2 },
-  vertical: { flexDirection: 'column' },
+  rail: { display: 'flex' },
+  vertical: { flexDirection: 'column', gap: 2 },
+  // The phone dock holds seven tools and the color well. Targets abut with no gap, so the whole
+  // row is tappable, and they give up a little width only on screens narrower than 390px.
+  horizontal: { gap: 0, minWidth: 0 },
   tool: {
     width: pixelVars.tool,
     height: pixelVars.tool,
+    position: 'relative',
     display: 'grid',
     placeItems: 'center',
     flexShrink: 0,
@@ -128,6 +195,19 @@ const styles = stylex.create({
     transitionDuration: durationVars['--duration-fast'],
     transitionTimingFunction: pixelVars.ease,
   },
+  nub: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    width: 0,
+    height: 0,
+    borderStyle: 'solid',
+    borderWidth: '0 0 4px 4px',
+    borderColor: 'transparent transparent currentColor transparent',
+    opacity: 0.5,
+    pointerEvents: 'none',
+  },
+  dockTool: { flexShrink: 1, minWidth: 40 },
   selected: {
     color: colorVars['--color-on-accent'],
     backgroundColor: {

@@ -40,12 +40,13 @@ import { sameToolPreferences } from '../core/preferences';
 import { toolPreferences } from '../core/state';
 import type { ColorSlot, ToolPreferences } from '../core/state';
 import { usesBrush } from '../core/tools';
+import type { EditorTool, ShapeKind } from '../core/tools';
 import { useColorScheme } from '../session/appearance';
 import type { ColorScheme } from '../session/appearance';
 import { readToolPreferences, writeToolPreferences } from '../session/preferences';
 import { createEditorSession } from '../session/session';
 import type { EditorSession, Layout } from '../session/session';
-import { ExportDialog, NewCanvasDialog, ResizeDialog } from './dialogs';
+import { ExportDialog, NewCanvasDialog, ResizeDialog, ShapesPopover } from './dialogs';
 import { EditorProvider, useEditor, useEditorState } from './EditorContext';
 import { DropOverlay } from './files/DropOverlay';
 import { FileActionsProvider, useFileActions } from './files/FileActions';
@@ -272,9 +273,45 @@ function DesktopChrome() {
   );
 }
 
-function DesktopTools({ fade }: { fade: Fade }) {
+/**
+ * The rail's Shapes item: a press arms the last shape and opens the popover, and a second press
+ * on the armed item closes it. Picking a shape arms it and closes the popover.
+ */
+function useShapesMenu() {
   const session = useEditor();
   const tool = useEditorState((state) => state.tool);
+  const shapeKind = useEditorState((state) => state.shapeKind);
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const onClose = useCallback(() => setOpen(false), []);
+  const onPick = useCallback(
+    (kind: ShapeKind) => {
+      session.run({ type: 'shape-tool', kind });
+      setOpen(false);
+    },
+    [session],
+  );
+  return {
+    tool,
+    shapeKind,
+    open,
+    anchor,
+    onClose,
+    onPick,
+    onSelect: (next: EditorTool) => {
+      if (next === 'shapes') session.run({ type: 'shape-tool', kind: shapeKind });
+      else session.run({ type: 'tool', tool: next });
+    },
+    onShapesPress: () => {
+      setOpen((current) => (tool === 'shapes' ? !current : true));
+      session.run({ type: 'shape-tool', kind: shapeKind });
+    },
+  };
+}
+
+function DesktopTools({ fade }: { fade: Fade }) {
+  const session = useEditor();
+  const shapes = useShapesMenu();
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
   const [editing, setEditing] = useState<ColorSlot | null>(null);
@@ -284,10 +321,13 @@ function DesktopTools({ fade }: { fade: Fade }) {
     <>
       <Island ref={rail} as="nav" axis="y" aria-label="Tools" xstyle={[styles.rail, fade]}>
         <ToolRail
-          tool={tool}
-          onSelect={(next) => session.run({ type: 'tool', tool: next })}
+          tool={shapes.tool}
+          onSelect={shapes.onSelect}
           orientation="vertical"
           hasTooltips
+          shapeKind={shapes.shapeKind}
+          onShapesPress={shapes.onShapesPress}
+          shapesRef={shapes.anchor}
         />
         <IslandDivider axis="y" />
         <ColorWell
@@ -298,6 +338,15 @@ function DesktopTools({ fade }: { fade: Fade }) {
           onPress={() => setEditing((current) => (current === null ? 'primary' : null))}
         />
       </Island>
+      <ShapesPopover
+        when={shapes.open}
+        open={shapes.open}
+        layout="desktop"
+        kind={shapes.shapeKind}
+        anchor={shapes.anchor}
+        onPick={shapes.onPick}
+        onClose={shapes.onClose}
+      />
       <ColorPickerPopover
         anchorRef={rail}
         isOpen={editing !== null}
@@ -401,20 +450,24 @@ function PhoneChrome() {
 
 function PhoneDock({ fade, onEdit }: { fade: Fade; onEdit: (slot: ColorSlot) => void }) {
   const session = useEditor();
-  const tool = useEditorState((state) => state.tool);
+  const shapes = useShapesMenu();
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
+  const dock = useRef<HTMLElement>(null);
   return (
-    <Island aria-label="Tools" axis="y" xstyle={[styles.dock, fade]}>
+    <Island ref={dock} aria-label="Tools" axis="y" xstyle={[styles.dock, fade]}>
       <div {...stylex.props(styles.dockOptions)}>
         <ToolOptions layout="phone" />
       </div>
       <div {...stylex.props(styles.dockTools)}>
         <ToolRail
-          tool={tool}
-          onSelect={(next) => session.run({ type: 'tool', tool: next })}
+          tool={shapes.tool}
+          onSelect={shapes.onSelect}
           orientation="horizontal"
           hasTooltips={false}
+          shapeKind={shapes.shapeKind}
+          onShapesPress={shapes.onShapesPress}
+          shapesRef={shapes.anchor}
         />
         <ColorWell
           size="lg"
@@ -427,6 +480,17 @@ function PhoneDock({ fade, onEdit }: { fade: Fade; onEdit: (slot: ColorSlot) => 
           onSwap={() => session.run({ type: 'swap-colors' })}
         />
       </div>
+      {/* After the rail, so the anchor ref is attached before the popover measures it. */}
+      <ShapesPopover
+        when={shapes.open}
+        open={shapes.open}
+        layout="phone"
+        kind={shapes.shapeKind}
+        anchor={shapes.anchor}
+        dock={dock}
+        onPick={shapes.onPick}
+        onClose={shapes.onClose}
+      />
     </Island>
   );
 }

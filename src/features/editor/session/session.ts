@@ -31,7 +31,7 @@ import {
 import type { FloatingSelection, LinePreview, SelectionSession, StrokeSession } from '../../tools';
 import { fitAroundIslands, frameCenter } from '../core/fit';
 import type { IslandRect } from '../core/fit';
-import { usesBrush } from '../core/tools';
+import { SHAPES_IN_RAIL, usesBrush } from '../core/tools';
 import type { EditorCommand, SelectionAction } from '../core/shortcuts';
 import {
   chooseColor,
@@ -39,6 +39,7 @@ import {
   initialEditorState,
   openPanel,
   recordPaintedColor,
+  selectShape,
   selectTool,
   stepBrush,
   swapColors,
@@ -97,6 +98,7 @@ export interface EditorSession {
   run(command: EditorCommand): void;
   chooseColor(color: PackedColor, slot: ColorSlot): void;
   setBrushSize(size: number): void;
+  setShapeWidth(width: number): void;
   /** Opens a dialog or sheet, or closes whichever is open. */
   setPanel(panel: EditorPanel | null): void;
   /** Checker and grid colors follow the resolved color scheme. */
@@ -435,6 +437,11 @@ export function createEditorSession({
           if (command.tool !== 'select') commitFloating();
           update((current) => selectTool(current, command.tool));
           return;
+        case 'shape-tool':
+          if (!SHAPES_IN_RAIL) return;
+          commitFloating();
+          update((current) => selectShape(current, command.kind));
+          return;
         case 'swap-colors':
           update(swapColors);
           return;
@@ -496,6 +503,12 @@ export function createEditorSession({
 
     setBrushSize(size) {
       update((current) => (current.brushSize === size ? current : { ...current, brushSize: size }));
+    },
+
+    setShapeWidth(width) {
+      update((current) =>
+        current.shapeWidth === width ? current : { ...current, shapeWidth: width },
+      );
     },
 
     setLayout(next) {
@@ -577,7 +590,7 @@ export function createEditorSession({
       if (previous?.x !== inside?.x || previous?.y !== inside?.y) pointer.setState(() => inside);
       const { tool } = state.state;
       // A brush previews its full footprint while any part of it can still paint.
-      const cursor = cell && tool !== 'select' ? footprint(cell, alt) : null;
+      const cursor = cell && tool !== 'select' && tool !== 'shapes' ? footprint(cell, alt) : null;
       const paints = cursor && intersectRect(cursor, documentRect(), scratchRect);
       setOverlay({ cursor: paints ? cursor : null });
     },
@@ -586,7 +599,7 @@ export function createEditorSession({
       if (gesture) return;
       const cell = { x: Math.floor(point.x), y: Math.floor(point.y) };
       const { tool, brushSize, primary } = state.state;
-      if (tool === 'eyedropper' || (alt && tool !== 'select')) {
+      if (tool === 'eyedropper' || (alt && tool !== 'select' && tool !== 'shapes')) {
         gesture = { kind: 'pick', pointer, before: primary };
         pickColor(cell);
         return;
@@ -610,6 +623,7 @@ export function createEditorSession({
         setSelection(marqueeRect(cell, cell));
         return;
       }
+      if (tool === 'shapes') return;
       commitFloating();
       if (selection.floating === null && state.state.selection) setSelection(null);
       const color = tool === 'eraser' ? TRANSPARENT : primary;

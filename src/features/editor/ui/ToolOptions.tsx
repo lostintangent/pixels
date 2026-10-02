@@ -6,7 +6,7 @@ import { Slider } from '@astryxdesign/core/Slider';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Copy, CopyPlus, Scissors, Trash2, X } from 'lucide-react';
 import { BRUSH_SIZES, brushSizeAt, brushSizeIndex } from '../core/brush';
-import { toolInfo, usesBrush } from '../core/tools';
+import { shapeInfo, toolInfo, usesBrush } from '../core/tools';
 import type { Layout } from '../session/session';
 import { useEditor, useEditorState } from './EditorContext';
 import { copyFromChrome } from './files/useClipboard';
@@ -33,31 +33,44 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   const session = useEditor();
   const tool = useEditorState((state) => state.tool);
   const brushSize = useEditorState((state) => state.brushSize);
+  const shapeKind = useEditorState((state) => state.shapeKind);
+  const shapeWidth = useEditorState((state) => state.shapeWidth);
   const selection = useEditorState((state) => state.selection);
   const canPaste = useEditorState((state) => state.hasClipboardPixels);
   const run = (action: SelectionRun) => session.run({ type: 'selection', action });
   const phone = layout === 'phone';
   const tooltip = (text: string) => (phone ? undefined : text);
 
-  if (usesBrush(tool)) {
+  // Shapes reuse the brush's size ladder, relabeled Width, for the next shape's stroke.
+  if (tool === 'shapes' || usesBrush(tool)) {
+    const shapes = tool === 'shapes';
+    const size = shapes ? shapeWidth : brushSize;
     return (
-      <div key="brush" {...stylex.props(styles.body, phone && styles.fill)}>
-        {!phone && <span {...stylex.props(styles.label)}>{toolInfo(tool).label}</span>}
-        {!phone && <span {...stylex.props(styles.hint)}>Size</span>}
+      <div key={shapes ? 'shapes' : 'brush'} {...stylex.props(styles.body, phone && styles.fill)}>
+        {!phone && (
+          <span {...stylex.props(styles.label)}>
+            {shapes ? shapeInfo(shapeKind).label : toolInfo(tool).label}
+          </span>
+        )}
+        {!phone && <span {...stylex.props(styles.hint)}>{shapes ? 'Width' : 'Size'}</span>}
         <div {...stylex.props(styles.slider, phone && styles.fill)}>
           <Slider
-            label="Brush size"
+            label={shapes ? 'Stroke width' : 'Brush size'}
             isLabelHidden
             valueDisplay="none"
-            value={brushSizeIndex(brushSize)}
+            value={brushSizeIndex(size)}
             min={0}
             max={BRUSH_SIZES.length - 1}
             step={1}
             formatValue={(index) => `${brushSizeAt(index)} px`}
-            onChange={(index: number) => session.setBrushSize(brushSizeAt(index))}
+            onChange={(index: number) =>
+              shapes
+                ? session.setShapeWidth(brushSizeAt(index))
+                : session.setBrushSize(brushSizeAt(index))
+            }
           />
         </div>
-        <span {...stylex.props(styles.number)}>{brushSize} px</span>
+        <span {...stylex.props(styles.number)}>{size} px</span>
         {!phone && (
           <span {...stylex.props(styles.keys)} aria-hidden>
             <Kbd keys="[" />
@@ -156,7 +169,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   const kind = tool as Exclude<keyof (typeof HINTS)['mouse'], 'select'>;
   return (
     <div key={tool} {...stylex.props(styles.body, phone && styles.fill)}>
-      {!phone && <span {...stylex.props(styles.label)}>{toolInfo(tool).label}</span>}
+      {!phone && <span {...stylex.props(styles.label)}>{toolInfo(kind).label}</span>}
       {phone ? (
         <span {...stylex.props(styles.hint)}>{HINTS.touch[kind]}</span>
       ) : (
