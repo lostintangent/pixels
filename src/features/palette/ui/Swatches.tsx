@@ -1,9 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useRef, useState } from 'react';
+import { use, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { PackedColor } from '../../document';
 import { formatColor, toCss } from '../core/color';
+import { PaletteColorSpace } from './colorSpace';
 
 export type SwatchSlot = 'primary' | 'secondary';
 
@@ -31,6 +32,7 @@ export function Swatches({
   onChoose,
   size = 'md',
 }: SwatchesProps) {
+  const space = use(PaletteColorSpace);
   const [focused, setFocused] = useState(0);
   const grid = useRef<HTMLDivElement>(null);
   const empty = Math.max(0, slots - colors.length);
@@ -87,7 +89,7 @@ export function Swatches({
             {...stylex.props(
               styles.swatch,
               size === 'lg' && styles.swatchLarge,
-              styles.fill(toCss(color)),
+              styles.fill(toCss(color, space)),
               isPrimary && styles.primary,
             )}
           >

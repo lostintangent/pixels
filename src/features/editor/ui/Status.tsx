@@ -40,7 +40,7 @@ export function StatusPill() {
       const color = getPixel(session.bitmap.state, point);
       const visible = color !== null && alpha(color) > 0;
       // A transparent pixel keeps the chip as an empty ring, so the readout never shifts.
-      const fill = visible ? toCss(color) : 'transparent';
+      const fill = visible ? toCss(color, session.bitmap.state.colorSpace) : 'transparent';
       if (shown.chip !== fill) chip.current.style.backgroundColor = shown.chip = fill;
       const label = visible ? formatColor(color) : 'Transparent';
       if (shown.hex !== label) hexText.data = shown.hex = label;

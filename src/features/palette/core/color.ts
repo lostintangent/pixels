@@ -1,5 +1,5 @@
 import { packRgba } from '../../document';
-import type { PackedColor } from '../../document';
+import type { DocumentColorSpace, PackedColor } from '../../document';
 
 /** Hue in degrees [0, 360), saturation and value in [0, 1]. */
 export interface Hsv {
@@ -27,8 +27,16 @@ export function formatColor(color: PackedColor): string {
   return alpha(color) === 0 ? 'Transparent' : toHex(color).toUpperCase();
 }
 
-export function toCss(color: PackedColor): string {
+const unit = (byte: number) => Math.round((byte / 255) * 1e4) / 1e4;
+
+/**
+ * CSS for a color's bytes in the document's color space, so a swatch shows exactly what the
+ * canvas paints. Four decimals round-trip every byte.
+ */
+export function toCss(color: PackedColor, colorSpace: DocumentColorSpace = 'srgb'): string {
   const a = alpha(color);
+  if (colorSpace === 'display-p3')
+    return `color(display-p3 ${unit(red(color))} ${unit(green(color))} ${unit(blue(color))} / ${unit(a)})`;
   if (a === 255) return toHex(color);
   return `rgb(${red(color)} ${green(color)} ${blue(color)} / ${Math.round((a / 255) * 1000) / 1000})`;
 }

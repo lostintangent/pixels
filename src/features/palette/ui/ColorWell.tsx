@@ -1,8 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex';
+import { use } from 'react';
 import type { Ref } from 'react';
 import type { PackedColor } from '../../document';
 import { formatColor, toCss } from '../core/color';
+import { PaletteColorSpace } from './colorSpace';
 import { preloadColorPicker } from './deferred';
 import type { SwatchSlot } from './Swatches';
 
@@ -31,6 +33,7 @@ export function ColorWell({
   size = 'md',
   ref,
 }: ColorWellProps) {
+  const space = use(PaletteColorSpace);
   if (size === 'lg') {
     return (
       <div ref={ref} {...stylex.props(styles.well, styles.wellLarge)}>
@@ -45,7 +48,7 @@ export function ColorWell({
               styles.chip,
               styles.chipLarge,
               styles.secondary,
-              styles.fill(toCss(secondary)),
+              styles.fill(toCss(secondary, space)),
             )}
           />
           <span
@@ -53,7 +56,7 @@ export function ColorWell({
               styles.chip,
               styles.chipLarge,
               styles.primary,
-              styles.fill(toCss(primary)),
+              styles.fill(toCss(primary, space)),
             )}
           />
         </button>
@@ -66,13 +69,13 @@ export function ColorWell({
         type="button"
         aria-label={`Secondary color, ${formatColor(secondary)}`}
         onClick={() => onEdit('secondary')}
-        {...stylex.props(styles.chip, styles.secondary, styles.fill(toCss(secondary)))}
+        {...stylex.props(styles.chip, styles.secondary, styles.fill(toCss(secondary, space)))}
       />
       <button
         type="button"
         aria-label={`Primary color, ${formatColor(primary)}`}
         onClick={() => onEdit('primary')}
-        {...stylex.props(styles.chip, styles.primary, styles.fill(toCss(primary)))}
+        {...stylex.props(styles.chip, styles.primary, styles.fill(toCss(primary, space)))}
       />
       <button
         type="button"

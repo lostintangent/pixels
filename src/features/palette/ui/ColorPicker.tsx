@@ -1,11 +1,12 @@
 import * as stylex from '@stylexjs/stylex';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { colorVars, radiusVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useEffect, useRef, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { PackedColor } from '../../document';
 import { formatColor, fromHsv, readHexDraft, toCss, toHsvKeepingHue } from '../core/color';
 import type { Hsv } from '../core/color';
+import { PaletteColorSpace } from './colorSpace';
 
 export interface ColorPickerProps {
   color: PackedColor;
@@ -108,7 +109,11 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
   };
 
   const invalid = draft !== formatColor(color) && readHexDraft(draft).kind === 'invalid';
-  const css = toCss(color);
+  const space = use(PaletteColorSpace);
+  const css = toCss(color, space);
+  // The field and rail are drawn in the document's space too, so a hue looks the same as it paints.
+  const p3 = space === 'display-p3';
+  const pure = p3 ? toCss(fromHsv({ h, s: 1, v: 1 }), space) : `hsl(${h} 100% 50%)`;
 
   return (
     <div {...stylex.props(styles.picker)}>
@@ -123,7 +128,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
           stylex.defaultMarker(),
           styles.field,
           size === 'lg' && styles.fieldLarge,
-          styles.hueBase(h),
+          styles.fill(pure),
         )}
       >
         <div {...stylex.props(styles.thumb, styles.at(s, 1 - v), styles.fill(css))} />
@@ -137,15 +142,10 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
         aria-valuenow={Math.round(h)}
         onPointerDown={onHue}
         onKeyDown={onHueKey}
-        {...stylex.props(stylex.defaultMarker(), styles.hue)}
+        {...stylex.props(stylex.defaultMarker(), styles.hue, p3 && styles.hueP3)}
       >
         <div
-          {...stylex.props(
-            styles.thumb,
-            styles.hueThumb,
-            styles.hueAt(h / 360),
-            styles.fill(`hsl(${h} 100% 50%)`),
-          )}
+          {...stylex.props(styles.thumb, styles.hueThumb, styles.hueAt(h / 360), styles.fill(pure))}
         />
       </div>
       <div {...stylex.props(styles.hexRow)}>
@@ -197,7 +197,6 @@ const styles = stylex.create({
     boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff14)',
   },
   fieldLarge: { height: 148 },
-  hueBase: (hue: number) => ({ backgroundColor: `hsl(${hue} 100% 50%)` }),
   hue: {
     position: 'relative',
     height: 12,
@@ -214,6 +213,10 @@ const styles = stylex.create({
       insetInline: 0,
       insetBlock: -16,
     },
+  },
+  hueP3: {
+    backgroundImage:
+      'linear-gradient(to right in display-p3, color(display-p3 1 0 0), color(display-p3 1 1 0) 17%, color(display-p3 0 1 0) 33%, color(display-p3 0 1 1) 50%, color(display-p3 0 0 1) 67%, color(display-p3 1 0 1) 83%, color(display-p3 1 0 0))',
   },
   thumb: {
     position: 'absolute',

@@ -60,6 +60,17 @@ describe('hex', () => {
     expect(toCss(packRgba(255, 0, 0))).toBe('#ff0000');
     expect(toCss(packRgba(255, 0, 0, 0))).toBe('rgb(255 0 0 / 0)');
   });
+
+  test('P3 documents name their bytes in display-p3, and every byte round-trips', () => {
+    expect(toCss(packRgba(255, 0, 0), 'display-p3')).toBe('color(display-p3 1 0 0 / 1)');
+    expect(toCss(packRgba(232, 85, 61, 128), 'display-p3')).toBe(
+      'color(display-p3 0.9098 0.3333 0.2392 / 0.502)',
+    );
+    for (let byte = 0; byte < 256; byte++) {
+      const channel = toCss(packRgba(byte, 0, 0), 'display-p3').match(/p3 ([\d.]+)/)![1]!;
+      expect(Math.round(Number(channel) * 255)).toBe(byte);
+    }
+  });
 });
 
 describe('hsv', () => {

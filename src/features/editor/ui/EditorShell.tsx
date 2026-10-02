@@ -33,6 +33,7 @@ import {
   ColorSheet,
   ColorWell,
   DEFAULT_PALETTE,
+  PaletteColorSpace,
   RECENT_LIMIT,
 } from '../../palette';
 import type { EditorCommand } from '../core/shortcuts';
@@ -136,6 +137,7 @@ function Editor({ document, isNew, store, layout, preferences }: EditorProps) {
     }),
   );
   const scheme = useColorScheme();
+  const colorSpace = useSelector(session.bitmap, (bitmap) => bitmap.colorSpace);
 
   useEffect(() => {
     const subscription = session.state.subscribe(() => {
@@ -152,14 +154,16 @@ function Editor({ document, isNew, store, layout, preferences }: EditorProps) {
 
   return (
     <EditorProvider value={session}>
-      <FileActionsProvider session={session} store={store} layout={layout}>
-        <main {...stylex.props(styles.app, layout === 'phone' && styles.phone)}>
-          <Canvas session={session} />
-          {layout === 'phone' ? <PhoneChrome /> : <DesktopChrome />}
-          <Panels layout={layout} />
-          <DropOverlay />
-        </main>
-      </FileActionsProvider>
+      <PaletteColorSpace value={colorSpace}>
+        <FileActionsProvider session={session} store={store} layout={layout}>
+          <main {...stylex.props(styles.app, layout === 'phone' && styles.phone)}>
+            <Canvas session={session} />
+            {layout === 'phone' ? <PhoneChrome /> : <DesktopChrome />}
+            <Panels layout={layout} />
+            <DropOverlay />
+          </main>
+        </FileActionsProvider>
+      </PaletteColorSpace>
     </EditorProvider>
   );
 }

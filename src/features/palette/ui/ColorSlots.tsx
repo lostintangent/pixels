@@ -1,7 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
+import { use } from 'react';
 import type { PackedColor } from '../../document';
 import { formatColor, toCss } from '../core/color';
+import { PaletteColorSpace } from './colorSpace';
 import type { SwatchSlot } from './Swatches';
 
 export interface ColorSlotsProps {
@@ -13,6 +15,7 @@ export interface ColorSlotsProps {
 
 /** Which color is being edited, as two 44px chips. Touch surfaces use it where the well can't. */
 export function ColorSlots({ editing, onEditingChange, primary, secondary }: ColorSlotsProps) {
+  const space = use(PaletteColorSpace);
   return (
     <div role="radiogroup" aria-label="Color slot" {...stylex.props(styles.slots)}>
       {(['primary', 'secondary'] as const).map((slot) => {
@@ -27,7 +30,7 @@ export function ColorSlots({ editing, onEditingChange, primary, secondary }: Col
             onClick={() => onEditingChange(slot)}
             {...stylex.props(
               styles.slot,
-              styles.fill(toCss(color)),
+              styles.fill(toCss(color, space)),
               editing === slot && styles.active,
             )}
           />
