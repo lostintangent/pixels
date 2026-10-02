@@ -1,15 +1,13 @@
 import * as stylex from '@stylexjs/stylex';
-import { Button } from '@astryxdesign/core/Button';
-import { IconButton } from '@astryxdesign/core/IconButton';
 import { Kbd } from '@astryxdesign/core/Kbd';
 import { Slider } from '@astryxdesign/core/Slider';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { Copy, CopyPlus, Scissors, Trash2, X } from 'lucide-react';
+import { useEffect } from 'react';
 import { BRUSH_SIZES, brushSizeAt, brushSizeIndex } from '../core/brush';
 import { shapeInfo, toolInfo, usesBrush } from '../core/tools';
 import type { Layout } from '../session/session';
+import { ToolActions } from './dialogs';
 import { useEditor, useEditorState } from './EditorContext';
-import { copyFromChrome } from './files/useClipboard';
 import { pixelVars } from './tokens.stylex';
 
 // Hints follow the pointer, not the layout: a tablet in the desktop layout taps.
@@ -26,9 +24,6 @@ const HINTS = {
   },
 } as const;
 
-type SelectionRun = 'all' | 'clear' | 'commit' | 'duplicate' | 'paste';
-type ShapeRun = 'delete' | 'deselect' | 'duplicate';
-
 /** The contextual strip: brush size, selection actions, or a one-line hint. */
 export function ToolOptions({ layout }: { layout: Layout }) {
   const session = useEditor();
@@ -37,12 +32,12 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   const shapeKind = useEditorState((state) => state.shapeKind);
   const shapeWidth = useEditorState((state) => state.shapeWidth);
   const selection = useEditorState((state) => state.selection);
-  const canPaste = useEditorState((state) => state.hasClipboardPixels);
   const selectedShape = useEditorState((state) => state.selectedShape);
-  const run = (action: SelectionRun) => session.run({ type: 'selection', action });
-  const runShape = (action: ShapeRun) => session.run({ type: 'shape', action });
   const phone = layout === 'phone';
-  const tooltip = (text: string) => (phone ? undefined : text);
+  const selects = tool === 'select' || tool === 'shapes';
+  useEffect(() => {
+    if (selects) ToolActions.preload();
+  }, [selects]);
 
   /*
    * Shapes reuse the brush's size ladder, relabeled Width. With nothing selected it sets the next
@@ -88,40 +83,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
             <Kbd keys="]" />
           </span>
         )}
-        {selectedShape && (
-          <>
-            {!phone && <span aria-hidden {...stylex.props(styles.divider)} />}
-            <IconButton
-              variant="ghost"
-              label="Duplicate shape"
-              tooltip={tooltip('Duplicate  ·  ⌥ drag')}
-              icon={<CopyPlus size={18} />}
-              onClick={() => runShape('duplicate')}
-            />
-            <IconButton
-              variant="ghost"
-              label="Delete shape"
-              tooltip={tooltip('Delete  ·  ⌫')}
-              icon={<Trash2 size={18} />}
-              onClick={() => runShape('delete')}
-            />
-            {phone ? (
-              <IconButton
-                variant="ghost"
-                label="Deselect"
-                icon={<X size={20} />}
-                onClick={() => runShape('deselect')}
-              />
-            ) : (
-              <Button
-                variant="ghost"
-                label="Deselect"
-                tooltip="Deselect  ·  Esc"
-                onClick={() => runShape('deselect')}
-              />
-            )}
-          </>
-        )}
+        {selectedShape && <ToolActions when kind="shape" phone={phone} />}
       </div>
     );
   }
@@ -134,55 +96,11 @@ export function ToolOptions({ layout }: { layout: Layout }) {
           {selection.width} × {selection.height}
           {!phone && `  at ${selection.x}, ${selection.y}`}
         </span>
-        {!phone && <span aria-hidden {...stylex.props(styles.divider)} />}
-        <IconButton
-          variant="ghost"
-          label="Copy"
-          tooltip={tooltip('Copy  ·  ⌘C')}
-          icon={<Copy size={18} />}
-          onClick={() => copyFromChrome(session, 'copy')}
-        />
-        <IconButton
-          variant="ghost"
-          label="Cut"
-          tooltip={tooltip('Cut  ·  ⌘X')}
-          icon={<Scissors size={18} />}
-          onClick={() => copyFromChrome(session, 'cut')}
-        />
-        <IconButton
-          variant="ghost"
-          label="Duplicate"
-          tooltip={tooltip('Duplicate in place')}
-          icon={<CopyPlus size={18} />}
-          onClick={() => run('duplicate')}
-        />
-        <IconButton
-          variant="ghost"
-          label="Clear pixels"
-          tooltip={tooltip('Clear  ·  Delete')}
-          icon={<Trash2 size={18} />}
-          onClick={() => run('clear')}
-        />
-        {phone ? (
-          <IconButton
-            variant="ghost"
-            label="Deselect"
-            icon={<X size={20} />}
-            onClick={() => run('commit')}
-          />
-        ) : (
-          <Button
-            variant="ghost"
-            label="Deselect"
-            tooltip="Deselect  ·  Enter"
-            onClick={() => run('commit')}
-          />
-        )}
+        <ToolActions when kind="selection" phone={phone} />
       </div>
     );
   }
 
-  // Touch has no ⌘A or ⌘V, so Select offers both. Paste waits until there's something to paste.
   if (tool === 'select') {
     return (
       <div key="select" {...stylex.props(styles.body, phone && styles.fill)}>
@@ -192,21 +110,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
         ) : (
           <Hint kind="select" />
         )}
-        {!phone && <span aria-hidden {...stylex.props(styles.divider)} />}
-        <Button
-          variant="ghost"
-          label="Select all"
-          tooltip={tooltip('Select all  ·  ⌘A')}
-          onClick={() => run('all')}
-        />
-        {canPaste && (
-          <Button
-            variant="ghost"
-            label="Paste"
-            tooltip={tooltip('Paste  ·  ⌘V')}
-            onClick={() => run('paste')}
-          />
-        )}
+        <ToolActions when kind="select" phone={phone} />
       </div>
     );
   }
@@ -275,5 +179,4 @@ const styles = stylex.create({
   keys: { display: { default: 'flex', [COARSE]: 'none' }, gap: 4 },
   mouseOnly: { display: { default: null, [COARSE]: 'none' } },
   touchOnly: { display: { default: 'none', [COARSE]: 'block' } },
-  divider: { width: 1, height: 20, marginInline: 2, backgroundColor: colorVars['--color-border'] },
 });
