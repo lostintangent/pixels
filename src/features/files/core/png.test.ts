@@ -553,6 +553,109 @@ describe('PNG decode: Adam7 interlacing', () => {
   });
 });
 
+test('312 filtered RGBA8 fixtures preserve every byte, including hidden RGB', async () => {
+  const widths = [1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 32, 63, 64];
+  const heights = [1, 2, 3, 7];
+  const patterns = [0, 1, 2, 3, 4, 5]; // five PNG filters plus a different filter on each row
+  let cases = 0;
+
+  function predictor(filter: number, left: number, above: number, upperLeft: number): number {
+    if (filter === 0) return 0;
+    if (filter === 1) return left;
+    if (filter === 2) return above;
+    if (filter === 3) return (left + above) >> 1;
+    const base = left + above - upperLeft;
+    const a = Math.abs(base - left);
+    const b = Math.abs(base - above);
+    const c = Math.abs(base - upperLeft);
+    return a <= b && a <= c ? left : b <= c ? above : upperLeft;
+  }
+
+  for (const width of widths) {
+    for (const height of heights) {
+      for (const pattern of patterns) {
+        const rowBytes = width * 4;
+        const expected = new Uint8Array(rowBytes * height);
+        const filtered = new Uint8Array((rowBytes + 1) * height);
+        for (let y = 0; y < height; y++) {
+          const filter = pattern === 5 ? y % 5 : pattern;
+          filtered[y * (rowBytes + 1)] = filter;
+          for (let i = 0; i < rowBytes; i++) {
+            const offset = y * rowBytes + i;
+            const value =
+              i % 4 === 3 ? [0, 1, 128, 255][(i / 4 + y) % 4]! : (i * 73 + y * 139 + width) & 255;
+            expected[offset] = value;
+            const left = i >= 4 ? expected[offset - 4]! : 0;
+            const above = y > 0 ? expected[offset - rowBytes]! : 0;
+            const upperLeft = y > 0 && i >= 4 ? expected[offset - rowBytes - 4]! : 0;
+            filtered[y * (rowBytes + 1) + 1 + i] =
+              (value - predictor(filter, left, above, upperLeft) + 256) & 255;
+          }
+        }
+        const png = await buildTestPng({
+          width,
+          height,
+          bitDepth: 8,
+          colorType: 6,
+          rawScanlines: filtered,
+        });
+        const decoded = await decodePng(png);
+        expect(new Uint8Array(decoded.pixels.buffer)).toEqual(expected);
+        cases++;
+      }
+    }
+  }
+  expect(cases).toBe(312);
+});
+
+test('RGB8 fast path honors all filters and the exact transparent color key', async () => {
+  const width = 3;
+  const rows = [
+    new Uint8Array([10, 20, 30, 21, 37, 49, 60, 71, 83]),
+    new Uint8Array([90, 101, 113, 10, 20, 30, 140, 151, 163]),
+  ];
+  const expected = [
+    packRgba(10, 20, 30, 0),
+    packRgba(21, 37, 49),
+    packRgba(60, 71, 83),
+    packRgba(90, 101, 113),
+    packRgba(10, 20, 30, 0),
+    packRgba(140, 151, 163),
+  ];
+  for (let filter = 0; filter <= 4; filter++) {
+    const scanlines = new Uint8Array((width * 3 + 1) * rows.length);
+    for (let y = 0; y < rows.length; y++) {
+      scanlines[y * (width * 3 + 1)] = filter;
+      for (let i = 0; i < width * 3; i++) {
+        const left = i >= 3 ? rows[y]![i - 3]! : 0;
+        const above = y ? rows[y - 1]![i]! : 0;
+        const upperLeft = y && i >= 3 ? rows[y - 1]![i - 3]! : 0;
+        const base = left + above - upperLeft;
+        const da = Math.abs(base - left);
+        const db = Math.abs(base - above);
+        const dc = Math.abs(base - upperLeft);
+        const predictor = [
+          0,
+          left,
+          above,
+          (left + above) >> 1,
+          da <= db && da <= dc ? left : db <= dc ? above : upperLeft,
+        ][filter]!;
+        scanlines[y * (width * 3 + 1) + 1 + i] = (rows[y]![i]! - predictor + 256) & 255;
+      }
+    }
+    const png = await buildTestPng({
+      width,
+      height: rows.length,
+      bitDepth: 8,
+      colorType: 2,
+      trns: [0, 10, 0, 20, 0, 30],
+      rawScanlines: scanlines,
+    });
+    expect([...(await decodePng(png)).pixels]).toEqual(expected);
+  }
+});
+
 describe('PNG decode: error cases', () => {
   test('rejects a file over the 4096 document size limit with reason too-large', async () => {
     const bytes = await buildTestPng({

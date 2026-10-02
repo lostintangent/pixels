@@ -274,6 +274,12 @@ function decodeImage(
   palette: Uint8Array | null,
   trns: Uint8Array | null,
 ): Uint32Array {
+  if (ihdr.interlace === 0 && ihdr.bitDepth === 8 && ihdr.colorType === 6) {
+    return decodeRgba8(raw, ihdr.width, ihdr.height);
+  }
+  if (ihdr.interlace === 0 && ihdr.bitDepth === 8 && ihdr.colorType === 2) {
+    return decodeRgb8(raw, ihdr.width, ihdr.height, trns);
+  }
   const pixels = new Uint32Array(ihdr.width * ihdr.height);
   const outBytes = new Uint8Array(pixels.buffer);
   if (ihdr.interlace === 0) {
@@ -303,6 +309,66 @@ function decodeImage(
       );
       offset += consumed;
     }
+  }
+  return pixels;
+}
+
+/** The common screenshot/photo format is already RGBA byte-for-byte. Unfilter each row straight
+ * into the final pixel buffer instead of materializing scanlines and expanding them again. */
+function decodeRgba8(raw: Uint8Array, width: number, height: number): Uint32Array {
+  const rowBytes = width * 4;
+  const stride = rowBytes + 1;
+  if (raw.length < stride * height) throw corrupt('The PNG pixel data is truncated.');
+  const pixels = new Uint32Array(width * height);
+  const out = new Uint8Array(pixels.buffer);
+  let previous: Uint8Array | null = null;
+  for (let y = 0; y < height; y++) {
+    const offset = y * stride;
+    const filter = raw[offset]!;
+    const source = raw.subarray(offset + 1, offset + stride);
+    const row = out.subarray(y * rowBytes, (y + 1) * rowBytes);
+    if (filter === 0) row.set(source);
+    else unfilterRow(filter, source, row, previous, 4);
+    previous = row;
+  }
+  return pixels;
+}
+
+/** RGB scanlines need alpha expansion, but no bit-depth scaling or per-pixel format dispatch. */
+function decodeRgb8(
+  raw: Uint8Array,
+  width: number,
+  height: number,
+  trns: Uint8Array | null,
+): Uint32Array {
+  const rowBytes = width * 3;
+  const stride = rowBytes + 1;
+  if (raw.length < stride * height) throw corrupt('The PNG pixel data is truncated.');
+  const pixels = new Uint32Array(width * height);
+  let previous: Uint8Array | null = null;
+  let row: Uint8Array = new Uint8Array(rowBytes);
+  const spare: Uint8Array = new Uint8Array(rowBytes);
+  const key =
+    trns && trns.length >= 6
+      ? [readUint16BE(trns, 0), readUint16BE(trns, 2), readUint16BE(trns, 4)]
+      : null;
+  for (let y = 0; y < height; y++) {
+    const offset = y * stride;
+    const filter = raw[offset]!;
+    const source = raw.subarray(offset + 1, offset + stride);
+    if (filter === 0) row.set(source);
+    else unfilterRow(filter, source, row, previous, 3);
+    for (let x = 0; x < width; x++) {
+      const i = x * 3;
+      const r = row[i]!;
+      const g = row[i + 1]!;
+      const b = row[i + 2]!;
+      const alpha = key && r === key[0] && g === key[1] && b === key[2] ? 0 : 255;
+      pixels[y * width + x] = (alpha << 24) | (b << 16) | (g << 8) | r;
+    }
+    const old = previous;
+    previous = row;
+    row = old ?? spare;
   }
   return pixels;
 }
@@ -635,11 +701,19 @@ function readAscii(bytes: Uint8Array, offset: number, length: number): string {
 let crcTable: Int32Array | null = null;
 function getCrcTable(): Int32Array {
   if (crcTable) return crcTable;
-  const table = new Int32Array(256);
+  // Eight tables process a whole machine word pair per loop without sacrificing PNG's CRC.
+  const table = new Int32Array(8 * 256);
   for (let n = 0; n < 256; n++) {
     let c = n;
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     table[n] = c;
+  }
+  for (let n = 0; n < 256; n++) {
+    let c = table[n]!;
+    for (let k = 1; k < 8; k++) {
+      c = table[c & 255]! ^ (c >>> 8);
+      table[k * 256 + n] = c;
+    }
   }
   crcTable = table;
   return table;
@@ -648,6 +722,21 @@ function getCrcTable(): Int32Array {
 function crc32(bytes: Uint8Array): number {
   const table = getCrcTable();
   let crc = 0xffffffff;
-  for (let i = 0; i < bytes.length; i++) crc = table[(crc ^ bytes[i]!) & 0xff]! ^ (crc >>> 8);
+  let i = 0;
+  const end = bytes.length - 8;
+  for (; i <= end; i += 8) {
+    const first =
+      crc ^ (bytes[i]! | (bytes[i + 1]! << 8) | (bytes[i + 2]! << 16) | (bytes[i + 3]! << 24));
+    crc =
+      table[7 * 256 + (first & 255)]! ^
+      table[6 * 256 + ((first >>> 8) & 255)]! ^
+      table[5 * 256 + ((first >>> 16) & 255)]! ^
+      table[4 * 256 + (first >>> 24)]! ^
+      table[3 * 256 + bytes[i + 4]!]! ^
+      table[2 * 256 + bytes[i + 5]!]! ^
+      table[256 + bytes[i + 6]!]! ^
+      table[bytes[i + 7]!]!;
+  }
+  for (; i < bytes.length; i++) crc = table[(crc ^ bytes[i]!) & 255]! ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
