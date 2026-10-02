@@ -3,7 +3,7 @@ import { RECENT_LIMIT } from '../../palette/model';
 import { BRUSH_SIZES } from './brush';
 import { DEFAULT_TOOL_PREFERENCES } from './state';
 import type { ToolPreferences } from './state';
-import { SHAPES, SHAPES_IN_RAIL, TOOLS } from './tools';
+import { SHAPES, TOOLS } from './tools';
 import type { EditorTool, ShapeKind } from './tools';
 
 /**
@@ -48,7 +48,7 @@ function decodeRecent(values: readonly unknown[]): readonly PackedColor[] {
 }
 
 function isEditorTool(value: unknown): value is EditorTool {
-  return TOOLS.some((tool) => tool.kind === value) || (SHAPES_IN_RAIL && value === 'shapes');
+  return TOOLS.some((tool) => tool.kind === value) || value === 'shapes';
 }
 
 function isShapeKind(value: unknown): value is ShapeKind {

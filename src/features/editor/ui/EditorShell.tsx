@@ -225,8 +225,10 @@ function Canvas({ session }: { session: EditorSession }) {
           y >= selection.y &&
           x < selection.x + selection.width &&
           y < selection.y + selection.height;
-        return within ? (alt ? 'copy' : 'move') : 'crosshair';
+        if (within) return alt ? 'copy' : 'move';
+        return session.shapeCursorAt(point, alt) ?? 'crosshair';
       }
+      if (tool === 'shapes') return session.shapeCursorAt(point, alt) ?? 'crosshair';
       // The renderer draws the brush footprint, so a second cursor would only add noise.
       const inside = x >= 0 && y >= 0 && x < document.width && y < document.height;
       const brush = usesBrush(tool) && !alt;

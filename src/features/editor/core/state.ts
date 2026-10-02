@@ -11,6 +11,12 @@ export type EditorPanel = 'new' | 'export' | 'resize' | 'colors';
 export type SaveStatus = 'saved' | 'saving' | 'error';
 export type ColorSlot = 'primary' | 'secondary';
 
+/** The selected markup shape. It never coexists with a pixel selection. */
+export interface SelectedShape {
+  id: string;
+  kind: ShapeKind;
+}
+
 export interface DocumentSummary {
   name: string;
   width: number;
@@ -34,6 +40,7 @@ export interface EditorState extends PaletteState {
   chromeHidden: boolean;
   panel: EditorPanel | null;
   selection: PixelRect | null;
+  selectedShape: SelectedShape | null;
   hasClipboardPixels: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -72,6 +79,7 @@ export function initialEditorState(
     chromeHidden: false,
     panel: null,
     selection: null,
+    selectedShape: null,
     hasClipboardPixels: false,
     canUndo: false,
     canRedo: false,
@@ -105,9 +113,12 @@ export function finishPick(state: EditorState, pointer: PointerKind): EditorStat
   return selectTool(state, state.previousTool ?? 'pencil');
 }
 
-/** `[` and `]` size whatever the current tool draws with: the shape stroke or the brush. */
+/**
+ * `[` and `]` size whatever the current tool draws with: the shape stroke or the brush. A selected
+ * shape's width wins, since that's what the context bar shows.
+ */
 export function stepBrush(state: EditorState, direction: -1 | 1): EditorState {
-  if (state.tool === 'shapes') {
+  if (state.tool === 'shapes' || state.selectedShape) {
     const shapeWidth = stepBrushSize(state.shapeWidth, direction);
     return shapeWidth === state.shapeWidth ? state : { ...state, shapeWidth };
   }

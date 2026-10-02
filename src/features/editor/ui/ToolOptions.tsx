@@ -27,6 +27,7 @@ const HINTS = {
 } as const;
 
 type SelectionRun = 'all' | 'clear' | 'commit' | 'duplicate' | 'paste';
+type ShapeRun = 'delete' | 'deselect' | 'duplicate';
 
 /** The contextual strip: brush size, selection actions, or a one-line hint. */
 export function ToolOptions({ layout }: { layout: Layout }) {
@@ -37,22 +38,32 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   const shapeWidth = useEditorState((state) => state.shapeWidth);
   const selection = useEditorState((state) => state.selection);
   const canPaste = useEditorState((state) => state.hasClipboardPixels);
+  const selectedShape = useEditorState((state) => state.selectedShape);
   const run = (action: SelectionRun) => session.run({ type: 'selection', action });
+  const runShape = (action: ShapeRun) => session.run({ type: 'shape', action });
   const phone = layout === 'phone';
   const tooltip = (text: string) => (phone ? undefined : text);
 
-  // Shapes reuse the brush's size ladder, relabeled Width, for the next shape's stroke.
-  if (tool === 'shapes' || usesBrush(tool)) {
-    const shapes = tool === 'shapes';
+  /*
+   * Shapes reuse the brush's size ladder, relabeled Width. With nothing selected it sets the next
+   * shape's stroke. With a shape selected it restyles that shape, beside the shape's actions.
+   */
+  if (tool === 'shapes' || selectedShape || usesBrush(tool)) {
+    const shapes = tool === 'shapes' || selectedShape !== null;
     const size = shapes ? shapeWidth : brushSize;
     return (
-      <div key={shapes ? 'shapes' : 'brush'} {...stylex.props(styles.body, phone && styles.fill)}>
+      <div
+        key={selectedShape ? 'shape' : shapes ? 'shapes' : 'brush'}
+        {...stylex.props(styles.body, phone && styles.fill)}
+      >
         {!phone && (
           <span {...stylex.props(styles.label)}>
-            {shapes ? shapeInfo(shapeKind).label : toolInfo(tool).label}
+            {shapes ? shapeInfo(selectedShape?.kind ?? shapeKind).label : toolInfo(tool).label}
           </span>
         )}
-        {!phone && <span {...stylex.props(styles.hint)}>{shapes ? 'Width' : 'Size'}</span>}
+        {!phone && !selectedShape && (
+          <span {...stylex.props(styles.hint)}>{shapes ? 'Width' : 'Size'}</span>
+        )}
         <div {...stylex.props(styles.slider, phone && styles.fill)}>
           <Slider
             label={shapes ? 'Stroke width' : 'Brush size'}
@@ -71,11 +82,45 @@ export function ToolOptions({ layout }: { layout: Layout }) {
           />
         </div>
         <span {...stylex.props(styles.number)}>{size} px</span>
-        {!phone && (
+        {!phone && !selectedShape && (
           <span {...stylex.props(styles.keys)} aria-hidden>
             <Kbd keys="[" />
             <Kbd keys="]" />
           </span>
+        )}
+        {selectedShape && (
+          <>
+            {!phone && <span aria-hidden {...stylex.props(styles.divider)} />}
+            <IconButton
+              variant="ghost"
+              label="Duplicate shape"
+              tooltip={tooltip('Duplicate  ·  ⌥ drag')}
+              icon={<CopyPlus size={18} />}
+              onClick={() => runShape('duplicate')}
+            />
+            <IconButton
+              variant="ghost"
+              label="Delete shape"
+              tooltip={tooltip('Delete  ·  ⌫')}
+              icon={<Trash2 size={18} />}
+              onClick={() => runShape('delete')}
+            />
+            {phone ? (
+              <IconButton
+                variant="ghost"
+                label="Deselect"
+                icon={<X size={20} />}
+                onClick={() => runShape('deselect')}
+              />
+            ) : (
+              <Button
+                variant="ghost"
+                label="Deselect"
+                tooltip="Deselect  ·  Esc"
+                onClick={() => runShape('deselect')}
+              />
+            )}
+          </>
         )}
       </div>
     );

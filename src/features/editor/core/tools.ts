@@ -31,10 +31,8 @@ export function usesBrush(kind: EditorTool): boolean {
 
 /**
  * Markup shapes share one rail item, like Preview's Shapes popover. They aren't pixel tools: they
- * draw editable objects above the document, so the rail item stays off until drawing lands.
+ * draw editable objects above the document.
  */
-export const SHAPES_IN_RAIL = false;
-
 export type ShapeKind = 'rectangle' | 'arrow';
 /** Everything the rail can select: the pixel tools plus the Shapes item. */
 export type EditorTool = ToolKind | 'shapes';

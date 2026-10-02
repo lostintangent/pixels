@@ -3,7 +3,6 @@ import { packRgba } from '../../document';
 import { RECENT_LIMIT } from '../../palette/model';
 import { decodeToolPreferences, sameToolPreferences } from './preferences';
 import { DEFAULT_TOOL_PREFERENCES } from './state';
-import { SHAPES_IN_RAIL } from './tools';
 import type { ToolPreferences } from './state';
 
 const red = packRgba(255, 0, 0, 255);
@@ -44,9 +43,8 @@ describe('decodeToolPreferences', () => {
     );
   });
 
-  test('restores the Shapes tool only while the rail offers it', () => {
-    const decoded = decodeToolPreferences({ ...saved, tool: 'shapes' }).tool;
-    expect(decoded).toBe(SHAPES_IN_RAIL ? 'shapes' : DEFAULT_TOOL_PREFERENCES.tool);
+  test('restores the Shapes tool', () => {
+    expect(decodeToolPreferences({ ...saved, tool: 'shapes' }).tool).toBe('shapes');
   });
 
   test('rejects colors outside 32-bit unsigned integers', () => {

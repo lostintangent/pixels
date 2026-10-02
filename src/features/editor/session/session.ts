@@ -1,7 +1,7 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
 import { screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
-import { resizeAnnotatedDocument } from '../../annotations/model';
+import { findAnnotationsFor } from '../../annotations/model';
 import type {
   OverlayPreview,
   OverlayState,
@@ -32,7 +32,7 @@ import {
 import type { FloatingSelection, LinePreview, SelectionSession, StrokeSession } from '../../tools';
 import { fitAroundIslands, frameCenter } from '../core/fit';
 import type { IslandRect } from '../core/fit';
-import { SHAPES_IN_RAIL, usesBrush } from '../core/tools';
+import { usesBrush } from '../core/tools';
 import type { EditorCommand, SelectionAction } from '../core/shortcuts';
 import {
   chooseColor,
@@ -54,6 +54,7 @@ import type {
 } from '../core/state';
 import { appClipboard } from './clipboard';
 import type { PixelClipboard } from './clipboard';
+import type { ShapeController } from './shapes';
 
 /** Modifier state for one canvas gesture sample. */
 export interface GestureInput {
@@ -83,7 +84,17 @@ type Gesture =
   | { kind: 'move'; grab: PixelPoint }
   | { kind: 'pick'; pointer: PointerKind; before: PackedColor }
   // A fill lands on press, so the rest of the gesture only waits for the lift.
-  | { kind: 'fill' };
+  | { kind: 'fill' }
+  | { kind: 'shape'; shapes: ShapeController }
+  /** A Shapes press that landed before the controller loaded. It replays once the module arrives. */
+  | { kind: 'shape-queued'; press: QueuedPress };
+
+interface QueuedPress {
+  input: GestureInput;
+  touch: boolean;
+  latest: GestureInput | null;
+  ended: boolean;
+}
 
 export interface EditorSession {
   readonly state: Store<EditorState>;
@@ -112,8 +123,11 @@ export interface EditorSession {
   setSaveStatus(status: SaveStatus): void;
   /** Pastes outside pixels centered on the canvas as a selection. False when they don't fit. */
   place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels' | 'colorSpace'>): boolean;
-  resizeDocument(width: number, height: number, anchor: CanvasAnchor): void;
+  /** Loads the annotation-aware resize on first use, so it stays off the first load. */
+  resizeDocument(width: number, height: number, anchor: CanvasAnchor): Promise<void>;
   toDocument(point: ScreenPoint): PixelPoint;
+  /** The cursor over a markup shape or one of its handles, or null over anything else. */
+  shapeCursorAt(point: PixelPoint, alt: boolean): string | null;
   /** Alt previews the temporary eyedropper's single pixel instead of the brush. */
   hover(point: PixelPoint | null, alt?: boolean): void;
   /** A mouse unless told otherwise. Touch and pen make an eyedropper pick one-shot. */
@@ -177,6 +191,9 @@ export function createEditorSession({
   let refitOnResize = false;
   let gesture: Gesture | null = null;
   let selection: SelectionSession = beginSelection(initial, history);
+  let shapes: ShapeController | null = null;
+  let shapesLoading: Promise<void> | null = null;
+  let queuedPress: QueuedPress | null = null;
 
   const update = (transition: (current: EditorState) => EditorState) => state.setState(transition);
   const setOverlay = (patch: Partial<OverlayState>) =>
@@ -198,6 +215,8 @@ export function createEditorSession({
   }
 
   function setSelection(rect: PixelRect | null): void {
+    // The pixel marquee and a shape selection are exclusive.
+    if (rect) shapes?.deselect();
     update((current) => (current.selection === rect ? current : { ...current, selection: rect }));
     const floating = selection.floating;
     setOverlay({
@@ -205,6 +224,54 @@ export function createEditorSession({
       preview: floating ? { pixels: floating.pixels, bounds: floating.bounds } : null,
       sourceClear: selection.sourceToClear,
     });
+  }
+
+  /** Loads shape interaction before the first press can need it. */
+  function loadShapes(): Promise<void> {
+    shapesLoading ??= import('./shapes').then(({ createShapeController }) => {
+      shapes = createShapeController({
+        document,
+        history,
+        zoom: () => viewport.state.zoom,
+        state: () => state.state,
+        update,
+        showHandles: (id) => {
+          if (overlay.state.selectedAnnotationId !== id) setOverlay({ selectedAnnotationId: id });
+        },
+        clearPixels: () => {
+          commitFloating();
+          if (state.state.selection) setSelection(null);
+        },
+        committed: syncHistory,
+      });
+      replayQueuedPress();
+    });
+    return shapesLoading;
+  }
+
+  function replayQueuedPress(): void {
+    const press = queuedPress;
+    queuedPress = null;
+    if (!press || !shapes || state.state.tool !== 'shapes') return;
+    const { primary, shapeKind, shapeWidth } = state.state;
+    const pressed = shapes.press(press.input.point, {
+      draw: shapeKind,
+      style: { color: primary, width: shapeWidth },
+      alt: press.input.alt,
+      touch: press.touch,
+    });
+    if (!pressed) return;
+    if (press.latest) shapes.drag(press.latest.point, press.latest);
+    if (press.ended) {
+      shapes.lift();
+      syncHistory();
+    } else if (gesture?.kind === 'shape-queued' && gesture.press === press) {
+      gesture = { kind: 'shape', shapes };
+    }
+  }
+
+  function hasShapes(bitmap: BitmapDocument = document()): boolean {
+    return (findAnnotationsFor(bitmap)?.shapes.length ?? 0) > 0;
   }
 
   function fit(): void {
@@ -234,6 +301,7 @@ export function createEditorSession({
     selection = beginSelection(next, history);
     bitmap.setState(() => next);
     setSelection(null);
+    shapes?.revalidate();
     update((current) => ({
       ...current,
       document: { name: next.name, width: next.width, height: next.height },
@@ -269,6 +337,7 @@ export function createEditorSession({
   }
 
   function commitFloating(): boolean {
+    shapes?.flush();
     if (!selection.floating) return false;
     const committed = selection.commit();
     setSelection(null);
@@ -276,8 +345,11 @@ export function createEditorSession({
     return committed;
   }
 
-  function pickColor(point: PixelPoint): void {
-    const color = getPixel(document(), point);
+  /** A shape's exact color wins over the blended pixels beneath it. */
+  function pickColor(point: PixelPoint, touch: boolean): void {
+    const color =
+      shapes?.colorAt(point, touch) ??
+      getPixel(document(), { x: Math.floor(point.x), y: Math.floor(point.y) });
     if (color === null || alpha(color) === 0) return;
     update((current) => chooseColor(current, color, 'primary'));
   }
@@ -348,6 +420,10 @@ export function createEditorSession({
 
   /** Lifts like a drag, so a run of nudges stays one float and commits as one undo step. */
   function nudge(dx: number, dy: number): void {
+    if (state.state.selectedShape && !gesture) {
+      shapes?.nudge({ x: dx, y: dy });
+      return;
+    }
     const rect = state.state.selection;
     if (gesture || !rect) return;
     const floating = selection.floating ?? selection.lift(rect);
@@ -431,22 +507,36 @@ export function createEditorSession({
     commitFloatingSelection: commitFloating,
 
     run(command) {
+      // Nudges and width steps coalesce into the pending shape edit. Everything else lands it.
+      if (command.type !== 'nudge' && command.type !== 'brush-size') shapes?.flush();
       switch (command.type) {
         case 'tool':
           if (command.tool !== 'select') commitFloating();
+          // Pixel tools paint beneath shapes, so only Select keeps a shape selected.
+          if (command.tool !== 'select') shapes?.deselect();
+          else if (hasShapes()) void loadShapes();
+          if (command.tool === 'eyedropper' && hasShapes()) void loadShapes();
           update((current) => selectTool(current, command.tool));
           return;
         case 'shape-tool':
-          if (!SHAPES_IN_RAIL) return;
           commitFloating();
+          void loadShapes();
           update((current) => selectShape(current, command.kind));
+          return;
+        case 'shape':
+          // A shape is only ever selected through the controller, so it's loaded whenever one is.
+          if (!gesture) shapes?.run(command.action);
           return;
         case 'swap-colors':
           update(swapColors);
+          shapes?.restyle({ color: state.state.primary });
           return;
-        case 'brush-size':
+        case 'brush-size': {
+          const before = state.state.shapeWidth;
           update((current) => stepBrush(current, command.direction));
+          if (state.state.shapeWidth !== before) shapes?.restyle({ width: state.state.shapeWidth });
           return;
+        }
         case 'undo':
         case 'redo':
           if (gesture) return;
@@ -454,7 +544,10 @@ export function createEditorSession({
           const change =
             command.type === 'undo' ? history.undo(document()) : history.redo(document());
           if (change && 'document' in change) installDocument(change.document);
-          else setSelection(null);
+          else {
+            setSelection(null);
+            shapes?.revalidate();
+          }
           syncHistory();
           return;
         case 'zoom':
@@ -491,6 +584,8 @@ export function createEditorSession({
 
     chooseColor(color, slot) {
       update((current) => chooseColor(current, color, slot));
+      // Color describes what's selected: picking one restyles the selected shape.
+      if (slot === 'primary') shapes?.restyle({ color });
     },
 
     setPanel(panel) {
@@ -509,6 +604,7 @@ export function createEditorSession({
       update((current) =>
         current.shapeWidth === width ? current : { ...current, shapeWidth: width },
       );
+      shapes?.restyle({ width });
     },
 
     setLayout(next) {
@@ -574,13 +670,20 @@ export function createEditorSession({
       );
     },
 
-    resizeDocument(width, height, anchor) {
+    async resizeDocument(width, height, anchor) {
+      const { resizeAnnotatedDocument } = await import('../../annotations');
       commitFloating();
       installDocument(resizeAnnotatedDocument(document(), history, width, height, anchor));
     },
 
     toDocument(point) {
       return screenToDocument(viewport.state, point);
+    },
+
+    shapeCursorAt(point, alt) {
+      const { tool } = state.state;
+      if (gesture || !shapes || (tool !== 'shapes' && tool !== 'select')) return null;
+      return shapes.cursorAt(point, alt);
     },
 
     hover(point, alt = false) {
@@ -597,12 +700,46 @@ export function createEditorSession({
 
     beginGesture({ point, alt }, pointer = 'mouse') {
       if (gesture) return;
+      shapes?.flush();
       const cell = { x: Math.floor(point.x), y: Math.floor(point.y) };
       const { tool, brushSize, primary } = state.state;
+      const touch = pointer === 'touch';
       if (tool === 'eyedropper' || (alt && tool !== 'select' && tool !== 'shapes')) {
         gesture = { kind: 'pick', pointer, before: primary };
-        pickColor(cell);
+        pickColor(point, touch);
         return;
+      }
+      if (tool === 'select' || tool === 'shapes') {
+        const rect = state.state.selection;
+        const inMarquee =
+          tool === 'select' && rect !== null && contains(selection.floating?.bounds ?? rect, cell);
+        if (overlay.state.coarseAnnotationHandles !== touch)
+          setOverlay({ coarseAnnotationHandles: touch });
+        if (tool === 'shapes' && rect) {
+          commitFloating();
+          setSelection(null);
+        }
+        const { shapeKind, shapeWidth } = state.state;
+        const pressed =
+          !inMarquee &&
+          shapes?.press(point, {
+            draw: tool === 'shapes' ? shapeKind : null,
+            style: { color: primary, width: shapeWidth },
+            alt,
+            touch,
+          });
+        if (pressed && shapes) {
+          gesture = { kind: 'shape', shapes };
+          return;
+        }
+        if (tool === 'shapes') {
+          if (shapes) return;
+          queuedPress = { input: { point, shift: false, alt }, touch, latest: null, ended: false };
+          gesture = { kind: 'shape-queued', press: queuedPress };
+          void loadShapes();
+          return;
+        }
+        if (!inMarquee) shapes?.deselect();
       }
       if (tool === 'select') {
         const rect = state.state.selection;
@@ -623,7 +760,6 @@ export function createEditorSession({
         setSelection(marqueeRect(cell, cell));
         return;
       }
-      if (tool === 'shapes') return;
       commitFloating();
       if (selection.floating === null && state.state.selection) setSelection(null);
       const color = tool === 'eraser' ? TRANSPARENT : primary;
@@ -683,9 +819,16 @@ export function createEditorSession({
           return;
         }
         case 'pick':
-          if (state.state.tool === 'eyedropper') pickColor(cell);
+          if (state.state.tool === 'eyedropper')
+            pickColor(latest.point, current.pointer === 'touch');
           return;
         case 'fill':
+          return;
+        case 'shape':
+          current.shapes.drag(latest.point, latest);
+          return;
+        case 'shape-queued':
+          current.press.latest = latest;
           return;
       }
     },
@@ -713,6 +856,12 @@ export function createEditorSession({
         }
         case 'pick':
           update((s) => finishPick(s, current.pointer));
+          break;
+        case 'shape':
+          current.shapes.lift();
+          break;
+        case 'shape-queued':
+          current.press.ended = true;
           break;
         case 'move':
         case 'fill':
@@ -742,6 +891,12 @@ export function createEditorSession({
           update((s) => chooseColor(s, before, 'primary'));
           break;
         }
+        case 'shape':
+          current.shapes.cancel();
+          break;
+        case 'shape-queued':
+          queuedPress = null;
+          break;
         case 'move':
         case 'fill':
           break;
@@ -750,6 +905,7 @@ export function createEditorSession({
     },
   };
 
+  if (state.state.tool === 'shapes' || hasShapes(initial)) void loadShapes();
   return session;
 }
 

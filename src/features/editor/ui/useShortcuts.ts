@@ -33,7 +33,11 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
           shift: event.shiftKey,
           alt: event.altKey,
         },
-        { hasSelection: session.state.state.selection !== null, gesturing: session.gesturing },
+        {
+          hasSelection: session.state.state.selection !== null,
+          hasShapeSelection: session.state.state.selectedShape !== null,
+          gesturing: session.gesturing,
+        },
       );
       if (!command) return;
       if (command.type === 'nudge' && target?.closest(OWNS_ARROWS)) return;

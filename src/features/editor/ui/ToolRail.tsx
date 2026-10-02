@@ -6,7 +6,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useRef } from 'react';
 import type { KeyboardEvent, Ref } from 'react';
 import type { ToolKind } from '../../tools';
-import { SHAPES_IN_RAIL, shapeInfo, TOOLS } from '../core/tools';
+import { shapeInfo, TOOLS } from '../core/tools';
 import type { EditorTool, ShapeKind } from '../core/tools';
 import { SHAPE_ICONS } from './ShapeIcons';
 import { pixelVars } from './tokens.stylex';
@@ -52,7 +52,6 @@ function railItems(shapeKind: ShapeKind): RailItem[] {
     keys: info.key.toUpperCase(),
     Icon: ICONS[info.kind],
   }));
-  if (!SHAPES_IN_RAIL) return items;
   const shape = shapeInfo(shapeKind);
   items.push({
     kind: 'shapes',
