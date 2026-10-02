@@ -17,7 +17,7 @@ export function snapshotDocument(
   const tiles = coords.map((coord) =>
     extractTile(document.rgbaBytes, document.width, document.height, coord),
   );
-  const thumbnailPixels = buildThumbnail(document.pixels.slice(), document.width, document.height);
+  const thumbnailPixels = buildThumbnail(document.pixels, document.width, document.height);
   return {
     id: document.id,
     name: document.name,

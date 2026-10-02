@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { packRgba } from '../../document';
 import { allTiles, buildThumbnail, extractTile, tileGrid, tilesForRect, writeTile } from './tiles';
 
 describe('tile grid math', () => {
@@ -93,5 +94,34 @@ describe('thumbnail generation', () => {
     const thumb = buildThumbnail(pixels, 2, 2, 64);
     expect(thumb.width).toBe(2);
     expect(thumb.height).toBe(2);
+  });
+
+  test(
+    'a large downscale samples a bounded number of source pixels per block, independent of ' +
+      "source size: a 4096² source completes in a tiny fraction of an exact box average's time",
+    () => {
+      const width = 4096;
+      const height = 4096;
+      const pixels = new Uint32Array(width * height).fill(0xff224466);
+      const start = performance.now();
+      const thumb = buildThumbnail(pixels, width, height);
+      const elapsedMs = performance.now() - start;
+      expect(thumb.width).toBeLessThanOrEqual(64);
+      expect(thumb.height).toBeLessThanOrEqual(64);
+      // An exact box average over every source pixel measured ~100+ ms on a real document this
+      // size (the main-thread task the lead flagged); a bounded-sample average should be a couple
+      // of orders of magnitude cheaper. Generous margin keeps this from flaking on a loaded machine.
+      expect(elapsedMs).toBeLessThan(20);
+    },
+  );
+
+  test('a solid-color source still averages to that exact color, regardless of sampling', () => {
+    const pixels = new Uint32Array(512 * 512).fill(packRgba(10, 20, 30, 255));
+    const thumb = buildThumbnail(pixels, 512, 512);
+    const bytes = new Uint8Array(thumb.pixels.buffer);
+    expect(bytes[0]).toBe(10);
+    expect(bytes[1]).toBe(20);
+    expect(bytes[2]).toBe(30);
+    expect(bytes[3]).toBe(255);
   });
 });

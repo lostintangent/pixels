@@ -85,6 +85,10 @@ export function writeTile(
   }
 }
 
+/** Caps each output pixel's box average to at most this many source samples per axis
+ *  (so at most its square in total), independent of how large the source block is. */
+const THUMBNAIL_SAMPLES_PER_AXIS = 4;
+
 /** Box-average downscale to fit within maxSide on the long edge. Pure math, no canvas. */
 export function buildThumbnail(
   pixels: Uint32Array,
@@ -104,16 +108,22 @@ export function buildThumbnail(
   for (let oy = 0; oy < outHeight; oy++) {
     const sy0 = Math.floor((oy * height) / outHeight);
     const sy1 = Math.max(sy0 + 1, Math.floor(((oy + 1) * height) / outHeight));
+    // Capping samples per axis (rather than visiting every source pixel in the block) bounds a
+    // thumbnail's cost to a small constant independent of the document's size: a 64 px preview
+    // doesn't need millions of reads to look right, and that cap is what keeps opening or
+    // autosaving a large document from becoming a long main-thread task.
+    const strideY = Math.max(1, Math.floor((sy1 - sy0) / THUMBNAIL_SAMPLES_PER_AXIS));
     for (let ox = 0; ox < outWidth; ox++) {
       const sx0 = Math.floor((ox * width) / outWidth);
       const sx1 = Math.max(sx0 + 1, Math.floor(((ox + 1) * width) / outWidth));
+      const strideX = Math.max(1, Math.floor((sx1 - sx0) / THUMBNAIL_SAMPLES_PER_AXIS));
       let r = 0;
       let g = 0;
       let b = 0;
       let a = 0;
       let count = 0;
-      for (let sy = sy0; sy < sy1; sy++) {
-        for (let sx = sx0; sx < sx1; sx++) {
+      for (let sy = sy0; sy < sy1; sy += strideY) {
+        for (let sx = sx0; sx < sx1; sx += strideX) {
           const offset = (sy * width + sx) * 4;
           r += bytes[offset]!;
           g += bytes[offset + 1]!;
