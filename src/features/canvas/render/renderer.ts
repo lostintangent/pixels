@@ -327,26 +327,40 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     const top = Math.max(0, Math.floor(-view.panY / view.zoom));
     const bottom = Math.min(bitmap.height, Math.ceil((view.cssHeight - view.panY) / view.zoom));
     if (left > right || top > bottom) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(view.panX, view.panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
+    ctx.clip();
+    // The dark line keeps the existing calm grid on white. One neighboring device
+    // pixel of white makes the same boundary readable over black and saturated art.
+    const lightOffset = 1 + 0.5 / view.devicePixelRatio;
     for (let major = 0; major < 2; major++) {
-      ctx.beginPath();
-      ctx.strokeStyle = major
-        ? (overlay.colors?.gridMajor ?? 'rgba(0,0,0,.32)')
-        : (overlay.colors?.gridMinor ?? 'rgba(0,0,0,.12)');
-      ctx.lineWidth = 1;
-      for (let x = left; x <= right; x++) {
-        if ((x % 8 === 0) !== Boolean(major)) continue;
-        const screenX = Math.round(view.panX + x * view.zoom) + 0.5;
-        ctx.moveTo(screenX, view.panY + top * view.zoom);
-        ctx.lineTo(screenX, view.panY + bottom * view.zoom);
+      for (let light = 0; light < 2; light++) {
+        ctx.beginPath();
+        ctx.strokeStyle = major
+          ? light
+            ? (overlay.colors?.gridMajorLight ?? 'rgba(255,255,255,.25)')
+            : (overlay.colors?.gridMajor ?? 'rgba(0,0,0,.32)')
+          : light
+            ? (overlay.colors?.gridMinorLight ?? 'rgba(255,255,255,.16)')
+            : (overlay.colors?.gridMinor ?? 'rgba(0,0,0,.12)');
+        ctx.lineWidth = light ? 1 / view.devicePixelRatio : 1;
+        for (let x = left; x <= right; x++) {
+          if ((x % 8 === 0) !== Boolean(major)) continue;
+          const screenX = Math.round(view.panX + x * view.zoom) + (light ? lightOffset : 0.5);
+          ctx.moveTo(screenX, view.panY + top * view.zoom);
+          ctx.lineTo(screenX, view.panY + bottom * view.zoom);
+        }
+        for (let y = top; y <= bottom; y++) {
+          if ((y % 8 === 0) !== Boolean(major)) continue;
+          const screenY = Math.round(view.panY + y * view.zoom) + (light ? lightOffset : 0.5);
+          ctx.moveTo(view.panX + left * view.zoom, screenY);
+          ctx.lineTo(view.panX + right * view.zoom, screenY);
+        }
+        ctx.stroke();
       }
-      for (let y = top; y <= bottom; y++) {
-        if ((y % 8 === 0) !== Boolean(major)) continue;
-        const screenY = Math.round(view.panY + y * view.zoom) + 0.5;
-        ctx.moveTo(view.panX + left * view.zoom, screenY);
-        ctx.lineTo(view.panX + right * view.zoom, screenY);
-      }
-      ctx.stroke();
     }
+    ctx.restore();
   }
 
   function drawClearedSource(view: Viewport, bitmap: BitmapDocument, source: PixelRect): void {
@@ -535,6 +549,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         next.grid !== overlay.grid ||
         next.colors?.gridMinor !== overlay.colors?.gridMinor ||
         next.colors?.gridMajor !== overlay.colors?.gridMajor ||
+        next.colors?.gridMinorLight !== overlay.colors?.gridMinorLight ||
+        next.colors?.gridMajorLight !== overlay.colors?.gridMajorLight ||
         next.colors?.edge !== overlay.colors?.edge ||
         next.colors?.shadow !== overlay.colors?.shadow
       )

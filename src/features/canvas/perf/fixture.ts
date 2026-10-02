@@ -39,6 +39,8 @@ const colors = {
   checkerB: '#d6d6d6',
   gridMinor: 'rgba(0,0,0,.12)',
   gridMajor: 'rgba(0,0,0,.32)',
+  gridMinorLight: 'rgba(255,255,255,.16)',
+  gridMajorLight: 'rgba(255,255,255,.25)',
   edge: 'rgba(255, 255, 255, 0.1)',
   shadow: 'rgba(0, 0, 0, 0.6)',
 };

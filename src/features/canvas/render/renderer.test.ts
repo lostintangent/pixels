@@ -274,6 +274,8 @@ test('the document edge paints only outside its device-pixel footprint', () => {
       checkerB: '#313133',
       gridMinor: 'transparent',
       gridMajor: 'transparent',
+      gridMinorLight: 'transparent',
+      gridMajorLight: 'transparent',
     };
     const view = {
       zoom: 0.63,
