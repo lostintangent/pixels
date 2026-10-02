@@ -37,8 +37,8 @@ export function ResizeDialog({ layout }: { layout: Layout }) {
   const changed = width !== current.width || height !== current.height;
   const crops = width < current.width || height < current.height;
   const close = () => session.setPanel(null);
-  const resize = () => {
-    session.resizeDocument(width, height, anchor);
+  const resize = async () => {
+    await session.resizeDocument(width, height, anchor);
     close();
   };
 

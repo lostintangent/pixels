@@ -49,7 +49,7 @@ test('session paste floats through a drag and commits as one undo step', () => {
   expect(session.state.state.canUndo).toBe(false);
 });
 
-test('resize shifts shapes with pixels and undoes as one document change', () => {
+test('resize shifts shapes with pixels and undoes as one document change', async () => {
   const document = createBitmapDocument('resize', 3, 3);
   document.pixels[4] = A;
   annotationsFor(document).commit({
@@ -62,7 +62,7 @@ test('resize shifts shapes with pixels and undoes as one document change', () =>
   });
   const session = createEditorSession({ document, save: null });
 
-  session.resizeDocument(5, 5, 'center');
+  await session.resizeDocument(5, 5, 'center');
   const expanded = session.bitmap.state;
   expect(expanded).not.toBe(document);
   expect(expanded.pixels[2 * 5 + 2]).toBe(A);
