@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { runAppPerf } from './app';
 import { captureTrace } from './capture';
+import { withConditionedCpu } from './conditioning';
 import type { TraceSummary } from './trace';
 
 const repeatIndex = process.argv.indexOf('--repeat');
@@ -14,13 +15,18 @@ if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20)
 const headlessGpu = process.argv.includes('--headless-gpu');
 const headed = !process.argv.includes('--headless') && !headlessGpu;
 const calibrate = process.argv.includes('--calibrate');
+const conditionCpu = !process.argv.includes('--unconditioned');
+const injectIndex = process.argv.indexOf('--inject-large-pan-ms');
+const injectLargePanMs = injectIndex < 0 ? 0 : Number(process.argv[injectIndex + 1]);
+if (!Number.isFinite(injectLargePanMs) || injectLargePanMs < 0 || injectLargePanMs > 20)
+  throw new RangeError('--inject-large-pan-ms must be 0 to 20');
 
 interface BrowserPerfApi {
   reset(kind: 'blank' | 'maze' | 'large'): Promise<void>;
   runStroke(): Promise<void>;
   runPanZoom(): Promise<void>;
   runMazeFill(): Promise<void>;
-  runLargePan(): Promise<void>;
+  runLargePan(injectMs?: number): Promise<void>;
   prepareShapeDrag(): Promise<void>;
   runShapeHandleDrag(): Promise<void>;
   checkZoomOutQuality(): Promise<Record<string, number>>;
@@ -73,18 +79,21 @@ async function traceScenario(
     await page.evaluate(() => window.__pixelsPerf!.prepareShapeDrag());
   return captureTrace(context, page, async (markFirstInput) => {
     await markFirstInput();
-    await page.evaluate((kind) => {
-      const api = window.__pixelsPerf!;
-      return kind === 'stroke'
-        ? api.runStroke()
-        : kind === 'pan'
-          ? api.runPanZoom()
-          : kind === 'large-pan'
-            ? api.runLargePan()
-            : kind === 'shape-handle'
-              ? api.runShapeHandleDrag()
-              : api.runMazeFill();
-    }, scenario);
+    await page.evaluate(
+      ({ kind, injectMs }) => {
+        const api = window.__pixelsPerf!;
+        return kind === 'stroke'
+          ? api.runStroke()
+          : kind === 'pan'
+            ? api.runPanZoom()
+            : kind === 'large-pan'
+              ? api.runLargePan(injectMs)
+              : kind === 'shape-handle'
+                ? api.runShapeHandleDrag()
+                : api.runMazeFill();
+      },
+      { kind: scenario, injectMs: injectLargePanMs },
+    );
   });
 }
 
@@ -126,120 +135,122 @@ try {
         },
       ] as const;
       let failed = false;
-      const targets: Record<Scenario, number> = {
-        stroke: 4,
-        pan: 3,
-        maze: Infinity,
-        'large-pan': 1.35,
-        'shape-handle': 1.25,
+      const targets: Record<Exclude<Scenario, 'maze'>, { desktop: number; phone: number }> = {
+        stroke: { desktop: 0.59, phone: 0.51 },
+        pan: { desktop: 0.44, phone: 0.44 },
+        'large-pan': { desktop: 0.46, phone: 0.46 },
+        'shape-handle': { desktop: 0.45, phone: 0.41 },
       };
-      for (const profile of profiles) {
-        const context = await browser.newContext({
-          viewport: { width: profile.width, height: profile.height },
-          deviceScaleFactor: profile.dpr,
-          reducedMotion: 'reduce',
-          isMobile: profile.name === 'phone',
-          hasTouch: profile.name === 'phone',
-        });
-        const page = await context.newPage();
-        const errors: Error[] = [];
-        page.on('pageerror', (error) => errors.push(error));
-        await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
-        await page.waitForFunction(() => Boolean(window.__pixelsPerf));
-        if (headed) await page.bringToFront();
-        const quality = await page.evaluate(async () => ({
-          zoom: await window.__pixelsPerf!.checkZoomOutQuality(),
-          p3: await window.__pixelsPerf!.checkP3Canvas(),
-          conversionError: window.__pixelsPerf!.checkColorConversion(),
-          annotations: await window.__pixelsPerf!.checkAnnotationLayer(),
-        }));
-        console.log(
-          `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, P3 annotation layer ${quality.annotations.passed ? 'PASS' : `FAIL ${JSON.stringify(quality.annotations)}`}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, conversion error ≤ 2`,
-        );
-        if (
-          !quality.p3 ||
-          !quality.annotations.passed ||
-          quality.conversionError > 2 ||
-          Object.values(quality.zoom).some((error) => error > 2)
-        )
-          failed = true;
-        const gpuRenderer = await page.evaluate(() => {
-          const gl = document.createElement('canvas').getContext('webgl');
-          if (!gl) return 'WebGL unavailable';
-          const info = gl.getExtension('WEBGL_debug_renderer_info');
-          return info
-            ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
-            : `unmasked renderer unavailable (${String(gl.getParameter(gl.RENDERER))})`;
-        });
-        // Let the browser allocate its canvas/GPU resources before tracing. The
-        // first paint is a load cost, not an editing-frame cost.
-        await page.evaluate(async () => {
-          const api = window.__pixelsPerf!;
-          await api.reset('blank');
-          await api.runStroke();
-          await api.reset('blank');
-          await api.runPanZoom();
-          if (window.innerWidth > 400) {
-            await api.reset('maze');
-            await api.runMazeFill();
-          }
-          await api.reset('large');
-          await api.prepareShapeDrag();
-          await api.runShapeHandleDrag();
-          await api.reset('blank');
-        });
-        console.log(
-          `Pixels browser perf ${profile.name}: Chromium ${browser.version()}, ${headed ? 'headed user path' : headlessGpu ? 'headless GPU experiment' : 'headless diagnostic'}, WebGL ${gpuRenderer}, ${process.platform}/${process.arch}, ${profile.width}×${profile.height} @ ${profile.dpr}×, document 1024² @ 8×, loadavg ${loadavg()
-            .map((value) => value.toFixed(2))
-            .join('/')}`,
-        );
-        console.log(
-          'Chrome trace categories: devtools.timeline, devtools.timeline.frame, cc, toplevel; pipeline work includes renderer main, raster workers, compositor, and GPU process.',
-        );
-        for (let run = 0; run < repeat; run++) {
-          console.log(`Run ${run + 1}/${repeat}`);
-          for (const scenario of profile.scenarios) {
-            const blocks: TraceSummary[] = [];
-            for (let block = 0; block < 3; block++)
-              blocks.push(await traceScenario(context, page, scenario));
-            if (errors.length) throw errors[0];
-            const frames = blocks.map((block) => block.frameCount);
-            if (scenario !== 'maze' && frames.some((count) => count < 30))
-              throw new Error(
-                `${scenario} trace captured fewer than 30 frames: ${frames.join(', ')}`,
+      const runProfiles = async () => {
+        for (const profile of profiles) {
+          const context = await browser.newContext({
+            viewport: { width: profile.width, height: profile.height },
+            deviceScaleFactor: profile.dpr,
+            reducedMotion: 'reduce',
+            isMobile: profile.name === 'phone',
+            hasTouch: profile.name === 'phone',
+          });
+          const page = await context.newPage();
+          const errors: Error[] = [];
+          page.on('pageerror', (error) => errors.push(error));
+          await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: 'load' });
+          await page.waitForFunction(() => Boolean(window.__pixelsPerf));
+          if (headed) await page.bringToFront();
+          const quality = await page.evaluate(async () => ({
+            zoom: await window.__pixelsPerf!.checkZoomOutQuality(),
+            p3: await window.__pixelsPerf!.checkP3Canvas(),
+            conversionError: window.__pixelsPerf!.checkColorConversion(),
+            annotations: await window.__pixelsPerf!.checkAnnotationLayer(),
+          }));
+          console.log(
+            `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, P3 annotation layer ${quality.annotations.passed ? 'PASS' : `FAIL ${JSON.stringify(quality.annotations)}`}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, conversion error ≤ 2`,
+          );
+          if (
+            !quality.p3 ||
+            !quality.annotations.passed ||
+            quality.conversionError > 2 ||
+            Object.values(quality.zoom).some((error) => error > 2)
+          )
+            failed = true;
+          const gpuRenderer = await page.evaluate(() => {
+            const gl = document.createElement('canvas').getContext('webgl');
+            if (!gl) return 'WebGL unavailable';
+            const info = gl.getExtension('WEBGL_debug_renderer_info');
+            return info
+              ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
+              : `unmasked renderer unavailable (${String(gl.getParameter(gl.RENDERER))})`;
+          });
+          // Let the browser allocate its canvas/GPU resources before tracing. The
+          // first paint is a load cost, not an editing-frame cost.
+          await page.evaluate(async () => {
+            const api = window.__pixelsPerf!;
+            await api.reset('blank');
+            await api.runStroke();
+            await api.reset('blank');
+            await api.runPanZoom();
+            if (window.innerWidth > 400) {
+              await api.reset('maze');
+              await api.runMazeFill();
+            }
+            await api.reset('large');
+            await api.prepareShapeDrag();
+            await api.runShapeHandleDrag();
+            await api.reset('blank');
+          });
+          console.log(
+            `Pixels browser perf ${profile.name}: Chromium ${browser.version()}, ${headed ? 'headed user path' : headlessGpu ? 'headless GPU experiment' : 'headless diagnostic'}, WebGL ${gpuRenderer}, ${process.platform}/${process.arch}, ${profile.width}×${profile.height} @ ${profile.dpr}×, document 1024² @ 8×, loadavg ${loadavg()
+              .map((value) => value.toFixed(2))
+              .join('/')}`,
+          );
+          console.log(
+            'Chrome trace categories: devtools.timeline, devtools.timeline.frame, cc, toplevel; pipeline work includes renderer main, raster workers, compositor, and GPU process.',
+          );
+          for (let run = 0; run < repeat; run++) {
+            console.log(`Run ${run + 1}/${repeat}`);
+            for (const scenario of profile.scenarios) {
+              const blocks: TraceSummary[] = [];
+              for (let block = 0; block < 3; block++)
+                blocks.push(await traceScenario(context, page, scenario));
+              if (errors.length) throw errors[0];
+              const frames = blocks.map((block) => block.frameCount);
+              if (scenario !== 'maze' && frames.some((count) => count < 30))
+                throw new Error(
+                  `${scenario} trace captured fewer than 30 frames: ${frames.join(', ')}`,
+                );
+              const p95 = median(blocks.map((block) => block.mainP95Ms));
+              const pipelineP95 = median(blocks.map((block) => block.pipelineP95Ms));
+              const maxLongTask = Math.max(...blocks.map((block) => block.maxMainTaskMs));
+              const eligible = blocks.reduce((sum, block) => sum + block.eligibleFrames, 0);
+              const onTime = blocks.reduce((sum, block) => sum + block.onTimeFrames, 0);
+              const dropped = blocks.reduce((sum, block) => sum + block.droppedFrames, 0);
+              const highLatency = blocks.reduce((sum, block) => sum + block.highLatencyFrames, 0);
+              const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
+              const onTimePercent = (onTime / eligible) * 100;
+              const refreshHz = median(blocks.map((block) => block.refreshHz));
+              const target = scenario === 'maze' ? Infinity : targets[scenario][profile.name];
+              const passed =
+                p95 < target &&
+                maxLongTask <= 50 &&
+                (scenario === 'maze' ||
+                  (onTimePercent >= 99 && !consecutiveDrops && eligible >= 90));
+              if (!passed) failed = true;
+              console.log(
+                `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(target) ? `main < ${target} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
               );
-            const p95 = median(blocks.map((block) => block.mainP95Ms));
-            const pipelineP95 = median(blocks.map((block) => block.pipelineP95Ms));
-            const maxLongTask = Math.max(...blocks.map((block) => block.maxMainTaskMs));
-            const eligible = blocks.reduce((sum, block) => sum + block.eligibleFrames, 0);
-            const onTime = blocks.reduce((sum, block) => sum + block.onTimeFrames, 0);
-            const dropped = blocks.reduce((sum, block) => sum + block.droppedFrames, 0);
-            const highLatency = blocks.reduce((sum, block) => sum + block.highLatencyFrames, 0);
-            const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
-            const onTimePercent = (onTime / eligible) * 100;
-            const refreshHz = median(blocks.map((block) => block.refreshHz));
-            const target =
-              scenario === 'large-pan' && profile.name === 'phone'
-                ? 2
-                : scenario === 'shape-handle' && profile.name === 'phone'
-                  ? 1.2
-                  : targets[scenario];
-            const passed =
-              p95 < target &&
-              maxLongTask <= 50 &&
-              (scenario === 'maze' || (onTimePercent >= 99 && !consecutiveDrops && eligible >= 90));
-            if (!passed) failed = true;
-            console.log(
-              `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(target) ? `main < ${target} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
-            );
+            }
           }
+          await context.close();
         }
-        await context.close();
+      };
+      if (conditionCpu) await withConditionedCpu('renderer fixture', runProfiles);
+      else {
+        console.log('CPU conditioning: disabled for diagnostic renderer run');
+        await runProfiles();
       }
       if (failed && !calibrate) process.exitCode = 1;
       if (
         !process.argv.includes('--fixture-only') &&
-        !(await runAppPerf(browser, repeat, calibrate))
+        !(await runAppPerf(browser, repeat, calibrate, 0, conditionCpu))
       )
         process.exitCode = 1;
     } finally {

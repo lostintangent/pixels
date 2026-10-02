@@ -166,7 +166,7 @@ const api: BrowserPerfApi = {
       requestAnimationFrame(next);
     });
   },
-  runLargePan() {
+  runLargePan(injectMs = 0) {
     return new Promise((resolve) => {
       let frame = 0;
       const zoom = window.innerWidth > 400 ? 0.25 : 0.0625;
@@ -178,6 +178,13 @@ const api: BrowserPerfApi = {
           panX: 20 + Math.round(20 * Math.sin(phase)),
           panY: 20 + Math.round(20 * Math.cos(phase)),
         });
+        // Diagnostic only: prove the main-thread gate still catches real per-frame work.
+        if (injectMs > 0) {
+          const end = performance.now() + injectMs;
+          while (performance.now() < end) {
+            // Intentional synthetic regression.
+          }
+        }
         frame++;
         if (frame < 90) requestAnimationFrame(next);
         else void frames().then(resolve);
