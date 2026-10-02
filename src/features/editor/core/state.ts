@@ -6,7 +6,8 @@ import { stepBrushSize } from './brush';
 import { defaultShapeWidth } from './tools';
 import type { EditorTool, ShapeKind } from './tools';
 
-export type EditorPanel = 'new' | 'export' | 'resize' | 'colors';
+/** `rename` is the title pill's inline name field, which owns the keyboard like a dialog does. */
+export type EditorPanel = 'new' | 'export' | 'resize' | 'colors' | 'rename';
 /** Mirrors autosave's reports. Null until a document has been saved or edited at all. */
 export type SaveStatus = 'saved' | 'saving' | 'error';
 export type ColorSlot = 'primary' | 'secondary';

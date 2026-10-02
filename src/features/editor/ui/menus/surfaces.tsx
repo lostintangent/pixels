@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
+import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { DropdownMenuItemData, DropdownMenuOption } from '@astryxdesign/core/DropdownMenu';
 import { Kbd } from '@astryxdesign/core/Kbd';
@@ -19,10 +19,13 @@ import {
   Scaling,
   SquareDot,
   Sun,
+  TextCursorInput,
 } from 'lucide-react';
-import { useEffect, useEffectEvent } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef } from 'react';
 import type { ReactElement } from 'react';
+import { DOCUMENT_NAME_MAX_LENGTH } from '../../../files';
 import { GRID_MIN_ZOOM } from '../../core/zoom';
+import type { Layout } from '../../session/session';
 import { setAppearance, useAppearance } from '../../session/appearance';
 import type { Appearance } from '../../session/appearance';
 import { preloadDialogs } from '../dialogs';
@@ -30,6 +33,7 @@ import { useEditor, useEditorState } from '../EditorContext';
 import { useFileActions } from '../files/FileActions';
 import { formatEdited, useRecents } from '../files/useRecents';
 import type { RecentDocument } from '../files/useRecents';
+import { Logo } from './index';
 import type { MenuSurfaceProps } from './index';
 
 const icon = (Glyph: typeof Check) => <Glyph size={16} strokeWidth={1.75} aria-hidden />;
@@ -94,6 +98,11 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
       })),
     },
     { type: 'divider' },
+    {
+      label: 'Rename…',
+      icon: icon(TextCursorInput),
+      onClick: () => session.setPanel('rename'),
+    },
     {
       label: 'Export PNG…',
       icon: icon(Download),
@@ -196,7 +205,111 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   );
 }
 
+/**
+ * The title pill, editable in place like a Finder or Preview title. It opens with the whole name
+ * selected. Enter or a press elsewhere commits, and Escape cancels. A press on the canvas only
+ * commits, so dismissing the field never paints.
+ */
+export function RenameField({
+  layout,
+  onDone,
+}: {
+  layout: Layout;
+  onDone: (restoreFocus: boolean) => void;
+}) {
+  const files = useFileActions();
+  const name = useEditorState((state) => state.document.name);
+  const field = useRef<HTMLSpanElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const finished = useRef(false);
+
+  const finish = useEffectEvent((commit: boolean, restoreFocus: boolean) => {
+    if (finished.current) return;
+    finished.current = true;
+    if (commit && input.current) files.rename(input.current.value);
+    onDone(restoreFocus);
+  });
+
+  // Focus within the menu press that asked for it, so a phone raises its keyboard.
+  useLayoutEffect(() => {
+    input.current?.focus({ preventScroll: true });
+    input.current?.select();
+  }, []);
+
+  useEffect(() => {
+    const press = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target && field.current?.contains(target)) return;
+      if (target?.closest('[role="application"]')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      finish(true, false);
+    };
+    window.addEventListener('pointerdown', press, true);
+    return () => window.removeEventListener('pointerdown', press, true);
+  }, []);
+
+  return (
+    <span ref={field} {...stylex.props(styles.field, layout === 'phone' && styles.fieldPhone)}>
+      <span {...stylex.props(styles.mark)}>
+        <Logo />
+      </span>
+      <input
+        ref={input}
+        defaultValue={name}
+        aria-label="Document name"
+        maxLength={DOCUMENT_NAME_MAX_LENGTH}
+        enterKeyHint="done"
+        autoComplete="off"
+        autoCapitalize="words"
+        spellCheck={false}
+        {...stylex.props(styles.input)}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key !== 'Enter' && event.key !== 'Escape') return;
+          event.preventDefault();
+          event.stopPropagation();
+          finish(event.key === 'Enter', true);
+        }}
+        onBlur={() => finish(true, false)}
+      />
+    </span>
+  );
+}
+
 const styles = stylex.create({
+  // Same box, mark, and type as the title pill, so the name doesn't move when it becomes editable.
+  field: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: spacingVars['--spacing-2'],
+    boxSizing: 'border-box',
+    height: { default: 32, '@media (pointer: coarse)': 44 },
+    paddingInline: spacingVars['--spacing-3'],
+    borderRadius: 10,
+    backgroundColor: colorVars['--color-background-surface'],
+    boxShadow: `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
+    cursor: 'text',
+  },
+  fieldPhone: { minWidth: 0, flexShrink: 1 },
+  // Astryx centers a button's icon in a 16px slot. The mark is wider, so it overhangs evenly.
+  mark: { display: 'flex', justifyContent: 'center', flexShrink: 0, width: 16 },
+  input: {
+    minWidth: 96,
+    maxWidth: { default: 240, '@media (pointer: coarse)': '100%' },
+    fieldSizing: 'content',
+    padding: 0,
+    border: 'none',
+    outline: 'none',
+    backgroundColor: 'transparent',
+    color: colorVars['--color-text-primary'],
+    fontFamily: 'inherit',
+    fontSize: 14,
+    fontWeight: 500,
+    lineHeight: '20px',
+    textOverflow: 'ellipsis',
+  },
   shortcut: { display: { default: 'contents', '@media (pointer: coarse)': 'none' } },
   thumb: {
     display: 'grid',

@@ -474,3 +474,31 @@ test('the brush cursor follows keyboard size and tool changes without a pointer 
   session.setBrushSize(3);
   expect(cursor()).toBeNull();
 });
+
+test('a rename is not history, and undoing a resize keeps the new name', async () => {
+  const document = createBitmapDocument('rename', 3, 3, 'Untitled');
+  const session = createEditorSession({ document, save: null });
+  session.beginGesture(input(1, 1));
+  session.endGesture();
+  const pixels = document.pixels.slice();
+
+  session.rename('Hero');
+  expect(document.name).toBe('Hero');
+  expect(session.state.state.document).toEqual({ name: 'Hero', width: 3, height: 3 });
+  expect(document.pixels).toEqual(pixels);
+
+  await session.resizeDocument(5, 5, 'center');
+  session.rename('Hero big');
+  session.run({ type: 'undo' });
+  expect(session.bitmap.state).toBe(document);
+  expect(document.name).toBe('Hero big');
+  expect(session.state.state.document).toEqual({ name: 'Hero big', width: 3, height: 3 });
+
+  // The stroke is the next undo step. The name stays.
+  session.run({ type: 'undo' });
+  expect(session.state.state.document.name).toBe('Hero big');
+  session.run({ type: 'redo' });
+  session.run({ type: 'redo' });
+  expect(session.bitmap.state.name).toBe('Hero big');
+  expect(session.state.state.document.name).toBe('Hero big');
+});

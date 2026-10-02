@@ -3,7 +3,14 @@ import { Button } from '@astryxdesign/core/Button';
 import type { DropdownMenuButtonProps } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
 import { useSelector } from '@tanstack/react-store';
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { displayZoom, formatZoom } from '../../core/zoom';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
@@ -23,26 +30,55 @@ export interface MenuSurfaceProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** The document's name, behind which sit file actions and appearance. */
+/** The document's name, behind which sit file actions and appearance. Rename edits it in place. */
 export function DocMenu({ layout }: { layout: Layout }) {
+  const session = useEditor();
   const name = useEditorState((state) => (state.opening ? 'Opening…' : state.document.name));
+  const renaming = useEditorState((state) => state.panel === 'rename');
+  // Rename is only offered from the menu, so its field has always arrived with it.
+  const menus = useSyncExternalStore(subscribe, loaded, loaded);
+  const host = useRef<HTMLSpanElement>(null);
+  const refocus = useRef(false);
+
+  // Enter and Escape hand focus back to the name. A press elsewhere keeps it where it landed.
+  useLayoutEffect(() => {
+    if (renaming || !refocus.current) return;
+    refocus.current = false;
+    host.current?.querySelector('button')?.focus({ preventScroll: true });
+  }, [renaming]);
+
+  if (renaming && menus) {
+    return (
+      <span ref={host} {...stylex.props(styles.host)}>
+        <menus.RenameField
+          layout={layout}
+          onDone={(restoreFocus) => {
+            refocus.current = restoreFocus;
+            session.setPanel(null);
+          }}
+        />
+      </span>
+    );
+  }
   return (
-    <DeferredMenu
-      surface="DocMenu"
-      layout={layout}
-      button={{
-        label: name,
-        variant: 'ghost',
-        icon: <Logo />,
-        width: '100%',
-        // Polite, so "Opening…" and a failed open's restored name reach screen readers.
-        children: (
-          <span aria-live="polite" {...stylex.props(styles.name)}>
-            {name}
-          </span>
-        ),
-      }}
-    />
+    <span ref={host} {...stylex.props(styles.host)}>
+      <DeferredMenu
+        surface="DocMenu"
+        layout={layout}
+        button={{
+          label: name,
+          variant: 'ghost',
+          icon: <Logo />,
+          width: '100%',
+          // Polite, so "Opening…" and a failed open's restored name reach screen readers.
+          children: (
+            <span aria-live="polite" {...stylex.props(styles.name)}>
+              {name}
+            </span>
+          ),
+        }}
+      />
+    </span>
   );
 }
 
@@ -160,7 +196,7 @@ function DeferredMenu({ surface, layout, button, hasChevron = true }: DeferredMe
 }
 
 /** Four chunky pixels: the app mark, drawn in the product's own medium. */
-function Logo() {
+export function Logo() {
   return (
     <span aria-hidden {...stylex.props(styles.logo)}>
       {['#e8553d', '#ffd08a', '#1f8a8a', '#2c4cb0'].map((color) => (

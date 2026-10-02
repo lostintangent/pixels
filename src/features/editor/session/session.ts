@@ -144,6 +144,8 @@ export interface EditorSession {
   setViewportSize(width: number, height: number, devicePixelRatio: number): void;
   setViewport(viewport: Viewport): void;
   setSaveStatus(status: SaveStatus): void;
+  /** Names the document in memory. The name isn't history, so undo never changes it. */
+  rename(name: string): void;
   /** Pastes outside pixels centered on the canvas as a selection. False when they don't fit. */
   place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels' | 'colorSpace'>): boolean;
   /** Loads the annotation-aware resize on first use, so it stays off the first load. */
@@ -363,6 +365,8 @@ export function createEditorSession({
   }
 
   function installDocument(next: BitmapDocument): void {
+    // Undoing a resize brings back the earlier document object, which may carry an older name.
+    next.name = document().name;
     selection = beginSelection(next, history);
     bitmap.setState(() => next);
     setSelection(null);
@@ -729,6 +733,15 @@ export function createEditorSession({
 
     setSaveStatus(status) {
       update((current) => (current.save === status ? current : { ...current, save: status }));
+    },
+
+    rename(name) {
+      const current = document();
+      current.name = name;
+      update((state) => ({
+        ...state,
+        document: { name, width: current.width, height: current.height },
+      }));
     },
 
     place(image) {

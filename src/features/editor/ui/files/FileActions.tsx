@@ -13,6 +13,8 @@ import {
   handOffDocument,
   ImportError,
   importPng,
+  normalizeDocumentName,
+  renameDocument,
   saveDocument,
 } from '../../../files';
 import type { DocumentId, DocumentStore } from '../../../files';
@@ -31,6 +33,8 @@ export interface FileActions {
   pasteFile(file: Blob): void;
   openRecent(id: DocumentId): void;
   exportPng(fileName: string, scale: number): void;
+  /** Applies a cleaned-up name. An empty or unchanged name keeps the current one. */
+  rename(input: string): void;
 }
 
 const FileActionsContext = createContext<FileActions | null>(null);
@@ -147,6 +151,24 @@ export function FileActionsProvider({
         exportPng(session.bitmap.state, { scale })
           .then((bytes) => deliver(new File([bytes as BlobPart], fileName, { type: 'image/png' })))
           .catch((error: unknown) => fail(error, 'The PNG couldn’t be exported.'));
+      },
+      rename(input) {
+        const name = normalizeDocumentName(input);
+        const document = session.bitmap.state;
+        if (!name || name === document.name) return;
+        session.rename(name);
+        // A blank canvas that was never edited isn't stored yet. Naming it keeps it.
+        const isStored = session.state.state.save !== null;
+        if (!isStored) session.setSaveStatus('saving');
+        renameDocument(document, name, store, isStored).then(
+          () => {
+            if (!isStored) session.setSaveStatus('saved');
+          },
+          (error: unknown) => {
+            if (!isStored) session.setSaveStatus('error');
+            fail(error, 'The new name couldn’t be saved.');
+          },
+        );
       },
     };
   }, [session, store, layout, navigate, showToast]);
