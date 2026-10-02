@@ -6,7 +6,15 @@ import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { createBitmapDocument } from '../../../document';
 import type { BitmapDocument, PackedColor } from '../../../document';
-import { createDocumentId, exportPng, ImportError, importPng, saveDocument } from '../../../files';
+import {
+  clearHandedOffDocument,
+  createDocumentId,
+  exportPng,
+  handOffDocument,
+  ImportError,
+  importPng,
+  saveDocument,
+} from '../../../files';
 import type { DocumentId, DocumentStore } from '../../../files';
 import { TRANSPARENT } from '../../../palette';
 import type { EditorSession, Layout } from '../../session/session';
@@ -61,10 +69,18 @@ export function FileActionsProvider({
         uniqueID: 'file-error',
       });
     };
-    /** An explicit New or Open is an intent to keep, so it's stored before the route reads it. */
+    /** An explicit New or Open is an intent to keep, so it's stored before the route reads it.
+     *  The route's own loader would otherwise re-read the exact bytes already decoded right
+     *  here, so this hands the live document to it directly and skips that round trip. A
+     *  navigation that never lands (superseded by a second open, or a rejected `navigate`) must
+     *  not leave that hand-off — potentially a large decoded image — pinned in memory, so a
+     *  failed navigate clears its own entry; a superseding one already overwrites it. */
     const keep = async (document: BitmapDocument) => {
       await saveDocument(document, store);
-      show(document.id);
+      handOffDocument(document);
+      await navigate({ to: '/d/$docId', params: { docId: document.id } }).catch(() =>
+        clearHandedOffDocument(document.id),
+      );
     };
     const decode = (file: Blob, name?: string) =>
       importPng(file, createDocumentId(), name ?? nameOf(file));

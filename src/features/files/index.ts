@@ -25,3 +25,4 @@ export type { AttachAutosaveOptions, Autosave } from './runtime/autosaveRuntime'
 export { attachAutosave, saveDocument } from './runtime/autosaveRuntime';
 
 export { loadDocument, pickInitialDocumentId } from './loaders';
+export { clearHandedOffDocument, handOffDocument, takeHandedOffDocument } from './handoff';
