@@ -51,7 +51,6 @@ export function DocMenu({ layout }: { layout: Layout }) {
     return (
       <span ref={host} {...stylex.props(styles.host)}>
         <menus.RenameField
-          layout={layout}
           onDone={(restoreFocus) => {
             refocus.current = restoreFocus;
             session.setPanel(null);
@@ -70,6 +69,8 @@ export function DocMenu({ layout }: { layout: Layout }) {
           variant: 'ghost',
           icon: <Logo />,
           width: '100%',
+          // Lets the name give way to the size and save status when its island runs out of room.
+          xstyle: styles.docButton,
           // Polite, so "Opening…" and a failed open's restored name reach screen readers.
           children: (
             <span aria-live="polite" {...stylex.props(styles.name)}>
@@ -209,7 +210,9 @@ export function Logo() {
 const styles = stylex.create({
   // The trigger stays a direct layout child of whichever island holds it.
   host: { display: 'contents' },
+  docButton: { minWidth: 0 },
   name: {
+    display: 'block',
     minWidth: 0,
     maxWidth: 240,
     overflow: 'hidden',

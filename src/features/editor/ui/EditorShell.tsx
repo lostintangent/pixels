@@ -265,17 +265,31 @@ type Fade = StyleXStyles;
 function DesktopChrome() {
   const hidden = useEditorState((state) => state.chromeHidden);
   const fade = [styles.chrome, hidden && styles.hidden];
+  const doc = useRef<HTMLElement>(null);
+  const options = useRef<HTMLElement>(null);
+  const actions = useRef<HTMLElement>(null);
+  useRoomBeside(doc, [options, actions]);
 
   return (
     <>
-      <Island as="header" xstyle={[styles.doc, fade]}>
+      <Island as="header" ref={doc} xstyle={[styles.doc, fade]}>
         <DocMenu layout="desktop" />
         <DocumentMeta />
       </Island>
-      <Island role="toolbar" aria-label="Tool options" xstyle={[styles.options, fade]}>
+      <Island
+        role="toolbar"
+        aria-label="Tool options"
+        ref={options}
+        xstyle={[styles.options, fade]}
+      >
         <ToolOptions layout="desktop" />
       </Island>
-      <Island role="toolbar" aria-label="History and view" xstyle={[styles.actions, fade]}>
+      <Island
+        role="toolbar"
+        aria-label="History and view"
+        ref={actions}
+        xstyle={[styles.actions, fade]}
+      >
         <HistoryButtons hasTooltips />
         <IslandDivider />
         <ZoomControls />
@@ -285,6 +299,42 @@ function DesktopChrome() {
       <StatusPill />
     </>
   );
+}
+
+/**
+ * Caps an island's width so it stops one screen-edge gap short of the first island to its right
+ * in the same row. The tool options change width with the tool and selection, and drop to the
+ * bottom on narrow screens, so the room is measured rather than fixed. A long name then ends in
+ * an ellipsis instead of running under its neighbor.
+ */
+function useRoomBeside(
+  island: RefObject<HTMLElement | null>,
+  neighbors: RefObject<HTMLElement | null>[],
+) {
+  useLayoutEffect(() => {
+    const self = island.current;
+    if (!self) return;
+    const fit = () => {
+      const box = self.getBoundingClientRect();
+      let right = window.innerWidth;
+      for (const { current } of neighbors) {
+        const other = current?.getBoundingClientRect();
+        if (other && other.left > box.left && other.top < box.bottom && other.bottom > box.top) {
+          right = Math.min(right, other.left);
+        }
+      }
+      self.style.maxWidth = `${Math.max(0, right - box.left * 2)}px`;
+    };
+    const observer = new ResizeObserver(fit);
+    for (const { current } of neighbors) if (current) observer.observe(current);
+    window.addEventListener('resize', fit);
+    fit();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', fit);
+    };
+    // The refs are stable, and their elements live as long as the chrome.
+  }, []);
 }
 
 /**

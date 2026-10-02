@@ -25,7 +25,6 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef } from 'react';
 import type { ReactElement } from 'react';
 import { DOCUMENT_NAME_MAX_LENGTH } from '../../../files';
 import { GRID_MIN_ZOOM } from '../../core/zoom';
-import type { Layout } from '../../session/session';
 import { setAppearance, useAppearance } from '../../session/appearance';
 import type { Appearance } from '../../session/appearance';
 import { preloadDialogs } from '../dialogs';
@@ -210,13 +209,7 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
  * selected. Enter or a press elsewhere commits, and Escape cancels. A press on the canvas only
  * commits, so dismissing the field never paints.
  */
-export function RenameField({
-  layout,
-  onDone,
-}: {
-  layout: Layout;
-  onDone: (restoreFocus: boolean) => void;
-}) {
+export function RenameField({ onDone }: { onDone: (restoreFocus: boolean) => void }) {
   const files = useFileActions();
   const name = useEditorState((state) => state.document.name);
   const field = useRef<HTMLSpanElement>(null);
@@ -251,7 +244,7 @@ export function RenameField({
   }, []);
 
   return (
-    <span ref={field} {...stylex.props(styles.field, layout === 'phone' && styles.fieldPhone)}>
+    <span ref={field} {...stylex.props(styles.field)}>
       <span {...stylex.props(styles.mark)}>
         <Logo />
       </span>
@@ -291,13 +284,16 @@ const styles = stylex.create({
     backgroundColor: colorVars['--color-background-surface'],
     boxShadow: `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
     cursor: 'text',
+    minWidth: 0,
+    flexShrink: 1,
   },
-  fieldPhone: { minWidth: 0, flexShrink: 1 },
   // Astryx centers a button's icon in a 16px slot. The mark is wider, so it overhangs evenly.
   mark: { display: 'flex', justifyContent: 'center', flexShrink: 0, width: 16 },
   input: {
+    // No wider than the resting name, and narrower when its island runs out of room.
     minWidth: 96,
-    maxWidth: { default: 240, '@media (pointer: coarse)': '100%' },
+    maxWidth: 240,
+    flexShrink: 1,
     fieldSizing: 'content',
     padding: 0,
     border: 'none',
