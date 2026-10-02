@@ -74,13 +74,16 @@ export function FileActionsProvider({
      *  here, so this hands the live document to it directly and skips that round trip. A
      *  navigation that never lands (superseded by a second open, or a rejected `navigate`) must
      *  not leave that hand-off — potentially a large decoded image — pinned in memory, so a
-     *  failed navigate clears its own entry; a superseding one already overwrites it. */
+     *  failed navigate clears its own entry and the opening title; a superseding one already
+     *  overwrites it. */
     const keep = async (document: BitmapDocument) => {
       await saveDocument(document, store);
       handOffDocument(document);
-      await navigate({ to: '/d/$docId', params: { docId: document.id } }).catch(() =>
-        clearHandedOffDocument(document.id),
-      );
+      await navigate({ to: '/d/$docId', params: { docId: document.id } }).catch(() => {
+        clearHandedOffDocument(document.id);
+        clearTimeout(slow);
+        opening(false);
+      });
     };
     const decode = (file: Blob, name?: string) =>
       importPng(file, createDocumentId(), name ?? nameOf(file));

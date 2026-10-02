@@ -1,17 +1,19 @@
-import { readFileSync } from 'node:fs';
 import type { Plugin } from 'vite';
 
+const ASTRYX = '/@astryxdesign/';
 const THEME_ICONS = '/@astryxdesign/theme-neutral/dist/icons.mjs';
 const DEFAULT_ICONS = '/@astryxdesign/core/dist/Icon/defaultIcons.js';
 const ENTRY = /^ {2}(\w+): \/\* @__PURE__ \*\/ jsx\(\w+, \{ \.\.\.iconProps \}\),?$/gm;
+const QUOTED = /["'`](\w+)["'`]/g;
 // Whole-line comments only, so a string such as 'image/*' can't swallow code.
 const COMMENT = /^\s*(?:\/\*[\s\S]*?\*\/|\/\/.*$)/gm;
-const NAME = /\bicon[=:]\s*["'](\w+)["']|\b(?:use|get)Icon\(\s*["'](\w+)["']/g;
 
 /**
  * The icons Astryx components in this app ask the theme for. The neutral theme registers 28
  * Lucide icons and Astryx bundles a heroicon-style fallback for each, all on the first load.
- * The build fails if a bundled module can ask for a theme icon missing from this list.
+ * Field statuses map `error`, `warning`, and `success` to icons through lookup tables. `menu` and
+ * `search` are only ARIA roles and input types in bundled code, but the guard can't tell, so a
+ * kept icon is the safe answer.
  */
 export const THEME_ICON_NAMES = new Set([
   'check',
@@ -19,40 +21,74 @@ export const THEME_ICON_NAMES = new Set([
   'chevronLeft',
   'chevronRight',
   'close',
+  'error',
   'info',
+  'menu',
+  'search',
+  'success',
+  'warning',
 ]);
 
-/** Keeps only the theme icons the app uses, and drops Astryx's unused fallback set. */
-export function astryxIcons(): Plugin {
-  const registered = new Set<string>();
+/** The icon names a theme's icon module registers. */
+export function registeredIcons(code: string): Set<string> {
+  return new Set(Array.from(code.matchAll(ENTRY), ([, name]) => name!));
+}
+
+/**
+ * Every quoted word in a module's code. Astryx reaches icons through props, hooks, and lookup
+ * tables, so any string equal to an icon name counts as asked. A false positive only keeps an
+ * icon. Comments are skipped, since their examples ask for nothing.
+ */
+export function quotedNames(code: string): Set<string> {
+  return new Set(Array.from(code.replace(COMMENT, '').matchAll(QUOTED), ([, name]) => name!));
+}
+
+/** Registered icons that bundled code may ask for but `kept` would prune, sorted. */
+export function prunedButAsked(
+  asked: Iterable<string>,
+  registered: ReadonlySet<string>,
+  kept: ReadonlySet<string>,
+): string[] {
+  return [...new Set(asked)].filter((name) => registered.has(name) && !kept.has(name)).sort();
+}
+
+/**
+ * Keeps only the theme icons the app uses, and drops Astryx's unused fallback set. The build
+ * fails if a bundled Astryx module quotes a pruned icon name, or the theme stops registering a
+ * kept one.
+ */
+export function astryxIcons(kept: ReadonlySet<string> = THEME_ICON_NAMES): Plugin {
+  let registered = new Set<string>();
+  const asked = new Set<string>();
   return {
     name: 'astryx-icons',
     apply: 'build',
     enforce: 'pre',
+    buildStart() {
+      registered = new Set();
+      asked.clear();
+    },
     transform(code, id) {
       if (id.endsWith(DEFAULT_ICONS)) return { code: 'export const defaultIcons = {};', map: null };
-      if (!id.endsWith(THEME_ICONS)) return null;
-      const pruned = code.replace(ENTRY, (line, name: string) => {
-        registered.add(name);
-        return THEME_ICON_NAMES.has(name) ? line : '';
-      });
-      for (const name of THEME_ICON_NAMES)
-        if (!registered.has(name)) this.error(`The theme no longer registers a "${name}" icon.`);
-      return { code: pruned, map: null };
+      if (id.endsWith(THEME_ICONS)) {
+        registered = registeredIcons(code);
+        for (const name of kept)
+          if (!registered.has(name)) this.error(`The theme no longer registers a "${name}" icon.`);
+        return {
+          code: code.replace(ENTRY, (line, name: string) => (kept.has(name) ? line : '')),
+          map: null,
+        };
+      }
+      if (id.includes(ASTRYX)) for (const name of quotedNames(code)) asked.add(name);
+      return null;
     },
     buildEnd(error) {
       if (error) return;
-      const asked = new Set<string>();
-      for (const id of this.getModuleIds()) {
-        if (id.startsWith('\0') || !/\.[mc]?[jt]sx?$/.test(id.split('?')[0]!)) continue;
-        const [file = id] = id.split('?');
-        for (const [, a, b] of readFileSync(file, 'utf8').replace(COMMENT, '').matchAll(NAME))
-          asked.add((a ?? b)!);
-      }
-      for (const name of asked) {
-        if (registered.has(name) && !THEME_ICON_NAMES.has(name))
-          this.error(`A bundled module asks for the "${name}" icon. Add it to THEME_ICON_NAMES.`);
-      }
+      const missing = prunedButAsked(asked, registered, kept);
+      if (missing.length)
+        this.error(
+          `Bundled Astryx code can ask for ${missing.join(', ')}. Add to THEME_ICON_NAMES.`,
+        );
     },
   };
 }
