@@ -46,6 +46,8 @@ export interface EditorState extends PaletteState {
   canRedo: boolean;
   document: DocumentSummary;
   save: SaveStatus | null;
+  /** A slow open is on its way to replacing this document. */
+  opening?: boolean;
 }
 
 /**

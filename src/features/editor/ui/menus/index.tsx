@@ -25,7 +25,7 @@ export interface MenuSurfaceProps {
 
 /** The document's name, behind which sit file actions and appearance. */
 export function DocMenu({ layout }: { layout: Layout }) {
-  const name = useEditorState((state) => state.document.name);
+  const name = useEditorState((state) => (state.opening ? 'Opening…' : state.document.name));
   return (
     <DeferredMenu
       surface="DocMenu"
@@ -35,7 +35,12 @@ export function DocMenu({ layout }: { layout: Layout }) {
         variant: 'ghost',
         icon: <Logo />,
         width: '100%',
-        children: <span {...stylex.props(styles.name)}>{name}</span>,
+        // Polite, so "Opening…" and a failed open's restored name reach screen readers.
+        children: (
+          <span aria-live="polite" {...stylex.props(styles.name)}>
+            {name}
+          </span>
+        ),
       }}
     />
   );

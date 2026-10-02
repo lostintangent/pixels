@@ -84,9 +84,12 @@ export function StatusPill() {
  * hasn't happened.
  */
 export function DocumentMeta() {
+  const opening = useEditorState((state) => state.opening);
   const width = useEditorState((state) => state.document.width);
   const height = useEditorState((state) => state.document.height);
   const save = useSettledSave();
+  // The title says "Opening…", and this document's size and save state are about to be replaced.
+  if (opening) return null;
   if (save === 'error') return <span {...stylex.props(styles.meta, styles.error)}>Not saved</span>;
   return (
     <span {...stylex.props(styles.meta)}>

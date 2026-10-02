@@ -48,14 +48,19 @@ export function FileActionsProvider({
   const showToast = useToast();
 
   const actions = useMemo<FileActions>(() => {
+    let slow: ReturnType<typeof setTimeout> | undefined;
+    const opening = (on: boolean) => session.state.setState((state) => ({ ...state, opening: on }));
     const show = (id: DocumentId) => void navigate({ to: '/d/$docId', params: { docId: id } });
     // A bad file is a small, recoverable mistake, so it gets a calm toast. Red is saved for "Not saved".
-    const fail = (error: unknown, fallback: string) =>
+    const fail = (error: unknown, fallback: string) => {
+      clearTimeout(slow);
+      opening(false);
       showToast({
         body: <Problem>{error instanceof ImportError ? error.message : fallback}</Problem>,
         autoHideDuration: 8000,
         uniqueID: 'file-error',
       });
+    };
     /** An explicit New or Open is an intent to keep, so it's stored before the route reads it. */
     const keep = async (document: BitmapDocument) => {
       await saveDocument(document, store);
@@ -64,7 +69,9 @@ export function FileActionsProvider({
     const decode = (file: Blob, name?: string) =>
       importPng(file, createDocumentId(), name ?? nameOf(file));
 
+    /** A big image takes a moment. An open under 150 ms lands before the title would change. */
     const openFile = (file: Blob, name?: string) => {
+      slow = setTimeout(opening, 150, true);
       decode(file, name)
         .then(keep)
         .catch((error: unknown) => fail(error, 'This file couldn’t be opened.'));
