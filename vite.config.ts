@@ -13,6 +13,11 @@ export default defineConfig({
   // parallel, but avoid sending the entry's already-loaded JS paths in every preload map.
   build: {
     modulePreload: { polyfill: false, resolveDependencies: preload.resolveDependencies },
+    rolldownOptions: {
+      output: {
+        codeSplitting: { groups: [{ name: 'initial', tags: ['$initial'] }] },
+      },
+    },
   },
   // Reachable from other devices over Tailscale. `vp preview` inherits both settings.
   server: { host: true, allowedHosts: ['.ts.net'] },
