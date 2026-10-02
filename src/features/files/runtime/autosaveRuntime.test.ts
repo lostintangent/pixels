@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
 import type {
   AutosaveClock,
@@ -7,6 +7,15 @@ import type {
   DocumentSummary,
 } from '../core/contracts';
 import { attachAutosave, saveDocument } from './autosaveRuntime';
+import { terminatePngWorkerClient } from './pngWorkerClient';
+
+// A fresh Worker per test, not one shared across the whole file: every save routes a real
+// thumbnail encode through the one shared `pngWorkerClient` singleton, and a request left
+// in flight when a test ends would otherwise settle during a *later* test, racing whatever
+// state (e.g. a `withFakeWindow` fake global) that test owns.
+afterEach(() => {
+  terminatePngWorkerClient();
+});
 
 interface PendingTimer {
   id: number;
@@ -90,15 +99,27 @@ function createFakeStore(): DocumentStore & {
   ): Promise<void> {
     const myGate = gateQueue.shift();
     if (myGate) await myGate; // may reject, surfacing as this call's own failure
+    // Attached unconditionally, before the `failNext` branch below can throw past it: a
+    // shapes-bearing thumbnail here routes through the real PNG Worker, which rejects under
+    // `bun test`'s Worker (no OffscreenCanvas). Left uncaught on a simulated-failure path, that
+    // real request would still be in flight when this call throws, and later settle as a genuine
+    // unhandled rejection between tests instead of as part of this one.
+    const thumbnailSettled = Promise.resolve(thumbnail).catch(() => undefined);
     liveSaves++;
     try {
       if (store.failNext) {
         store.failNext = false;
         throw new Error('simulated write failure');
       }
-      const resolvedThumbnail = await thumbnail;
+      // Mirrors the real store: the snapshot (shapes, tiles) is the save of record and commits
+      // independent of the thumbnail encode, which patches in best-effort and never fails the
+      // save itself. Still awaited here (its rejection already caught above, not ignored)
+      // rather than left dangling: `waitForIdle()` below needs this round trip to actually
+      // settle before it resolves, or a still-in-flight request to the one Worker this file
+      // shares across every test could settle mid a *later* test instead.
       store.saves.push(snapshot);
-      saved.set(snapshot.id, { ...snapshot, thumbnail: resolvedThumbnail });
+      const resolvedThumbnail = await thumbnailSettled;
+      if (resolvedThumbnail) saved.set(snapshot.id, { ...snapshot, thumbnail: resolvedThumbnail });
     } finally {
       liveSaves--;
     }

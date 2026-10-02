@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
+import type { Annotation } from '../../annotations';
 import { packRgba } from '../../document';
-import { allTiles, buildThumbnail, extractTile, tileGrid, tilesForRect, writeTile } from './tiles';
+import {
+  allTiles,
+  buildThumbnail,
+  extractTile,
+  scaleAnnotationsForThumbnail,
+  tileGrid,
+  tilesForRect,
+  writeTile,
+} from './tiles';
 
 describe('tile grid math', () => {
   test('grid size covers partial edge tiles', () => {
@@ -125,5 +134,49 @@ describe('thumbnail generation', () => {
     expect(bytes[1]).toBe(20);
     expect(bytes[2]).toBe(30);
     expect(bytes[3]).toBe(255);
+  });
+
+  test('reports scale 1 when the document already fits, and the real ratio when it downscales', () => {
+    const small = buildThumbnail(new Uint32Array(4), 2, 2, 64);
+    expect(small.scale).toBe(1);
+
+    const large = buildThumbnail(new Uint32Array(512 * 512), 512, 512, 64);
+    expect(large.scale).toBeCloseTo(64 / 512, 10);
+  });
+});
+
+describe('scaleAnnotationsForThumbnail', () => {
+  const rectangle: Annotation = {
+    id: 'r1',
+    kind: 'rectangle',
+    start: { x: 10, y: 20 },
+    end: { x: 110, y: 220 },
+    width: 4,
+    color: packRgba(1, 2, 3),
+  };
+
+  test('returns shapes unchanged at scale 1, not just numerically equal', () => {
+    const scaled = scaleAnnotationsForThumbnail([rectangle], 1);
+    expect(scaled).toEqual([rectangle]);
+  });
+
+  test('maps start, end, and width by the scale factor', () => {
+    const [scaled] = scaleAnnotationsForThumbnail([rectangle], 0.25);
+    expect(scaled).toMatchObject({
+      start: { x: 2.5, y: 5 },
+      end: { x: 27.5, y: 55 },
+      width: 1,
+    });
+  });
+
+  test('floors a scaled stroke at 1 px so markup never vanishes at thumbnail size', () => {
+    const thin: Annotation = { ...rectangle, width: 2 };
+    const [scaled] = scaleAnnotationsForThumbnail([thin], 64 / 4096); // a 4096² document's thumbnail
+    expect(scaled!.width).toBe(1);
+  });
+
+  test('preserves every other shape field untouched', () => {
+    const [scaled] = scaleAnnotationsForThumbnail([rectangle], 0.5);
+    expect(scaled).toMatchObject({ id: 'r1', kind: 'rectangle', color: rectangle.color });
   });
 });

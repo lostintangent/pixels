@@ -14,10 +14,11 @@ export function snapshotDocument(
   dirtyTiles: Iterable<TileCoord>,
   fullResave: boolean,
 ): DocumentSnapshot {
-  // Deliberately raw pixels, no shapes composited in: `buildThumbnail` stays pure math on every
-  // autosave (no canvas, no `await`), which is what keeps it safe to call synchronously here,
-  // before the buffer-swap-safety window above closes. Flattening shapes needs a canvas context,
-  // which would pull a browser dependency into this framework-free module for a 64 px preview.
+  // `buildThumbnail` stays pure math (no canvas, no `await`) so it's safe to call synchronously
+  // here, before the buffer-swap-safety window above closes — it never composites `shapes` in.
+  // Callers that want markup visible in the thumbnail scale `shapes` by `thumbnailPixels.scale`
+  // (`scaleAnnotationsForThumbnail`) and pass that into the PNG Worker's encode alongside these
+  // raw pixels, the same way a full export's shapes are flattened in the Worker, not here.
   const thumbnailPixels = buildThumbnail(document.pixels, document.width, document.height);
   // A read-only lookup: never creates a set (and never pulls in its mutable implementation) for a
   // document no gesture has touched this session. `.snapshot()` returns already-detached copies,

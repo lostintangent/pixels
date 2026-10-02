@@ -3,7 +3,7 @@ import type { BitmapDocument } from '../../document';
 import { createAutosaveScheduler } from '../core/autosave';
 import type { AutosaveOptions, DocumentStore, TileCoord } from '../core/contracts';
 import { snapshotDocument } from '../core/snapshot';
-import { tilesForRect } from '../core/tiles';
+import { scaleAnnotationsForThumbnail, tilesForRect } from '../core/tiles';
 import { encodePngOffMainThread } from './pngWorkerClient';
 
 /**
@@ -23,6 +23,7 @@ export async function saveDocument(document: BitmapDocument, store: DocumentStor
     snapshot.thumbnailPixels.pixels,
     1,
     snapshot.colorSpace,
+    scaleAnnotationsForThumbnail(snapshot.shapes, snapshot.thumbnailPixels.scale),
   );
   await store.save(snapshot, thumbnail);
 }
@@ -144,6 +145,7 @@ export function attachAutosave(
         snapshot.thumbnailPixels.pixels,
         1,
         snapshot.colorSpace,
+        scaleAnnotationsForThumbnail(snapshot.shapes, snapshot.thumbnailPixels.scale),
       );
       await store.save(snapshot, thumbnail);
       inFlightFlushes--;

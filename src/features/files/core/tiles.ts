@@ -1,3 +1,4 @@
+import type { Annotation } from '../../annotations';
 import { TILE_SIZE, type TileCoord, type TileSnapshot } from './contracts';
 
 export { TILE_SIZE };
@@ -102,18 +103,21 @@ export function writeTile(
  *  (so at most its square in total), independent of how large the source block is. */
 const THUMBNAIL_SAMPLES_PER_AXIS = 4;
 
-/** Box-average downscale to fit within maxSide on the long edge. Pure math, no canvas. */
+/** Box-average downscale to fit within maxSide on the long edge. Pure math, no canvas. `scale`
+ *  is the document-to-thumbnail factor this picked, so a caller that also wants shapes drawn into
+ *  the thumbnail can map their document-space coordinates into this smaller canvas without a
+ *  second, independent (and possibly non-uniform, after each axis's own rounding) computation. */
 export function buildThumbnail(
   pixels: Uint32Array,
   width: number,
   height: number,
   maxSide = 64,
-): { width: number; height: number; pixels: Uint32Array } {
+): { width: number; height: number; pixels: Uint32Array; scale: number } {
   const scale = Math.min(1, maxSide / Math.max(width, height));
   const outWidth = Math.max(1, Math.round(width * scale));
   const outHeight = Math.max(1, Math.round(height * scale));
   if (outWidth === width && outHeight === height) {
-    return { width, height, pixels: pixels.slice() };
+    return { width, height, pixels: pixels.slice(), scale: 1 };
   }
   const bytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
   const out = new Uint32Array(outWidth * outHeight);
@@ -152,5 +156,24 @@ export function buildThumbnail(
       outBytes[outOffset + 3] = Math.round(a / count);
     }
   }
-  return { width: outWidth, height: outHeight, pixels: out };
+  return { width: outWidth, height: outHeight, pixels: out, scale };
+}
+
+/** Maps shapes from document-space coordinates into a thumbnail's smaller canvas, so the PNG
+ *  Worker can flatten them onto the thumbnail pixels directly instead of flattening at full
+ *  document size and re-downscaling — a 4096² document's thumbnail stays a 64 px flatten, not a
+ *  16 M-pixel one. A stroke this thin at thumbnail scale would otherwise vanish or anti-alias
+ *  into near-invisibility, so width is floored at 1 px — recents still shows that a document has
+ *  markup even when the thumbnail itself is tiny. */
+export function scaleAnnotationsForThumbnail(
+  shapes: readonly Annotation[],
+  scale: number,
+): Annotation[] {
+  if (scale === 1) return shapes.slice();
+  return shapes.map((shape) => ({
+    ...shape,
+    start: { x: shape.start.x * scale, y: shape.start.y * scale },
+    end: { x: shape.end.x * scale, y: shape.end.y * scale },
+    width: Math.max(1, shape.width * scale),
+  }));
 }

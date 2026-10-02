@@ -8,7 +8,12 @@ import type {
   LoadedDocument,
   TileSnapshot,
 } from '../core/contracts';
-import { buildThumbnail, extractAllTiles, writeTile } from '../core/tiles';
+import {
+  buildThumbnail,
+  extractAllTiles,
+  scaleAnnotationsForThumbnail,
+  writeTile,
+} from '../core/tiles';
 import { encodePngOffMainThread } from '../runtime/pngWorkerClient';
 
 const DB_NAME = 'pixels-files';
@@ -246,6 +251,7 @@ async function buildRecoveredThumbnail(
   width: number,
   height: number,
   colorSpace: DocumentColorSpace,
+  shapes: readonly Annotation[],
 ): Promise<Uint8Array> {
   const pixels32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.length / 4);
   const thumbnailPixels = buildThumbnail(pixels32, width, height);
@@ -255,6 +261,7 @@ async function buildRecoveredThumbnail(
     thumbnailPixels.pixels,
     1,
     colorSpace,
+    scaleAnnotationsForThumbnail(shapes, thumbnailPixels.scale),
   );
 }
 
@@ -462,7 +469,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
           tiles: recoveredTiles,
           fullResave: !record || recovery.fullResave,
           shapes: recoveryShapes,
-          thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0) },
+          thumbnailPixels: { width: 0, height: 0, pixels: new Uint32Array(0), scale: 1 },
           colorSpace: recoveryColorSpace,
         };
         // A document that crashed before its first real thumbnail ever computed has nothing in
@@ -470,7 +477,13 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
         // encode) instead of leaving Recent Documents showing a blank tile until the next edit.
         const thumbnail =
           lastKnownThumbnail.get(id) ??
-          (await buildRecoveredThumbnail(pixels, width, height, recoveryColorSpace));
+          (await buildRecoveredThumbnail(
+            pixels,
+            width,
+            height,
+            recoveryColorSpace,
+            recoveryShapes,
+          ));
         await writes.run(id, () => saveNow(recoverySnapshot, thumbnail));
         clearCrashRecovery(id);
         return {

@@ -51,8 +51,10 @@ export interface DocumentSnapshot {
    *  tile out of it (thousands, at a large canvas) in one unbroken task before the first write.
    *  Whoever persists this snapshot extracts tiles from it lazily, via `extractAllTiles`. */
   fullResaveBytes?: Uint8Array;
-  /** Raw, already-detached thumbnail pixels. PNG-encoding happens after the snapshot, off the live buffer. */
-  thumbnailPixels: { width: number; height: number; pixels: Uint32Array };
+  /** Raw, already-detached thumbnail pixels. PNG-encoding happens after the snapshot, off the
+   *  live buffer. `scale` is the document-to-thumbnail factor `buildThumbnail` picked, so shapes
+   *  (in document-space coordinates) can be mapped into this smaller canvas before encoding. */
+  thumbnailPixels: { width: number; height: number; pixels: Uint32Array; scale: number };
   colorSpace: DocumentColorSpace;
 }
 
