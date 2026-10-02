@@ -4,6 +4,7 @@ import type { Annotation } from './contracts';
 import { arrowGeom, handlesOf, hitShape, resizeRect, snap45, square, targetsOf } from './geometry';
 import { annotationsFor, createAnnotationSet, isValidAnnotation } from './set';
 import { hitAnnotationSet } from './hit';
+import { findAnnotationsFor, watchAnnotationSet } from './registry';
 import { createBitmapDocument } from '../../document';
 import { createDocumentHistory } from '../../history';
 import {
@@ -110,6 +111,18 @@ test('one set owns committed shapes, preview changes, and topmost hits', () => {
   expect(changes).toEqual(['commit', 'commit', 'preview', 'preview']);
   unsubscribe();
   expect(createAnnotationSet().shapes).toEqual([]);
+});
+
+test('a pixel-only document stays without a set until its first annotation', () => {
+  const document = createBitmapDocument('cold-shapes', 8, 8);
+  expect(findAnnotationsFor(document)).toBeNull();
+  const attached: unknown[] = [];
+  const stop = watchAnnotationSet(document, (set) => attached.push(set));
+  expect(findAnnotationsFor(document)).toBeNull();
+  const set = annotationsFor(document);
+  expect(attached).toEqual([set]);
+  stop();
+  expect(findAnnotationsFor(document)).toBe(set);
 });
 
 test('stored shapes reject malformed geometry and colors', () => {

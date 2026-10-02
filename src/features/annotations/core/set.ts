@@ -1,5 +1,6 @@
 import type { BitmapDocument } from '../../document';
 import type { Annotation, AnnotationChange, AnnotationSet } from './contracts';
+import { findAnnotationsFor, registerAnnotationSet } from './registry';
 
 function copy(shape: Annotation): Annotation {
   return { ...shape, start: { ...shape.start }, end: { ...shape.end } };
@@ -23,8 +24,6 @@ export function isValidAnnotation(value: unknown): value is Annotation {
     shape.color! <= 0xffffffff
   );
 }
-
-const sets = new WeakMap<BitmapDocument, AnnotationSet>();
 
 export function createAnnotationSet(): AnnotationSet {
   let shapes: Annotation[] = [];
@@ -85,10 +84,10 @@ export function createAnnotationSet(): AnnotationSet {
 
 /** One annotation owner per live bitmap, with no dependency from document back to annotations. */
 export function annotationsFor(document: BitmapDocument): AnnotationSet {
-  let set = sets.get(document);
+  let set = findAnnotationsFor(document);
   if (!set) {
     set = createAnnotationSet();
-    sets.set(document, set);
+    registerAnnotationSet(document, set);
   }
   return set;
 }

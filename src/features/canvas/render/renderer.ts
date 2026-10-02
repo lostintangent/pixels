@@ -1,6 +1,6 @@
 import type { BitmapDocument, DocumentColorSpace, PixelRect } from '../../document';
 import { intersectRect, unionRect } from '../../document';
-import { annotationsFor, type AnnotationSet } from '../../annotations/model';
+import { watchAnnotationSet, type AnnotationSet } from '../../annotations/model';
 import type { Viewport } from '../core/contracts';
 import type { CanvasRenderer, OverlayPreview, OverlayState, RendererSurface } from './contracts';
 
@@ -84,6 +84,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   let overlay = EMPTY_OVERLAY;
   let unsubscribe: (() => void) | null = null;
   let annotationUnsubscribe: (() => void) | null = null;
+  let annotationWatchUnsubscribe: (() => void) | null = null;
   let annotations: AnnotationSet | null = null;
   let painter: typeof import('../../annotations') | null = null;
   let painterLoading = false;
@@ -409,8 +410,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       }
       unsubscribe?.();
       annotationUnsubscribe?.();
+      annotationWatchUnsubscribe?.();
       document = bitmap;
-      annotations = annotationsFor(bitmap);
+      annotations = null;
       imageData = null;
       pendingDirty = { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
       viewportDirty = annotationDirty = overlayDirty = true;
@@ -420,7 +422,12 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
         viewportDirty = true;
         schedule();
       });
-      annotationUnsubscribe = annotations.subscribe(() => {
+      annotationWatchUnsubscribe = watchAnnotationSet(bitmap, (set) => {
+        annotations = set;
+        annotationUnsubscribe = set.subscribe(() => {
+          annotationDirty = overlayDirty = true;
+          schedule();
+        });
         annotationDirty = overlayDirty = true;
         schedule();
       });
@@ -471,6 +478,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       disposed = true;
       unsubscribe?.();
       annotationUnsubscribe?.();
+      annotationWatchUnsubscribe?.();
       if (frame) cancelAnimationFrame(frame);
       if (timer) clearTimeout(timer);
     },

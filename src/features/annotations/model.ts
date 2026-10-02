@@ -7,6 +7,7 @@ export type {
   AnnotationSet,
 } from './core/contracts';
 export { annotationsFor, createAnnotationSet, isValidAnnotation } from './core/set';
+export { findAnnotationsFor, watchAnnotationSet } from './core/registry';
 export {
   annotationHistoryState,
   beginAnnotationEdit,
