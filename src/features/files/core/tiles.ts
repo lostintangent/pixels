@@ -66,6 +66,19 @@ export function extractTile(
   return { tx: coord.tx, ty: coord.ty, pixels };
 }
 
+/** Splits a whole-buffer copy into tiles one at a time, instead of all at once: a full resave's
+ *  snapshot captures one synchronous copy of the live buffer (cheap, a single bulk copy) and
+ *  hands it here, so the actual per-tile splitting work — the part that scales with tile count —
+ *  happens lazily, interleaved with whatever paced loop is persisting each tile, rather than as
+ *  one unbroken task before the first write. */
+export function* extractAllTiles(
+  rgbaBytes: RgbaBytes,
+  width: number,
+  height: number,
+): Generator<TileSnapshot> {
+  for (const coord of allTiles(width, height)) yield extractTile(rgbaBytes, width, height, coord);
+}
+
 /** Inverse of extractTile: writes a tile's live bytes back into document RGBA bytes, clipped to bounds. */
 export function writeTile(
   rgbaBytes: RgbaBytes,

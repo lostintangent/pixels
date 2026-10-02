@@ -7,7 +7,7 @@ import type {
   LoadedDocument,
   TileSnapshot,
 } from '../core/contracts';
-import { buildThumbnail, writeTile } from '../core/tiles';
+import { buildThumbnail, extractAllTiles, writeTile } from '../core/tiles';
 import { encodePngOffMainThread } from '../runtime/pngWorkerClient';
 
 const DB_NAME = 'pixels-files';
@@ -21,6 +21,22 @@ const TILES_BY_ID_INDEX = 'by_id';
 // splits into roughly 8 yields — enough to keep each task comfortably under a 50ms budget without
 // adding meaningful task-switch overhead to the common small-save path.
 const SAVE_BATCH_TILE_COUNT = 512;
+// `load()`'s tile reassembly (`writeTile` per record, after `getAll()` already has every record
+// in hand) is CPU-only — there is no IDBRequest left to await for a free yield point the way
+// `saveNow` gets one from its own `put()`s. Reuse the same batch size so a 4096-tile cold reload
+// yields about as often as a 4096-tile full-resave save does.
+const LOAD_BATCH_TILE_COUNT = SAVE_BATCH_TILE_COUNT;
+
+/** A real task-boundary yield with no minimum delay, unlike `setTimeout`, which clamps to 4ms
+ *  after a handful of nested calls. Lets a long CPU-only loop (tile reassembly on load) split
+ *  into several tasks the same way awaiting another IndexedDB request does for writes. */
+function yieldToTask(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port2.onmessage = () => resolve();
+    channel.port1.postMessage(null);
+  });
+}
 
 interface DocumentRecord {
   id: DocumentId;
@@ -131,7 +147,13 @@ function crashRecoveryKey(id: DocumentId): string {
 
 function stashForCrashRecovery(snapshot: DocumentSnapshot): void {
   if (typeof localStorage === 'undefined') return;
-  const totalBytes = snapshot.tiles.reduce((sum, tile) => sum + tile.pixels.byteLength, 0);
+  // A full resave's tiles are deferred (see `fullResaveBytes` on `DocumentSnapshot`); this is the
+  // one consumer that still needs every tile's actual bytes materialized at once, since it's a
+  // one-shot synchronous stash on page exit, not a paced loop like `saveNow`'s.
+  const tiles = snapshot.fullResaveBytes
+    ? [...extractAllTiles(snapshot.fullResaveBytes, snapshot.width, snapshot.height)]
+    : snapshot.tiles;
+  const totalBytes = tiles.reduce((sum, tile) => sum + tile.pixels.byteLength, 0);
   if (totalBytes > CRASH_RECOVERY_MAX_BYTES) return;
   try {
     const payload: CrashRecoveryPayload = {
@@ -140,7 +162,7 @@ function stashForCrashRecovery(snapshot: DocumentSnapshot): void {
       width: snapshot.width,
       height: snapshot.height,
       fullResave: snapshot.fullResave,
-      tiles: snapshot.tiles.map((tile) => ({
+      tiles: tiles.map((tile) => ({
         tx: tile.tx,
         ty: tile.ty,
         pixels: bytesToBase64(tile.pixels),
@@ -276,8 +298,20 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
     // smaller tasks. A save with few dirty tiles (the overwhelmingly common case: one stroke's
     // worth) never crosses the batch boundary, so it stays exactly as before: one synchronous loop,
     // zero added yields.
+    //
+    // A full resave also defers the per-tile *extraction* itself into this same paced loop
+    // (`extractAllTiles`, over the snapshot's single whole-buffer copy) instead of splitting
+    // every tile out up front: that upfront split was its own unbroken task before the first
+    // `put`, independent of how batched the puts themselves were. Branches on `fullResaveBytes`
+    // actually being present, not just `snapshot.fullResave` — the crash-recovery rebuild below
+    // builds its own recovery snapshot with concrete, already-extracted `tiles` (from the
+    // journal) even when it sets `fullResave: true`, since that flag there means "this is the
+    // whole grid, not a diff," not "lazily extract this."
     let tileCount = 0;
-    for (const tile of snapshot.tiles) {
+    const tileSource: Iterable<TileSnapshot> = snapshot.fullResaveBytes
+      ? extractAllTiles(snapshot.fullResaveBytes, snapshot.width, snapshot.height)
+      : snapshot.tiles;
+    for (const tile of tileSource) {
       const tileRecord: TileRecord = {
         id: snapshot.id,
         tx: tile.tx,
@@ -425,8 +459,11 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
 
       if (!record) return null;
       const pixels = new Uint8Array(record.width * record.height * 4);
+      let reassembled = 0;
       for (const tile of tileRecords) {
         writeTile(pixels, record.width, record.height, tile);
+        reassembled++;
+        if (reassembled % LOAD_BATCH_TILE_COUNT === 0) await yieldToTask();
       }
       return {
         id: record.id,

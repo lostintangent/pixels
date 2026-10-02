@@ -35,9 +35,17 @@ export interface DocumentSnapshot {
   width: number;
   height: number;
   updatedAt: number;
+  /** Already-extracted tile bytes for an incremental (dirty-tile) save — cheap, since it's only
+   *  ever a handful of tiles. Empty when `fullResave` is true; see `fullResaveBytes` instead. */
   tiles: TileSnapshot[];
   /** True when every tile must be written and any stale tiles from a previous, larger size removed. */
   fullResave: boolean;
+  /** Only set when `fullResave` is true: one synchronous copy of the whole live buffer, captured
+   *  before any await so a later stroke or undo swapping the document's buffer can't corrupt it —
+   *  the same guarantee eager per-tile extraction gave, but without paying for splitting every
+   *  tile out of it (thousands, at a large canvas) in one unbroken task before the first write.
+   *  Whoever persists this snapshot extracts tiles from it lazily, via `extractAllTiles`. */
+  fullResaveBytes?: Uint8Array;
   /** Raw, already-detached thumbnail pixels. PNG-encoding happens after the snapshot, off the live buffer. */
   thumbnailPixels: { width: number; height: number; pixels: Uint32Array };
   colorSpace: DocumentColorSpace;

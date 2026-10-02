@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
 import { snapshotDocument } from './snapshot';
+import { extractAllTiles } from './tiles';
 
 describe('snapshotDocument', () => {
   test('copies tile bytes eagerly, so later mutation of the live document does not affect it', () => {
@@ -18,11 +19,21 @@ describe('snapshotDocument', () => {
     expect(snapshot.name).toBe('Sprite');
   });
 
-  test('a full resave snapshots every tile in the grid', () => {
+  test('a full resave captures a single synchronous copy of the whole buffer, to split into tiles lazily', () => {
     const document = createBitmapDocument('doc-2', 100, 70);
+    document.pixels.fill(packRgba(5, 6, 7, 255));
     const snapshot = snapshotDocument(document, [], true);
     expect(snapshot.fullResave).toBe(true);
-    expect(snapshot.tiles).toHaveLength(2 * 2); // ceil(100/64) x ceil(70/64)
+    expect(snapshot.tiles).toHaveLength(0);
+    expect(snapshot.fullResaveBytes).toBeDefined();
+    expect(snapshot.fullResaveBytes).toHaveLength(100 * 70 * 4);
+
+    // Simulate a stroke landing after the snapshot was taken.
+    document.pixels.fill(packRgba(200, 0, 0, 255));
+
+    const tiles = [...extractAllTiles(snapshot.fullResaveBytes!, document.width, document.height)];
+    expect(tiles).toHaveLength(2 * 2); // ceil(100/64) x ceil(70/64)
+    expect(tiles[0]!.pixels[0]).toBe(5); // still the pre-stroke value, not the later one
   });
 
   test('deduplicates repeated dirty tile coordinates', () => {
