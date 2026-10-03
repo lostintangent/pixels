@@ -11,8 +11,8 @@ import {
   isNavigating,
   stepGesture,
 } from '../core/gestures';
-import { type ViewBounds, boundView, snapZoomWithin } from '../core/bounds';
-import { clampZoom, screenToDocument, snapZoom, stepZoom, zoomAt } from '../core/viewport';
+import { type ViewBounds, boundView, settleView } from '../core/bounds';
+import { MIN_ZOOM, clampZoom, screenToDocument, stepZoom, zoomAt } from '../core/viewport';
 import { initialWheelState, wheelIntent } from '../core/wheel';
 import type { OverlayState } from '../render/contracts';
 import { createCanvasRenderer } from '../render/renderer';
@@ -133,8 +133,10 @@ export function CanvasSurface({
     let settleTarget: Viewport | null = null;
     let settleTimer: ReturnType<typeof setTimeout> | undefined;
     let settlePending: ScreenPoint | null = null;
+    /** The view a trackpad pinch began from, so it can come back to an off-ladder fit. */
+    let settleStart: Viewport | undefined;
     let lastWheelZoomAt = -Infinity;
-    let webkitPinch: { zoom: number; at: ScreenPoint } | null = null;
+    let webkitPinch: { start: Viewport; at: ScreenPoint } | null = null;
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
     const local = (event: { clientX: number; clientY: number }): ScreenPoint => {
@@ -210,29 +212,26 @@ export function CanvasSurface({
       settleTarget = null;
       clearTimeout(settleTimer);
       settlePending = null;
+      settleStart = undefined;
     }
     cancelExternalSettle = stopSettle;
 
     /** Jumps a settle in flight to its end, so a new gesture starts from a ladder zoom. */
     function finishSettle(): void {
-      if (settlePending) return settle(settlePending, false);
+      if (settlePending) return settle(settlePending, settleStart, false);
       const target = settleTarget;
       stopSettle();
       if (target) setView(target);
     }
 
     /**
-     * Eases a free zoom onto the nearest ladder step, or the floor when that's nearer, with
-     * pixel-aligned pan inside the bounds.
+     * Eases a free zoom onto the nearest ladder step, the floor, or the zoom it started from,
+     * with pixel-aligned pan inside the bounds.
      */
-    function settle(screen: ScreenPoint, animate = true): void {
+    function settle(screen: ScreenPoint, start: Viewport | undefined, animate = true): void {
       stopSettle();
-      const from = viewport.state;
-      const floor = latest.current.bounds?.()?.minZoom;
-      const zoom = floor === undefined ? snapZoom(from.zoom) : snapZoomWithin(from.zoom, floor);
-      const end = zoomAt(from, zoom, screen);
-      end.panX = Math.round(end.panX);
-      end.panY = Math.round(end.panY);
+      const floor = latest.current.bounds?.()?.minZoom ?? MIN_ZOOM;
+      const end = settleView(viewport.state, floor, screen, start);
       easeTo(stopAt(end, screen), screen, SETTLE_MS, animate);
     }
 
@@ -317,7 +316,7 @@ export function CanvasSurface({
             );
             break;
           case 'settle':
-            settle(command.at);
+            settle(command.at, command.start);
             break;
           case 'undo':
             input.undo();
@@ -397,12 +396,15 @@ export function CanvasSurface({
         if (intent.direction > 0 || view.zoom > floor)
           moveTo(stopAt(stepZoom(view, intent.direction, point), point));
       } else if (intent.kind === 'zoom') {
+        // A burst of pinch wheels keeps the view it began from, even across an interrupted settle.
+        const start = settlePending ? settleStart : (settleTarget ?? viewport.state);
         stopSettle();
         lastWheelZoomAt = event.timeStamp;
         const view = viewport.state;
         moveTo(stopAt(zoomAt(view, clampZoom(view.zoom * intent.factor), point), point));
         settlePending = point;
-        settleTimer = setTimeout(() => settle(point), PINCH_SETTLE_MS);
+        settleStart = start;
+        settleTimer = setTimeout(() => settle(point, start), PINCH_SETTLE_MS);
       }
       if (viewport.state === before) hover(point);
     }
@@ -416,20 +418,21 @@ export function CanvasSurface({
         event.clientX === undefined || event.clientY === undefined
           ? (hovered ?? { x: viewport.state.cssWidth / 2, y: viewport.state.cssHeight / 2 })
           : local({ clientX: event.clientX, clientY: event.clientY });
-      webkitPinch = { zoom: viewport.state.zoom, at };
+      webkitPinch = { start: viewport.state, at };
     }
 
     function onGestureChange(event: WebKitGestureEvent): void {
       event.preventDefault();
       if (!webkitPinch || down.size > 0 || event.scale === undefined) return;
       if (event.timeStamp - lastWheelZoomAt < WHEEL_ZOOM_MS) return;
-      const zoom = clampZoom(webkitPinch.zoom * event.scale);
+      const zoom = clampZoom(webkitPinch.start.zoom * event.scale);
       moveTo(stopAt(zoomAt(viewport.state, zoom, webkitPinch.at), webkitPinch.at));
     }
 
     function onGestureEnd(event: WebKitGestureEvent): void {
       event.preventDefault();
-      if (webkitPinch && event.timeStamp - lastWheelZoomAt >= WHEEL_ZOOM_MS) settle(webkitPinch.at);
+      if (webkitPinch && event.timeStamp - lastWheelZoomAt >= WHEEL_ZOOM_MS)
+        settle(webkitPinch.at, webkitPinch.start);
       webkitPinch = null;
     }
 

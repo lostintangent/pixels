@@ -33,7 +33,8 @@ export type GestureCommand =
   | { type: 'end' }
   | { type: 'cancel' }
   | { type: 'view'; viewport: Viewport }
-  | { type: 'settle'; at: ScreenPoint }
+  /** Ease a free zoom to rest around `at`. `start` is the view the pinch began from. */
+  | { type: 'settle'; at: ScreenPoint; start: Viewport }
   | { type: 'undo' }
   | { type: 'redo' };
 
@@ -240,7 +241,7 @@ function pointerUp(state: GestureState, pointer: GesturePointer, cancelled: bool
   if (touches.size === 0) {
     const commands: readonly GestureCommand[] = tap
       ? [{ type: 'view', viewport: mode.view }, { type: mode.fingers >= 3 ? 'redo' : 'undo' }]
-      : [{ type: 'settle', at: mode.latest }];
+      : [{ type: 'settle', at: mode.latest, start: mode.view }];
     return { state: { ...state, mode: IDLE }, commands };
   }
   const pair = pointer.id === mode.a.id || pointer.id === mode.b.id;
@@ -248,7 +249,7 @@ function pointerUp(state: GestureState, pointer: GesturePointer, cancelled: bool
   // Lifting one of the pair ends the pinch, and the fingers left behind can't start a stroke.
   return {
     state: { ...state, mode: IDLE, ignored: union(state.ignored, touches) },
-    commands: [{ type: 'settle', at: mode.latest }],
+    commands: [{ type: 'settle', at: mode.latest, start: mode.view }],
   };
 }
 
@@ -306,7 +307,7 @@ function yieldToPen(state: GestureState, time: number): GestureStep {
     case 'pinch': {
       const command: GestureCommand = mode.tap
         ? { type: 'view', viewport: mode.view }
-        : { type: 'settle', at: mode.latest };
+        : { type: 'settle', at: mode.latest, start: mode.view };
       return {
         state: { ...idle, ignored: union(state.ignored, mode.touches) },
         commands: [command],

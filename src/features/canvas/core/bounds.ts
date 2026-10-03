@@ -33,10 +33,21 @@ export function rubberBand(overshoot: number, dimension: number): number {
   return dimension * (1 - 1 / ((overshoot * RUBBER) / dimension + 1));
 }
 
-/** The nearest ladder step at or above the floor, or the floor itself when that's closer. */
-export function snapZoomWithin(zoom: number, minZoom: number): number {
+/**
+ * The nearest ladder step at or above the floor, or the floor itself when that's closer. A `keep`
+ * zoom at or above the floor is a candidate too, so a gesture that ends near where it started can
+ * return to an off-ladder fit.
+ */
+export function snapZoomWithin(zoom: number, minZoom: number, keep?: number): number {
   let best = minZoom;
   let distance = Math.abs(Math.log(zoom / minZoom));
+  if (keep !== undefined && keep >= minZoom) {
+    const current = Math.abs(Math.log(zoom / keep));
+    if (current < distance) {
+      best = keep;
+      distance = current;
+    }
+  }
   for (const step of ZOOM_STEPS) {
     if (step < minZoom) continue;
     const current = Math.abs(Math.log(zoom / step));
@@ -46,6 +57,25 @@ export function snapZoomWithin(zoom: number, minZoom: number): number {
     }
   }
   return best;
+}
+
+/**
+ * Where a free pinch comes to rest around `at`: the nearest ladder step at or above the floor, the
+ * floor, or the zoom the gesture started from, with pan on whole CSS pixels. Returning exactly to a
+ * fitted start keeps its fitted label. The caller still bounds the result.
+ */
+export function settleView(
+  view: Viewport,
+  minZoom: number,
+  at: ScreenPoint,
+  start?: Viewport,
+): Viewport {
+  const zoom = snapZoomWithin(view.zoom, minZoom, start?.zoom);
+  const end = zoomAt(view, zoom, at);
+  end.panX = Math.round(end.panX);
+  end.panY = Math.round(end.panY);
+  if (start?.fittedZoom === zoom && start.zoom === zoom) end.fittedZoom = zoom;
+  return end;
 }
 
 /**

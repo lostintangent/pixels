@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { Viewport } from './contracts';
-import { MIN_OVERLAP, boundView, rubberBand, snapZoomWithin } from './bounds';
+import { MIN_OVERLAP, boundView, rubberBand, settleView, snapZoomWithin } from './bounds';
 import type { ViewBounds } from './bounds';
-import { screenToDocument } from './viewport';
+import { fitViewport, screenToDocument } from './viewport';
 
 const FRAME = { top: 72, right: 76, bottom: 56, left: 76 };
 /** A 1288 × 772 frame inside a 1440 × 900 canvas. */
@@ -122,5 +122,58 @@ describe('snapZoomWithin', () => {
     expect(snapZoomWithin(0.3, 0.62)).toBe(0.62);
     expect(snapZoomWithin(0.4, 0.25)).toBe(0.5);
     expect(snapZoomWithin(128, 1)).toBe(128);
+  });
+
+  test('keeps a start zoom at or above the floor when it is nearest', () => {
+    expect(snapZoomWithin(11, 1, 11)).toBe(11);
+    expect(snapZoomWithin(11.4, 1, 11)).toBe(11);
+    expect(snapZoomWithin(11.6, 1, 11)).toBe(12);
+    expect(snapZoomWithin(0.5, 0.62, 0.5)).toBe(0.62);
+  });
+});
+
+describe('settleView', () => {
+  const PHONE: Viewport = {
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    cssWidth: 390,
+    cssHeight: 844,
+    devicePixelRatio: 3,
+  };
+  const PHONE_FRAME = { top: 72, right: 16, bottom: 148, left: 16 };
+  const fit = fitViewport(PHONE, 32, 32, PHONE_FRAME);
+
+  test('a pan at an off-ladder fit comes back to that fit, label and all', () => {
+    expect(fit.zoom).toBe(11);
+    const panned = { ...fit, panX: fit.panX + 40.4, panY: fit.panY - 12.6 };
+    const end = settleView(panned, 1, { x: 195, y: 400 }, fit);
+    expect(end).toMatchObject({ zoom: 11, fittedZoom: 11 });
+    expect(end.panX).toBe(Math.round(panned.panX));
+    expect(end.panY).toBe(Math.round(panned.panY));
+  });
+
+  test('a near-zero pinch returns to the start, and a real one moves on to the ladder', () => {
+    const at = { x: 195, y: 400 };
+    expect(settleView({ ...fit, zoom: 11.3 }, 1, at, fit)).toMatchObject({
+      zoom: 11,
+      fittedZoom: 11,
+    });
+    const onward = settleView({ ...fit, zoom: 15 }, 1, at, fit);
+    expect(onward.zoom).toBe(16);
+    expect(onward.fittedZoom).toBeUndefined();
+  });
+
+  test('a start that was not a fit returns without a fitted label', () => {
+    const manual = { ...fit, fittedZoom: undefined };
+    const end = settleView({ ...manual, zoom: 10.8 }, 1, { x: 195, y: 400 }, manual);
+    expect(end.zoom).toBe(11);
+    expect(end.fittedZoom).toBeUndefined();
+  });
+
+  test('without a start, or with one under the floor, it snaps to the ladder or the floor', () => {
+    const at = { x: 195, y: 400 };
+    expect(settleView({ ...fit, zoom: 11.2 }, 1, at).zoom).toBe(12);
+    expect(settleView({ ...fit, zoom: 0.6 }, 0.62, at, { ...fit, zoom: 0.55 }).zoom).toBe(0.62);
   });
 });

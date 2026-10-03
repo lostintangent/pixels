@@ -167,6 +167,35 @@ describe('pinch', () => {
     expect(g.log.at(-1)).toBe('settle');
   });
 
+  test('a two-finger pan keeps the exact zoom and settles with the view it started from', () => {
+    let state: GestureState = initialGestureState;
+    let current: Viewport = { ...view, zoom: 11, fittedZoom: 11 };
+    const start = current;
+    const settles: GestureCommand[] = [];
+    const send = (event: GestureEvent) => {
+      const step = stepGesture(state, event, current);
+      state = step.state;
+      for (const command of step.commands) {
+        if (command.type === 'view') current = command.viewport;
+        if (command.type === 'settle') settles.push(command);
+      }
+    };
+    const pointer = (id: number, x: number, time: number) => ({
+      id,
+      kind: 'touch' as const,
+      point: { x, y: 300 },
+      time,
+    });
+    send({ type: 'down', pointer: pointer(1, 100, 0), button: 0, space: false });
+    send({ type: 'down', pointer: pointer(2, 200, 10), button: 0, space: false });
+    send({ type: 'move', pointer: pointer(1, 160, 30) });
+    send({ type: 'move', pointer: pointer(2, 260, 40) });
+    expect(current.zoom).toBe(11);
+    expect(current.panX).toBe(start.panX + 60);
+    send({ type: 'up', pointer: pointer(1, 160, 400), cancelled: false });
+    expect(settles).toEqual([{ type: 'settle', at: { x: 210, y: 300 }, start }]);
+  });
+
   test('a finger left behind after a pinch cannot draw, and neither can a new one', () => {
     const g = gestures();
     g.down(1, 'touch', { x: 100, y: 300 }, 0);
