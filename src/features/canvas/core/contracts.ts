@@ -3,7 +3,10 @@ import type { PixelPoint } from '../../document';
 /** Screen coordinates are CSS pixels; backing stores scale by devicePixelRatio. */
 export interface Viewport {
   zoom: number;
-  /** Exact whole-number fit to show at rest; a gesture clears it. */
+  /**
+   * The exact fit this view rests at. A moving pinch that began at that fit keeps it so its label
+   * can name the fit as its destination. A finished zoom elsewhere clears it.
+   */
   fittedZoom?: number;
   panX: number;
   panY: number;

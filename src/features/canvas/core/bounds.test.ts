@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Viewport } from './contracts';
-import { MIN_OVERLAP, boundView, rubberBand, settleView, snapZoomWithin } from './bounds';
+import { MIN_OVERLAP, boundView, rubberBand, settleView, snapZoomWithin, startFit } from './bounds';
 import type { ViewBounds } from './bounds';
 import { fitViewport, screenToDocument } from './viewport';
 
@@ -175,5 +175,17 @@ describe('settleView', () => {
     const at = { x: 195, y: 400 };
     expect(settleView({ ...fit, zoom: 11.2 }, 1, at).zoom).toBe(12);
     expect(settleView({ ...fit, zoom: 0.6 }, 0.62, at, { ...fit, zoom: 0.55 }).zoom).toBe(0.62);
+  });
+
+  test('a moving view that carries its start fit snaps to wherever that pinch will settle', () => {
+    expect(startFit(fit)).toBe(11);
+    expect(startFit({ ...fit, fittedZoom: undefined })).toBeUndefined();
+    expect(startFit({ ...fit, zoom: 12 })).toBeUndefined();
+    const at = { x: 195, y: 400 };
+    for (let zoom = 6; zoom <= 20; zoom += 0.05) {
+      const moving = { ...fit, zoom, fittedZoom: startFit(fit) };
+      const label = snapZoomWithin(moving.zoom, 1, moving.fittedZoom);
+      expect(settleView(moving, 1, at, fit).zoom).toBe(label);
+    }
   });
 });

@@ -65,6 +65,15 @@ describe('zoom label', () => {
     expect(displayZoom({ zoom: 0.58 }, 0.62)).toBe(0.62);
     expect(displayZoom({ zoom: 0.9 }, 0.62)).toBe(1);
   });
+  test('a pinch that began at a fit names that fit while it is the nearest place to rest', () => {
+    // An uneven two-finger pan at a phone sprite's 11× fit, and a small trackpad pinch at 17×.
+    expect(displayZoom({ zoom: 11.2, fittedZoom: 11 }, 1)).toBe(11);
+    expect(displayZoom({ zoom: 17.5, fittedZoom: 17 }, 1)).toBe(17);
+    expect(displayZoom({ zoom: 16.6, fittedZoom: 17 }, 1)).toBe(17);
+    // Far enough away, the label moves on to the step the pinch will land on.
+    expect(displayZoom({ zoom: 11.88, fittedZoom: 11 }, 1)).toBe(12);
+    expect(displayZoom({ zoom: 15, fittedZoom: 11 }, 1)).toBe(16);
+  });
   test('uses a multiplier at and above 1×', () => {
     expect(formatZoom(1)).toBe('1×');
     expect(formatZoom(24)).toBe('24×');

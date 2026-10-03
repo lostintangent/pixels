@@ -11,7 +11,7 @@ import {
   isNavigating,
   stepGesture,
 } from '../core/gestures';
-import { type ViewBounds, boundView, settleView } from '../core/bounds';
+import { type ViewBounds, boundView, settleView, startFit } from '../core/bounds';
 import { MIN_ZOOM, clampZoom, screenToDocument, stepZoom, zoomAt } from '../core/viewport';
 import { initialWheelState, wheelIntent } from '../core/wheel';
 import type { OverlayState } from '../render/contracts';
@@ -276,6 +276,8 @@ export function CanvasSurface({
         const next = zoomAt(from, from.zoom * (final.zoom / from.zoom) ** eased, at);
         next.panX += dx * eased;
         next.panY += dy * eased;
+        // Frames on the way to a fit keep naming it.
+        next.fittedZoom = final.fittedZoom;
         setView(next);
         settleFrame = requestAnimationFrame(step);
       };
@@ -401,7 +403,9 @@ export function CanvasSurface({
         stopSettle();
         lastWheelZoomAt = event.timeStamp;
         const view = viewport.state;
-        moveTo(stopAt(zoomAt(view, clampZoom(view.zoom * intent.factor), point), point));
+        const zoomed = zoomAt(view, clampZoom(view.zoom * intent.factor), point);
+        zoomed.fittedZoom = startFit(start);
+        moveTo(stopAt(zoomed, point));
         settlePending = point;
         settleStart = start;
         settleTimer = setTimeout(() => settle(point, start), PINCH_SETTLE_MS);
@@ -425,8 +429,10 @@ export function CanvasSurface({
       event.preventDefault();
       if (!webkitPinch || down.size > 0 || event.scale === undefined) return;
       if (event.timeStamp - lastWheelZoomAt < WHEEL_ZOOM_MS) return;
-      const zoom = clampZoom(webkitPinch.start.zoom * event.scale);
-      moveTo(stopAt(zoomAt(viewport.state, zoom, webkitPinch.at), webkitPinch.at));
+      const { start, at } = webkitPinch;
+      const zoomed = zoomAt(viewport.state, clampZoom(start.zoom * event.scale), at);
+      zoomed.fittedZoom = startFit(start);
+      moveTo(stopAt(zoomed, at));
     }
 
     function onGestureEnd(event: WebKitGestureEvent): void {

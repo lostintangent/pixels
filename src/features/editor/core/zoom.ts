@@ -11,12 +11,13 @@ export function formatZoom(zoom: number): string {
 export const GRID_MIN_ZOOM = 8;
 
 /**
- * Keep an exact fit label, but quantize a moving pinch to avoid per-frame chrome updates. A pinch
- * near the zoom-out floor reads as the floor, which is where it will settle.
+ * Names where the view will rest: an exact fit reads exactly, and a moving pinch quantizes to the
+ * same candidates its settle uses (ladder, floor, or the fit it started from), so chrome updates
+ * only when that destination changes.
  */
 export function displayZoom(
   view: Pick<Viewport, 'zoom' | 'fittedZoom'>,
   minZoom = MIN_ZOOM,
 ): number {
-  return view.fittedZoom === view.zoom ? view.zoom : snapZoomWithin(view.zoom, minZoom);
+  return snapZoomWithin(view.zoom, minZoom, view.fittedZoom);
 }

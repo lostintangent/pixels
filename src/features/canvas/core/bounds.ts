@@ -60,6 +60,16 @@ export function snapZoomWithin(zoom: number, minZoom: number, keep?: number): nu
 }
 
 /**
+ * The fit a gesture from `start` can return to. Its moving views carry it as `fittedZoom`, so the
+ * zoom label names where the gesture will settle rather than the nearest ladder step.
+ */
+export function startFit(start: Viewport | undefined): number | undefined {
+  return start?.fittedZoom !== undefined && start.fittedZoom === start.zoom
+    ? start.fittedZoom
+    : undefined;
+}
+
+/**
  * Where a free pinch comes to rest around `at`: the nearest ladder step at or above the floor, the
  * floor, or the zoom the gesture started from, with pan on whole CSS pixels. Returning exactly to a
  * fitted start keeps its fitted label. The caller still bounds the result.
@@ -74,7 +84,7 @@ export function settleView(
   const end = zoomAt(view, zoom, at);
   end.panX = Math.round(end.panX);
   end.panY = Math.round(end.panY);
-  if (start?.fittedZoom === zoom && start.zoom === zoom) end.fittedZoom = zoom;
+  if (startFit(start) === zoom) end.fittedZoom = zoom;
   return end;
 }
 
