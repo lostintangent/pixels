@@ -87,7 +87,9 @@ export function DocMenu({ layout }: { layout: Layout }) {
 export function ZoomMenu({ layout }: { layout: Layout }) {
   const session = useEditor();
   // Whole-number fits keep their exact label. Mid-pinch labels still change only at ladder steps.
-  const zoom = useSelector(session.viewport, displayZoom);
+  const zoom = useSelector(session.viewport, (view) =>
+    displayZoom(view, session.viewBounds()?.minZoom),
+  );
   const level = formatZoom(zoom);
   return (
     <DeferredMenu

@@ -56,10 +56,14 @@ describe('brush ladder', () => {
 
 describe('zoom label', () => {
   test('names a fitted whole zoom exactly and quantizes a moving pinch', () => {
-    expect(displayZoom({ zoom: 22, fittedZoom: 22 })).toBe(22);
-    expect(displayZoom({ zoom: 11, fittedZoom: 11 })).toBe(11);
-    expect(displayZoom({ zoom: 21.8 })).toBe(24);
-    expect(displayZoom({ zoom: 7 })).toBe(8);
+    expect(displayZoom({ zoom: 22, fittedZoom: 22 }, 1)).toBe(22);
+    expect(displayZoom({ zoom: 11, fittedZoom: 11 }, 1)).toBe(11);
+    expect(displayZoom({ zoom: 21.8 }, 1)).toBe(24);
+    expect(displayZoom({ zoom: 7 }, 1)).toBe(8);
+    // A pinch near a 62% floor reads as the floor it will settle on, never a step below it.
+    expect(displayZoom({ zoom: 0.65 }, 0.62)).toBe(0.62);
+    expect(displayZoom({ zoom: 0.58 }, 0.62)).toBe(0.62);
+    expect(displayZoom({ zoom: 0.9 }, 0.62)).toBe(1);
   });
   test('uses a multiplier at and above 1×', () => {
     expect(formatZoom(1)).toBe('1×');

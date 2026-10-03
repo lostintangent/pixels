@@ -1,5 +1,5 @@
 import { fitViewport, fitZoom } from '../../canvas/model';
-import type { Viewport, ViewportInsets } from '../../canvas/model';
+import type { ViewBounds, Viewport, ViewportInsets } from '../../canvas/model';
 
 /** A floating island in canvas CSS pixels, such as the desktop color panel. */
 export interface IslandRect {
@@ -52,6 +52,22 @@ export function fitAroundIslands(
   const zoom = fitZoom(clear);
   if (zoom < beside.zoom) return beside;
   return centerAt(view, zoom, documentWidth, documentHeight, center);
+}
+
+/**
+ * Where the artist can take the view. Zoom stops at the smaller of 1× and the zoom a fit would
+ * land on right now, islands included, so a sprite still reaches true size and a large image stops
+ * at its fit. Pan keeps the document overlapping the same frame the fit uses.
+ */
+export function boundsFor(
+  view: Viewport,
+  documentWidth: number,
+  documentHeight: number,
+  frame: ViewportInsets,
+  islands: readonly IslandRect[],
+): ViewBounds {
+  const fit = fitAroundIslands(view, documentWidth, documentHeight, frame, islands);
+  return { minZoom: Math.min(1, fit.zoom), frame, documentWidth, documentHeight };
 }
 
 /**

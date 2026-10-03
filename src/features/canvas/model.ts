@@ -3,6 +3,7 @@ export type { OverlayPreview, OverlayState } from './render/contracts';
 export type { DocumentPoint, ScreenPoint, Viewport, ViewportInsets } from './core/contracts';
 export type { PointerKind } from './core/gestures';
 export {
+  MIN_ZOOM,
   documentToScreen,
   fitViewport,
   fitZoom,
@@ -11,3 +12,5 @@ export {
   stepZoom,
   zoomToStep,
 } from './core/viewport';
+export type { ViewBounds } from './core/bounds';
+export { boundView, snapZoomWithin } from './core/bounds';

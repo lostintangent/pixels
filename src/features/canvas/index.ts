@@ -20,6 +20,8 @@ export {
   zoomAt,
   fitViewport,
 } from './core/viewport';
+export type { ViewBounds } from './core/bounds';
+export { boundView, snapZoomWithin } from './core/bounds';
 export { createCanvasRenderer } from './render/renderer';
 export { CanvasSurface } from './ui/CanvasSurface';
 export type { CanvasInput, CanvasPointerSample, CanvasSurfaceProps } from './ui/CanvasSurface';

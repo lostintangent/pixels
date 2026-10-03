@@ -1,6 +1,12 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
-import { documentToScreen, screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
+import {
+  boundView,
+  documentToScreen,
+  screenToDocument,
+  stepZoom,
+  zoomToStep,
+} from '../../canvas/model';
 import { findAnnotationsFor } from '../../annotations/model';
 import type {
   DocumentPoint,
@@ -8,6 +14,7 @@ import type {
   OverlayState,
   PointerKind,
   ScreenPoint,
+  ViewBounds,
   Viewport,
   ViewportInsets,
 } from '../../canvas/model';
@@ -29,7 +36,7 @@ import type {
   SelectionSession,
   StrokeSession,
 } from '../../tools/model';
-import { fitAroundIslands, frameCenter } from '../core/fit';
+import { boundsFor, fitAroundIslands, frameCenter } from '../core/fit';
 import type { IslandRect } from '../core/fit';
 import { usesBrush } from '../core/tools';
 import type { EditorCommand, SelectionAction } from '../core/shortcuts';
@@ -144,6 +151,8 @@ export interface EditorSession {
   setIslands(islands: readonly IslandRect[]): void;
   setViewportSize(width: number, height: number, devicePixelRatio: number): void;
   setViewport(viewport: Viewport): void;
+  /** How far the artist can zoom out and pan, or null before the canvas has a size. */
+  viewBounds(this: void): ViewBounds | null;
   setSaveStatus(status: SaveStatus): void;
   /** Names the document in memory. The name isn't history, so undo never changes it. */
   rename(name: string): void;
@@ -221,6 +230,17 @@ export function createEditorSession({
   let paintExtras: PaintExtras | null = null;
   let paintLoading: Promise<void> | null = null;
   let queuedPaint: QueuedPaint | null = null;
+
+  // Bounds depend only on these, so a pointer move reuses them without recomputing the fit.
+  let bounds: ViewBounds | null = null;
+  const boundsKey = {
+    width: 0,
+    height: 0,
+    layout: layout as Layout,
+    islands,
+    documentWidth: 0,
+    documentHeight: 0,
+  };
 
   // The last hover sample, so a tool or size change from the keyboard redraws the brush in place.
   let hovering = false;
@@ -361,6 +381,36 @@ export function createEditorSession({
     }));
     fitted = true;
     lastFit = viewport.state;
+  }
+
+  function viewBounds(view: Viewport = viewport.state): ViewBounds | null {
+    const { cssWidth, cssHeight } = view;
+    if (!cssWidth || !cssHeight) return null;
+    const { width, height } = document();
+    if (
+      bounds &&
+      boundsKey.width === cssWidth &&
+      boundsKey.height === cssHeight &&
+      boundsKey.layout === layout &&
+      boundsKey.islands === islands &&
+      boundsKey.documentWidth === width &&
+      boundsKey.documentHeight === height
+    )
+      return bounds;
+    boundsKey.width = cssWidth;
+    boundsKey.height = cssHeight;
+    boundsKey.layout = layout;
+    boundsKey.islands = islands;
+    boundsKey.documentWidth = width;
+    boundsKey.documentHeight = height;
+    bounds = boundsFor(view, width, height, FRAMES[layout], islands);
+    return bounds;
+  }
+
+  /** Session commands stop at a limit. Only direct drags stretch past one. */
+  function bound(view: Viewport, at?: ScreenPoint): Viewport {
+    const limits = viewBounds(view);
+    return limits ? boundView(view, limits, at) : view;
   }
 
   function center(): ScreenPoint {
@@ -578,7 +628,12 @@ export function createEditorSession({
   }
 
   function zoomBy(direction: -1 | 1, anchor = zoomAnchor()): void {
-    viewport.setState((view) => stepZoom(view, direction, anchor));
+    viewport.setState((view) => {
+      // At or under the floor, zooming out only ever holds still.
+      const floor = viewBounds()?.minZoom ?? 0;
+      if (direction < 0 && view.zoom <= floor) return bound(view, anchor);
+      return bound(stepZoom(view, direction, anchor), anchor);
+    });
   }
 
   const session: EditorSession = {
@@ -644,7 +699,10 @@ export function createEditorSession({
           fit();
           return;
         case 'zoom-actual':
-          viewport.setState((view) => zoomToStep(view, 1, zoomAnchor()));
+          {
+            const anchor = zoomAnchor();
+            viewport.setState((view) => bound(zoomToStep(view, 1, anchor), anchor));
+          }
           return;
         case 'toggle-grid':
           update((current) => ({ ...current, gridEnabled: !current.gridEnabled }));
@@ -721,23 +779,30 @@ export function createEditorSession({
       // Keep the canvas anchored to its center while the window resizes.
       const dx = view.cssWidth ? (width - view.cssWidth) / 2 : 0;
       const dy = view.cssHeight ? (height - view.cssHeight) / 2 : 0;
-      viewport.setState(() => ({
+      const resized = {
         ...view,
         cssWidth: width,
         cssHeight: height,
         devicePixelRatio,
         panX: Math.round(view.panX + dx),
         panY: Math.round(view.panY + dy),
-      }));
+      };
       if (!fitted || refitOnResize || untouchedFit) {
+        viewport.setState(() => resized);
         refitOnResize = false;
         fit();
+        return;
       }
+      // A manual view keeps its zoom unless a larger window raises the floor past it, and its pan
+      // comes back within reach.
+      viewport.setState(() => bound(resized, frameCenter(resized, FRAMES[layout])));
     },
 
     setViewport(next) {
       viewport.setState(() => next);
     },
+
+    viewBounds: () => viewBounds(),
 
     setSaveStatus(status) {
       update((current) => (current.save === status ? current : { ...current, save: status }));

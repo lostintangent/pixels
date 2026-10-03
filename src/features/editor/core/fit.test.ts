@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Viewport, ViewportInsets } from '../../canvas/model';
-import { fitAroundIslands, frameCenter } from './fit';
+import { boundsFor, fitAroundIslands, frameCenter } from './fit';
 import type { IslandRect } from './fit';
 
 const FRAME: ViewportInsets = { top: 72, right: 76, bottom: 56, left: 76 };
@@ -67,5 +67,25 @@ describe('fitAroundIslands', () => {
     const center = frameCenter(fit, FRAME);
     expect(fit.panX + (32 * fit.zoom) / 2).toBe(center.x);
     expect(fit.panY + (32 * fit.zoom) / 2).toBe(center.y);
+  });
+});
+
+describe('boundsFor', () => {
+  test('a sprite can always zoom out to true size', () => {
+    const bounds = boundsFor(view(1440, 900), 32, 32, FRAME, [panel(1440, 244, 360)]);
+    expect(bounds).toEqual({ minZoom: 1, frame: FRAME, documentWidth: 32, documentHeight: 32 });
+  });
+
+  test('a large image stops at the fit an island forces, not the plain centered one', () => {
+    // Centered, 64% would run under the panel, so the fit and the floor are both 44%.
+    const islands = [panel(1180, 370, 397)];
+    const bounds = boundsFor(view(1180, 820), 1600, 1000, FRAME, islands);
+    expect(bounds.minZoom).toBe(0.44);
+    expect(bounds.minZoom).toBe(fitAroundIslands(view(1180, 820), 1600, 1000, FRAME, islands).zoom);
+  });
+
+  test('a huge document stops at its fit', () => {
+    // 238 / 4096 is 5.8%, and a fit below 1× keeps the largest whole percentage.
+    expect(boundsFor(view(390, 844), 4096, 4096, FRAME, []).minZoom).toBe(0.05);
   });
 });

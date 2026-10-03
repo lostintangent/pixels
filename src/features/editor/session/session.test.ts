@@ -478,7 +478,14 @@ test('the brush cursor follows keyboard size and tool changes without a pointer 
 test('keyboard zoom holds the hovered pixel still, and the center without a pointer', () => {
   const document = createBitmapDocument('anchor', 64, 64);
   const session = createEditorSession({ document, save: null });
-  const view = { zoom: 4, panX: 0, panY: 0, cssWidth: 400, cssHeight: 300, devicePixelRatio: 1 };
+  const view = {
+    zoom: 4,
+    panX: 300,
+    panY: 200,
+    cssWidth: 1200,
+    cssHeight: 900,
+    devicePixelRatio: 1,
+  };
   session.setViewport(view);
   const screenOf = (point: { x: number; y: number }) => {
     const { zoom, panX, panY } = session.viewport.state;
@@ -499,7 +506,64 @@ test('keyboard zoom holds the hovered pixel still, and the center without a poin
   const middle = session.viewport.state;
   session.run({ type: 'zoom', direction: -1 });
   expect(session.viewport.state.zoom).toBeLessThan(middle.zoom);
-  expect(session.viewport.state).not.toMatchObject({ panX: 0, panY: 0 });
+  expect(session.viewport.state).not.toMatchObject({ panX: 300, panY: 200 });
+});
+
+test('zooming out stops at the smaller of fit and 1×, and pan keeps the document in reach', () => {
+  // Desktop frame insets are 72 top, 76 right, 56 bottom, 76 left.
+  const sprite = createEditorSession({
+    document: createBitmapDocument('sprite', 32, 32),
+    save: null,
+  });
+  sprite.setViewportSize(1440, 900, 2);
+  expect(sprite.viewBounds()?.minZoom).toBe(1);
+  for (let step = 0; step < 12; step++) sprite.run({ type: 'zoom', direction: -1 });
+  expect(sprite.viewport.state.zoom).toBe(1);
+  // A 32 px sprite at 1× stays wholly inside the 1288 × 772 frame.
+  const { panX, panY } = sprite.viewport.state;
+  expect(panX).toBeGreaterThanOrEqual(76);
+  expect(panX + 32).toBeLessThanOrEqual(1440 - 76);
+  expect(panY).toBeGreaterThanOrEqual(72);
+  expect(panY + 32).toBeLessThanOrEqual(900 - 56);
+
+  const shot = createEditorSession({
+    document: createBitmapDocument('shot', 1262, 1242),
+    save: null,
+  });
+  shot.setViewportSize(1440, 900, 2);
+  shot.run({ type: 'zoom-fit' });
+  const fit = shot.viewport.state.zoom;
+  expect(fit).toBeLessThan(1);
+  expect(shot.viewBounds()?.minZoom).toBe(fit);
+  shot.run({ type: 'zoom', direction: 1 });
+  shot.run({ type: 'zoom', direction: 1 });
+  expect(shot.viewport.state.zoom).toBe(2);
+  // Stepping down walks the ladder, then lands exactly on the fit and holds there.
+  shot.run({ type: 'zoom', direction: -1 });
+  expect(shot.viewport.state.zoom).toBe(1);
+  shot.run({ type: 'zoom', direction: -1 });
+  expect(shot.viewport.state.zoom).toBe(fit);
+  const floor = shot.viewport.state;
+  shot.run({ type: 'zoom', direction: -1 });
+  expect(shot.viewport.state.zoom).toBe(fit);
+  expect(shot.viewport.state.panX).toBe(floor.panX);
+});
+
+test('a manual view keeps its zoom through a resize while its pan comes back within reach', () => {
+  const session = createEditorSession({
+    document: createBitmapDocument('pan', 64, 64),
+    save: null,
+  });
+  session.setViewportSize(1440, 900, 2);
+  session.run({ type: 'zoom', direction: 1 });
+  const zoom = session.viewport.state.zoom;
+  // Far past the right edge, as a pan from before a bound existed might leave it.
+  session.setViewport({ ...session.viewport.state, panX: 5000 });
+  session.setViewportSize(1000, 800, 2);
+  const view = session.viewport.state;
+  expect(view.zoom).toBe(zoom);
+  // At least a quarter of the 848 px frame width stays on the document.
+  expect(view.panX).toBe(1000 - 76 - 212);
 });
 
 test('a rename is not history, and undoing a resize keeps the new name', async () => {

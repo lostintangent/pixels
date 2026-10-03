@@ -11,7 +11,8 @@ import {
   isNavigating,
   stepGesture,
 } from '../core/gestures';
-import { clampZoom, screenToDocument, settleZoom, stepZoom, zoomAt } from '../core/viewport';
+import { type ViewBounds, boundView, snapZoomWithin } from '../core/bounds';
+import { clampZoom, screenToDocument, snapZoom, stepZoom, zoomAt } from '../core/viewport';
 import { initialWheelState, wheelIntent } from '../core/wheel';
 import type { OverlayState } from '../render/contracts';
 import { createCanvasRenderer } from '../render/renderer';
@@ -45,9 +46,13 @@ export interface CanvasSurfaceProps {
   input: CanvasInput;
   /** CSS cursor for a hovered sample while nothing is panning. */
   cursorAt: (sample: CanvasPointerSample) => string;
+  /** How far the view may zoom out and pan. Without it the view roams freely. */
+  bounds?: () => ViewBounds | null;
 }
 
 const SETTLE_MS = 180;
+/** A drag stretched past a limit springs back over this long. */
+const RELEASE_MS = 200;
 /** A trackpad pinch settles onto the ladder once it pauses this long. */
 const PINCH_SETTLE_MS = 140;
 /** Safari reports trackpad pinches twice. The wheel copy wins inside this window. */
@@ -62,13 +67,14 @@ export function CanvasSurface({
   overlay,
   input,
   cursorAt,
+  bounds,
 }: CanvasSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLCanvasElement>(null);
   const annotationRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
-  const latest = useRef({ input, cursorAt });
-  latest.current = { input, cursorAt };
+  const latest = useRef({ input, cursorAt, bounds });
+  latest.current = { input, cursorAt, bounds };
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -150,6 +156,26 @@ export function CanvasSurface({
       viewWrittenBySurface = next;
       viewport.setState(() => next);
     };
+    /** Wheel and trackpad input stop dead at a limit, so momentum can't jitter against it. */
+    const stopAt = (next: Viewport, at?: ScreenPoint): Viewport => {
+      const limits = latest.current.bounds?.();
+      return limits ? boundView(next, limits, at) : next;
+    };
+    /** A direct drag or pinch stretches past a limit, then eases back on release. */
+    const stretch = (next: Viewport, at?: ScreenPoint): Viewport => {
+      const limits = latest.current.bounds?.();
+      return limits ? boundView(next, limits, at, true) : next;
+    };
+    /** Skips a write that changes nothing, such as a wheel still pushing against a limit. */
+    const moveTo = (next: Viewport) => {
+      const view = viewport.state;
+      // Lifting a zoom back to the floor can differ from the view it started from by rounding.
+      const moved =
+        Math.abs(next.zoom / view.zoom - 1) > 1e-9 ||
+        Math.abs(next.panX - view.panX) > 1e-6 ||
+        Math.abs(next.panY - view.panY) > 1e-6;
+      if (moved) setView(next);
+    };
 
     function updateCursor(): void {
       if (gesture.mode.kind === 'pan') host.style.cursor = 'grabbing';
@@ -195,25 +221,63 @@ export function CanvasSurface({
       if (target) setView(target);
     }
 
-    /** Eases a free zoom onto the nearest ladder step with pixel-aligned pan. */
+    /**
+     * Eases a free zoom onto the nearest ladder step, or the floor when that's nearer, with
+     * pixel-aligned pan inside the bounds.
+     */
     function settle(screen: ScreenPoint, animate = true): void {
       stopSettle();
       const from = viewport.state;
-      const end = settleZoom(from, screen);
-      const target = end.zoom;
-      const final = { ...end, panX: Math.round(end.panX), panY: Math.round(end.panY) };
-      if (!animate || reducedMotion.matches || target === from.zoom) return setView(final);
+      const floor = latest.current.bounds?.()?.minZoom;
+      const zoom = floor === undefined ? snapZoom(from.zoom) : snapZoomWithin(from.zoom, floor);
+      const end = zoomAt(from, zoom, screen);
+      end.panX = Math.round(end.panX);
+      end.panY = Math.round(end.panY);
+      easeTo(stopAt(end, screen), screen, SETTLE_MS, animate);
+    }
+
+    /** Springs a drag that stretched past a limit back inside it. */
+    function release(): void {
+      const from = viewport.state;
+      const end = stopAt(from);
+      if (end !== from) easeTo(end, undefined, RELEASE_MS, true);
+    }
+
+    /**
+     * Animates to `final`, zooming around `screen` while any correction a bound adds to the pan
+     * eases in alongside. Without a bound correction this is a pure zoom around `screen`.
+     */
+    function easeTo(
+      final: Viewport,
+      screen: ScreenPoint | undefined,
+      duration: number,
+      animate: boolean,
+    ): void {
+      stopSettle();
+      const from = viewport.state;
+      const at = screen ?? { x: from.cssWidth / 2, y: from.cssHeight / 2 };
+      const still =
+        final.zoom === from.zoom &&
+        Math.abs(final.panX - from.panX) < 1 &&
+        Math.abs(final.panY - from.panY) < 1;
+      if (!animate || reducedMotion.matches || still) return setView(final);
       settleTarget = final;
+      const zoomed = zoomAt(from, final.zoom, at);
+      const dx = final.panX - zoomed.panX;
+      const dy = final.panY - zoomed.panY;
       const startedAt = performance.now();
       const step = (now: number) => {
-        const t = Math.min(1, (now - startedAt) / SETTLE_MS);
+        const t = Math.min(1, (now - startedAt) / duration);
         if (t >= 1) {
           settleFrame = 0;
           settleTarget = null;
           return setView(final);
         }
         const eased = 1 - (1 - t) ** 3;
-        setView(zoomAt(from, from.zoom * (target / from.zoom) ** eased, screen));
+        const next = zoomAt(from, from.zoom * (final.zoom / from.zoom) ** eased, at);
+        next.panX += dx * eased;
+        next.panY += dy * eased;
+        setView(next);
         settleFrame = requestAnimationFrame(step);
       };
       settleFrame = requestAnimationFrame(step);
@@ -221,6 +285,7 @@ export function CanvasSurface({
 
     function run(event: GestureEvent, source: PointerEvent | null): void {
       const wasNavigating = isNavigating(gesture);
+      const wasPanning = gesture.mode.kind === 'pan';
       const step = stepGesture(gesture, event, viewport.state);
       gesture = step.state;
       const { input } = latest.current;
@@ -243,7 +308,13 @@ export function CanvasSurface({
             break;
           case 'view':
             stopSettle();
-            setView(command.viewport);
+            // A pinch stretches around its fingers, so the pixel under them stays put.
+            setView(
+              stretch(
+                command.viewport,
+                gesture.mode.kind === 'pinch' ? gesture.mode.latest : undefined,
+              ),
+            );
             break;
           case 'settle':
             settle(command.at);
@@ -256,6 +327,8 @@ export function CanvasSurface({
             break;
         }
       }
+      // A pan has no settle of its own, so one that ends past a limit springs back here.
+      if (wasPanning && gesture.mode.kind === 'idle') release();
       if (isNavigating(gesture) !== wasNavigating) hover(isNavigating(gesture) ? null : hovered);
     }
 
@@ -309,19 +382,25 @@ export function CanvasSurface({
       if (intent.kind === 'pan') {
         finishSettle();
         const view = viewport.state;
-        setView({
-          ...view,
-          panX: Math.round(view.panX + intent.dx),
-          panY: Math.round(view.panY + intent.dy),
-        });
+        moveTo(
+          stopAt({
+            ...view,
+            panX: Math.round(view.panX + intent.dx),
+            panY: Math.round(view.panY + intent.dy),
+          }),
+        );
       } else if (intent.kind === 'step') {
         finishSettle();
-        setView(stepZoom(viewport.state, intent.direction, point));
+        const view = viewport.state;
+        const floor = latest.current.bounds?.()?.minZoom ?? 0;
+        // At or under the floor, zooming out only ever holds still.
+        if (intent.direction > 0 || view.zoom > floor)
+          moveTo(stopAt(stepZoom(view, intent.direction, point), point));
       } else if (intent.kind === 'zoom') {
         stopSettle();
         lastWheelZoomAt = event.timeStamp;
         const view = viewport.state;
-        setView(zoomAt(view, clampZoom(view.zoom * intent.factor), point));
+        moveTo(stopAt(zoomAt(view, clampZoom(view.zoom * intent.factor), point), point));
         settlePending = point;
         settleTimer = setTimeout(() => settle(point), PINCH_SETTLE_MS);
       }
@@ -345,7 +424,7 @@ export function CanvasSurface({
       if (!webkitPinch || down.size > 0 || event.scale === undefined) return;
       if (event.timeStamp - lastWheelZoomAt < WHEEL_ZOOM_MS) return;
       const zoom = clampZoom(webkitPinch.zoom * event.scale);
-      setView(zoomAt(viewport.state, zoom, webkitPinch.at));
+      moveTo(stopAt(zoomAt(viewport.state, zoom, webkitPinch.at), webkitPinch.at));
     }
 
     function onGestureEnd(event: WebKitGestureEvent): void {

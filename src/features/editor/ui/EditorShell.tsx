@@ -252,6 +252,7 @@ function Canvas({ session }: { session: EditorSession }) {
       overlay={session.overlay}
       input={input}
       cursorAt={cursorAt}
+      bounds={session.viewBounds}
     />
   );
 }
@@ -617,7 +618,10 @@ function HistoryButtons({ hasTooltips }: { hasTooltips: boolean }) {
 function ZoomControls() {
   const session = useEditor();
   // Pinch changes zoom every frame, so read only the edges that change what renders.
-  const atMin = useSelector(session.viewport, (view) => view.zoom <= MIN_ZOOM);
+  const atMin = useSelector(
+    session.viewport,
+    (view) => view.zoom <= (session.viewBounds()?.minZoom ?? MIN_ZOOM),
+  );
   const atMax = useSelector(session.viewport, (view) => view.zoom >= MAX_ZOOM);
   const grid = useEditorState((state) => state.gridEnabled);
   return (
