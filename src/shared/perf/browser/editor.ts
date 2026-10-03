@@ -78,17 +78,17 @@ async function prepareDocument(
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('application', { name: 'Canvas' }).waitFor();
   // A fitted 1024² document is below 1× on both profiles; its exact percentage follows the viewport.
-  await page.getByRole('button', { name: /^\d+%$/ }).waitFor();
+  await page.getByRole('button', { name: /^Zoom \d+%$/ }).waitFor();
   await afterPaint(page);
   for (let step = 0; step < 12; step++) {
-    if ((await page.getByRole('button', { name: '8×' }).count()) > 0) break;
+    if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) > 0) break;
     if (profile.name === 'phone') await page.keyboard.press('Equal');
     else await page.getByRole('button', { name: 'Zoom in' }).click();
   }
-  if ((await page.getByRole('button', { name: '8×' }).count()) === 0)
+  if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) === 0)
     throw new Error('Editor zoom did not become 8×');
   await page.waitForTimeout(200);
-  if ((await page.getByRole('button', { name: '8×' }).count()) === 0)
+  if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) === 0)
     throw new Error(
       `Editor zoom reverted after document navigation: ${(await page.getByRole('button').allTextContents()).slice(0, 6).join(', ')}`,
     );

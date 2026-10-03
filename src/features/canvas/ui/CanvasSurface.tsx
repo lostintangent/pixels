@@ -84,12 +84,15 @@ export function CanvasSurface({
     renderer.setOverlay(overlay.state);
     let viewWrittenBySurface: Viewport | null = null;
     let cancelExternalSettle: (() => void) | null = null;
+    let rehover = () => {};
     const subscriptions = [
       document.subscribe((next) => renderer.setDocument(next)),
       viewport.subscribe((next) => {
         // Fit and other session commands supersede an in-flight pinch settle.
         if (next !== viewWrittenBySurface) cancelExternalSettle?.();
         renderer.setViewport(next);
+        // A still pointer now sits over a different pixel, so the brush and readout follow it.
+        rehover();
       }),
       overlay.subscribe((next) => renderer.setOverlay(next)),
     ];
@@ -170,6 +173,10 @@ export function CanvasSurface({
       );
       updateCursor();
     }
+
+    rehover = () => {
+      if (hovered && !isNavigating(gesture)) hover(hovered);
+    };
 
     function stopSettle(): void {
       cancelAnimationFrame(settleFrame);
@@ -286,6 +293,8 @@ export function CanvasSurface({
     function onWheel(event: WheelEvent): void {
       event.preventDefault();
       const point = local(event);
+      const before = viewport.state;
+      hovered = point;
       const read = wheelIntent(wheel, {
         deltaX: event.deltaX,
         deltaY: event.deltaY,
@@ -316,7 +325,7 @@ export function CanvasSurface({
         settlePending = point;
         settleTimer = setTimeout(() => settle(point), PINCH_SETTLE_MS);
       }
-      hover(point);
+      if (viewport.state === before) hover(point);
     }
 
     // Desktop Safari reports trackpad pinches as gesture events rather than Ctrl wheels.

@@ -475,6 +475,33 @@ test('the brush cursor follows keyboard size and tool changes without a pointer 
   expect(cursor()).toBeNull();
 });
 
+test('keyboard zoom holds the hovered pixel still, and the center without a pointer', () => {
+  const document = createBitmapDocument('anchor', 64, 64);
+  const session = createEditorSession({ document, save: null });
+  const view = { zoom: 4, panX: 0, panY: 0, cssWidth: 400, cssHeight: 300, devicePixelRatio: 1 };
+  session.setViewport(view);
+  const screenOf = (point: { x: number; y: number }) => {
+    const { zoom, panX, panY } = session.viewport.state;
+    return { x: point.x * zoom + panX, y: point.y * zoom + panY };
+  };
+
+  session.hover({ x: 10.25, y: 20.5 });
+  const under = screenOf({ x: 10.25, y: 20.5 });
+  session.run({ type: 'zoom', direction: 1 });
+  expect(session.viewport.state.zoom).toBeGreaterThan(4);
+  expect(screenOf({ x: 10.25, y: 20.5 })).toEqual(under);
+  session.run({ type: 'zoom-actual' });
+  expect(session.viewport.state.zoom).toBe(1);
+  expect(screenOf({ x: 10.25, y: 20.5 })).toEqual(under);
+
+  session.hover(null);
+  session.setViewport(view);
+  const middle = session.viewport.state;
+  session.run({ type: 'zoom', direction: -1 });
+  expect(session.viewport.state.zoom).toBeLessThan(middle.zoom);
+  expect(session.viewport.state).not.toMatchObject({ panX: 0, panY: 0 });
+});
+
 test('a rename is not history, and undoing a resize keeps the new name', async () => {
   const document = createBitmapDocument('rename', 3, 3, 'Untitled');
   const session = createEditorSession({ document, save: null });

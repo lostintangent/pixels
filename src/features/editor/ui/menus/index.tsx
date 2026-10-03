@@ -88,15 +88,34 @@ export function ZoomMenu({ layout }: { layout: Layout }) {
   const session = useEditor();
   // Whole-number fits keep their exact label. Mid-pinch labels still change only at ladder steps.
   const zoom = useSelector(session.viewport, displayZoom);
+  const level = formatZoom(zoom);
   return (
     <DeferredMenu
       surface="ZoomMenu"
       layout={layout}
-      button={{ label: formatZoom(zoom), variant: 'ghost', xstyle: styles.zoom }}
+      button={{
+        label: `Zoom ${level}`,
+        variant: 'ghost',
+        xstyle: styles.zoom,
+        // The widest levels share the cell invisibly, so a new level never resizes its island.
+        children: (
+          <span {...stylex.props(styles.level)}>
+            <span {...stylex.props(styles.stack)}>{level}</span>
+            {WIDEST_LEVELS.map((widest) => (
+              <span key={widest} aria-hidden {...stylex.props(styles.stack, styles.ghost)}>
+                {widest}
+              </span>
+            ))}
+          </span>
+        ),
+      }}
       hasChevron={false}
     />
   );
 }
+
+/** The longest labels formatZoom can produce, at and below 1×. */
+const WIDEST_LEVELS = ['128×', '12.5%'];
 
 type Surfaces = typeof import('./surfaces');
 
@@ -221,6 +240,9 @@ const styles = stylex.create({
   },
   // Short levels like 1× would otherwise fall under a touch target.
   zoom: { minWidth: { default: null, '@media (pointer: coarse)': 44 } },
+  level: { display: 'inline-grid', justifyItems: 'center', fontVariantNumeric: 'tabular-nums' },
+  stack: { gridArea: '1 / 1' },
+  ghost: { visibility: 'hidden' },
   logo: { display: 'grid', gridTemplateColumns: 'repeat(2, 8px)', gap: 1, marginInlineEnd: 2 },
   logoPixel: { display: 'block', width: 8, height: 8, borderRadius: 1.5 },
   color: (color: string) => ({ backgroundColor: color }),

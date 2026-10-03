@@ -1,8 +1,9 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
-import { screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
+import { documentToScreen, screenToDocument, stepZoom, zoomToStep } from '../../canvas/model';
 import { findAnnotationsFor } from '../../annotations/model';
 import type {
+  DocumentPoint,
   OverlayPreview,
   OverlayState,
   PointerKind,
@@ -225,6 +226,8 @@ export function createEditorSession({
   let hovering = false;
   const hoverCell = { x: 0, y: 0 };
   let hoverAlt = false;
+  // Where that sample sits in the document, so keyboard zoom can anchor under the pointer.
+  let hoverPoint: DocumentPoint | null = null;
   const update = (transition: (current: EditorState) => EditorState) => {
     const before = state.state;
     state.setState(transition);
@@ -362,6 +365,11 @@ export function createEditorSession({
 
   function center(): ScreenPoint {
     return frameCenter(viewport.state, FRAMES[layout]);
+  }
+
+  /** Keyboard zoom holds the pixel under a hovering pointer still, else the frame's center. */
+  function zoomAnchor(): ScreenPoint {
+    return hoverPoint ? documentToScreen(viewport.state, hoverPoint) : center();
   }
 
   function installDocument(next: BitmapDocument): void {
@@ -569,7 +577,7 @@ export function createEditorSession({
     return true;
   }
 
-  function zoomBy(direction: -1 | 1, anchor = center()): void {
+  function zoomBy(direction: -1 | 1, anchor = zoomAnchor()): void {
     viewport.setState((view) => stepZoom(view, direction, anchor));
   }
 
@@ -636,7 +644,7 @@ export function createEditorSession({
           fit();
           return;
         case 'zoom-actual':
-          viewport.setState((view) => zoomToStep(view, 1, center()));
+          viewport.setState((view) => zoomToStep(view, 1, zoomAnchor()));
           return;
         case 'toggle-grid':
           update((current) => ({ ...current, gridEnabled: !current.gridEnabled }));
@@ -780,6 +788,7 @@ export function createEditorSession({
       const previous = pointer.state;
       if (previous?.x !== inside?.x || previous?.y !== inside?.y) pointer.setState(() => inside);
       hovering = cell !== null;
+      hoverPoint = point && { x: point.x, y: point.y };
       if (cell) {
         hoverCell.x = cell.x;
         hoverCell.y = cell.y;
