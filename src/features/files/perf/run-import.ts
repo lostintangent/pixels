@@ -305,7 +305,7 @@ async function runOne(
       );
     }
     await page.waitForURL((url) => url.href !== previousUrl, { timeout: 30_000 });
-    await page.getByRole('button', { name: /^\d+%$/ }).waitFor({ timeout: 30_000 });
+    await page.getByRole('button', { name: /^Zoom \d+%$/ }).waitFor({ timeout: 30_000 });
     const shown = await afterPaint(page);
     const renderMs = shown - start;
     const docId = new URL(page.url()).pathname.split('/').at(-1)!;
@@ -333,7 +333,7 @@ async function runOne(
     const docUrl = page.url();
     await page.goto('about:blank');
     await page.goto(docUrl, { waitUntil: 'commit' });
-    await page.getByRole('button', { name: /^\d+%$/ }).waitFor({ timeout: 30_000 });
+    await page.getByRole('button', { name: /^Zoom \d+%$/ }).waitFor({ timeout: 30_000 });
     const reloaded = await afterPaint(page);
     await page.waitForTimeout(1500); // includes the lazy annotation painter's first frame
     const reload = await snapshot(page);
