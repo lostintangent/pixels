@@ -1,10 +1,11 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { createAnnotationSet } from '../../annotations/model';
 import type { Annotation } from '../../annotations/model';
 import { packRgba } from '../../document';
 import {
   beginShapeDrag,
   isDegenerateShape,
+  keepsOnImage,
   leftDeadZone,
   liveShape,
   shapeTargetAt,
@@ -257,11 +258,12 @@ test('arrow endpoints move alone and snap around the fixed end', () => {
     start: { x: 100, y: 100 },
     end: arrow.end,
   });
-  // An odd arrow's dragged end lands on the pixel under the pointer, even in its right half.
+  // An odd arrow's end grabbed at its drawn center lands on the pixel under the pointer, even in
+  // its right half.
   const odd = { ...arrow, width: 1 };
   const oddEnd = beginShapeDrag(
     { shape: odd, handle: 'end' },
-    odd.end,
+    { x: odd.end.x + 0.5, y: odd.end.y + 0.5 },
     { kind: 'arrow', width: 1 },
     ids,
     false,
@@ -311,4 +313,122 @@ test('shapes under 2 document pixels are discarded on release', () => {
   });
   expect(isDegenerateShape(line(1, 1))).toBe(true);
   expect(isDegenerateShape(line(0, 2))).toBe(false);
+});
+
+test('a handle grabbed off its center follows the drag instead of jumping to the pointer', () => {
+  // A finger 20 px off the corner of a 44 px touch target, and a cursor 6 px off an arrow's end.
+  const corner = beginShapeDrag(
+    { shape: box, handle: 'se' },
+    { x: 214, y: 174 },
+    { kind: 'arrow', width: style.width },
+    ids,
+    false,
+  );
+  expect(liveShape(corner, { x: 214, y: 174 }, none, style)).toEqual(box);
+  expect(liveShape(corner, { x: 224, y: 179 }, none, style)).toMatchObject({
+    start: box.start,
+    end: { x: 210, y: 165 },
+  });
+  const end = beginShapeDrag(
+    { shape: arrow, handle: 'end' },
+    { x: 186, y: 130 },
+    { kind: 'arrow', width: style.width },
+    ids,
+    false,
+  );
+  expect(liveShape(end, { x: 187, y: 131 }, none, style).end).toEqual({ x: 181, y: 131 });
+});
+
+describe('keeping shapes on the image', () => {
+  const image = { width: 300, height: 200, zoom: 1 };
+
+  test('a shape keeps when 8 screen px of its stroke centerline is on the image', () => {
+    const at = (x: number, y: number): Annotation => ({
+      ...arrow,
+      start: { x, y },
+      end: { x: x + 60, y },
+    });
+    expect(keepsOnImage(at(-52, 50), image)).toBe(true);
+    expect(keepsOnImage(at(-53, 50), image)).toBe(false);
+    expect(keepsOnImage(at(100, 200), image)).toBe(true);
+    expect(keepsOnImage(at(100, 201), image)).toBe(false);
+    // At 4× the same 8 screen px is 2 document px.
+    expect(keepsOnImage(at(-58, 50), { ...image, zoom: 4 })).toBe(true);
+    expect(keepsOnImage(at(-59, 50), { ...image, zoom: 4 })).toBe(false);
+    // A rectangle around the whole image outlines its edges, and one around it misses entirely.
+    const outline = { ...box, start: { x: 0, y: 0 }, end: { x: 300, y: 200 } };
+    expect(keepsOnImage(outline, image)).toBe(true);
+    expect(
+      keepsOnImage({ ...outline, start: { x: -1, y: -1 }, end: { x: 301, y: 201 } }, image),
+    ).toBe(false);
+    // A short side only has to be whole, and an odd stroke is drawn half a pixel in.
+    const tiny = { ...box, width: 1, start: { x: 296, y: 10 }, end: { x: 299, y: 13 } };
+    expect(keepsOnImage(tiny, image)).toBe(true);
+    expect(keepsOnImage({ ...tiny, start: { x: 300, y: 10 }, end: { x: 303, y: 13 } }, image)).toBe(
+      false,
+    );
+  });
+
+  test('a move stops where any further would leave too little on the image', () => {
+    const move = beginShapeDrag(
+      { shape: box, handle: null },
+      { x: 150, y: 101 },
+      { kind: 'arrow', width: style.width },
+      ids,
+      false,
+    );
+    // Dragged 400 px left, the box stops with its right side on the image's left edge, where half
+    // of that stroke still draws along its full height.
+    const kept = liveShape(move, { x: -250, y: 101 }, none, style, image);
+    expect(keepsOnImage(kept, image)).toBe(true);
+    expect(kept.end.x).toBe(0);
+    expect(kept.start.y).toBe(100);
+    // Without bounds, or inside them, nothing changes.
+    expect(liveShape(move, { x: -250, y: 101 }, none, style).end.x).toBe(-200);
+    expect(liveShape(move, { x: 160, y: 104 }, none, style, image).end).toEqual({ x: 210, y: 163 });
+    // A copy that stops keeps its own id.
+    const copy = beginShapeDrag(
+      { shape: box, handle: null },
+      { x: 150, y: 101 },
+      { kind: 'arrow', width: style.width },
+      ids,
+      true,
+    );
+    expect(liveShape(copy, { x: 150, y: 900 }, none, style, image)).toMatchObject({
+      id: 'copy',
+      start: { x: 100, y: 200 },
+    });
+  });
+
+  test('a reshape stops too, and a shape already off the image moves freely', () => {
+    // An arrow pointing off the image's right edge keeps 8 px of shaft as its tail follows.
+    const outward = { ...arrow, start: { x: 250, y: 130 }, end: { x: 350, y: 130 } };
+    const tail = beginShapeDrag(
+      { shape: outward, handle: 'start' },
+      outward.start,
+      { kind: 'arrow', width: style.width },
+      ids,
+      false,
+    );
+    const kept = liveShape(tail, { x: 900, y: 130 }, none, style, image);
+    expect(kept).toMatchObject({ start: { x: 292, y: 130 }, end: outward.end });
+    // Its head can swing anywhere while the tail holds it on.
+    const head = beginShapeDrag(
+      { shape: outward, handle: 'end' },
+      outward.end,
+      { kind: 'arrow', width: style.width },
+      ids,
+      false,
+    );
+    expect(liveShape(head, { x: 900, y: 900 }, none, style, image).end).toEqual({ x: 900, y: 900 });
+    const lost = { ...box, start: { x: 400, y: 100 }, end: { x: 500, y: 160 } };
+    const move = beginShapeDrag(
+      { shape: lost, handle: null },
+      { x: 450, y: 100 },
+      { kind: 'arrow', width: style.width },
+      ids,
+      false,
+    );
+    expect(liveShape(move, { x: 470, y: 100 }, none, style, image).start.x).toBe(420);
+  });
 });

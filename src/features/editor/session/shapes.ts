@@ -14,11 +14,12 @@ import type { EditorState } from '../core/state';
 import {
   beginShapeDrag,
   isDegenerateShape,
+  keepsOnImage,
   leftDeadZone,
   liveShape,
   shapeTargetAt,
 } from '../core/shapeGesture';
-import type { ShapeDrag, ShapeDragModifiers, ShapeStyle } from '../core/shapeGesture';
+import type { ShapeBounds, ShapeDrag, ShapeDragModifiers, ShapeStyle } from '../core/shapeGesture';
 import type { ShapeAction } from '../core/shortcuts';
 import type { ShapeKind } from '../core/tools';
 
@@ -98,6 +99,8 @@ interface Amend {
   id: string;
   label: string;
   edit: AnnotationEdit;
+  /** The shape before this run, so a restyle knows whether its color changed. */
+  base: Annotation;
   shape: Annotation;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -113,6 +116,10 @@ export function createShapeController(host: ShapeHost): ShapeController {
   let amend: Amend | null = null;
   const set = () => annotationsFor(host.document());
   const selectedId = () => host.state().selectedShape?.id ?? null;
+  const bounds = (): ShapeBounds => {
+    const { width, height } = host.document();
+    return { width, height, zoom: host.zoom() };
+  };
 
   /** Selecting a shape loads its color and width, so the well and the width bar describe it. */
   function select(shape: Annotation | null): void {
@@ -135,6 +142,9 @@ export function createShapeController(host: ShapeHost): ShapeController {
     amend = null;
     clearTimeout(current.timer);
     current.edit.commit(current.shape);
+    // A recolor puts that color on the canvas, so Recent learns it as a pixel tool's color does.
+    const { color } = current.shape;
+    if (color !== current.base.color) host.update((state) => recordPaintedColor(state, color));
     host.committed();
   }
 
@@ -147,7 +157,7 @@ export function createShapeController(host: ShapeHost): ShapeController {
     const shape = change(base);
     if (!amend) {
       const edit = beginAnnotationEdit(host.document(), host.history, label);
-      amend = { id, label, edit, shape, timer: setTimeout(flush, AMEND_MS) };
+      amend = { id, label, edit, base, shape, timer: setTimeout(flush, AMEND_MS) };
     } else {
       clearTimeout(amend.timer);
       amend.shape = shape;
@@ -192,7 +202,7 @@ export function createShapeController(host: ShapeHost): ShapeController {
       if (!current) return;
       if (!current.live && !leftDeadZone(current.press, point, host.zoom(), current.touch)) return;
       current.edit ??= beginAnnotationEdit(host.document(), host.history, dragLabel(current.drag));
-      current.live = liveShape(current.drag, point, modifiers, current.style);
+      current.live = liveShape(current.drag, point, modifiers, current.style, bounds());
       current.edit.preview(current.live);
       // An Option copy moves its handles onto the copy.
       host.showHandles(current.drag.mode === 'draw' ? null : current.live.id);
@@ -203,7 +213,8 @@ export function createShapeController(host: ShapeHost): ShapeController {
       const live = current?.live;
       if (!current?.edit || !live) return;
       const drawn = current.drag.mode === 'draw';
-      if (drawn && isDegenerateShape(live)) {
+      // Too small to see or grab, or drawn where none of it lands on the image.
+      if (drawn && (isDegenerateShape(live) || !keepsOnImage(live, bounds()))) {
         current.edit.cancel();
         return;
       }
@@ -236,7 +247,12 @@ export function createShapeController(host: ShapeHost): ShapeController {
       host.committed();
     },
     nudge(delta) {
-      amendShape('Nudge shape', (shape) => translateAnnotation(shape, delta));
+      amendShape('Nudge shape', (shape) => {
+        const moved = translateAnnotation(shape, delta);
+        const keep = bounds();
+        // A nudge that would leave too little on the image holds, like a drag at the edge.
+        return keepsOnImage(moved, keep) || !keepsOnImage(shape, keep) ? moved : shape;
+      });
     },
     restyle(patch) {
       amendShape('Restyle shape', (shape) => ({ ...shape, ...patch }));
