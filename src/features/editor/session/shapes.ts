@@ -14,6 +14,7 @@ import type { EditorState } from '../core/state';
 import {
   beginShapeDrag,
   isDegenerateShape,
+  heldRun,
   keepsOnImage,
   leftDeadZone,
   liveShape,
@@ -249,9 +250,10 @@ export function createShapeController(host: ShapeHost): ShapeController {
     nudge(delta) {
       amendShape('Nudge shape', (shape) => {
         const moved = translateAnnotation(shape, delta);
-        const keep = bounds();
+        const image = bounds();
+        const need = heldRun(shape, image);
         // A nudge that would leave too little on the image holds, like a drag at the edge.
-        return keepsOnImage(moved, keep) || !keepsOnImage(shape, keep) ? moved : shape;
+        return need === null || keepsOnImage(moved, image, need) ? moved : shape;
       });
     },
     restyle(patch) {

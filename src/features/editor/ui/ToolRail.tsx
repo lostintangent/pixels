@@ -5,6 +5,7 @@ import { Eraser, PaintBucket, Pencil, Pipette, Slash, SquareDashed } from 'lucid
 import type { LucideIcon } from 'lucide-react';
 import { useRef } from 'react';
 import type { KeyboardEvent, Ref } from 'react';
+import { keepFocusOnPress } from '../../../shared/react/pressFocus';
 import type { ToolKind } from '../../tools';
 import { shapeInfo, TOOLS } from '../core/tools';
 import type { EditorTool, ShapeKind } from '../core/tools';
@@ -127,6 +128,7 @@ export function ToolRail({
             aria-label={info.label}
             aria-keyshortcuts={info.keys}
             tabIndex={selected ? 0 : -1}
+            onMouseDown={keepFocusOnPress}
             onClick={() => (shapes ? onShapesPress() : onSelect(info.kind))}
             {...stylex.props(
               styles.tool,

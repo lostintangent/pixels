@@ -162,6 +162,34 @@ test('nudges and restyles coalesce until another command lands them', async () =
   expect(session.state.state.canUndo).toBe(false);
 });
 
+test('a nudge held at the image edge keeps holding after zooming out', async () => {
+  const arrow: Annotation = {
+    id: 'arrow',
+    kind: 'arrow',
+    start: { x: 10, y: 30 },
+    end: { x: 40, y: 30 },
+    color: RED,
+    width: 2,
+  };
+  const { session, set } = await open([arrow]);
+  session.run({ type: 'tool', tool: 'select' });
+  drag(session, [20, 30], [20, 30]);
+  // At 8× the tip holds 8 screen px, one document pixel, on the image.
+  for (let step = 0; step < 60; step++) session.run({ type: 'nudge', dx: -1, dy: 0 });
+  expect(set().preview?.end).toEqual({ x: 1, y: 30 });
+  session.setViewport({
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    cssWidth: 512,
+    cssHeight: 512,
+    devicePixelRatio: 1,
+  });
+  for (let step = 0; step < 10; step++) session.run({ type: 'nudge', dx: -10, dy: 0 });
+  session.flushPendingEdits();
+  expect(set().get('arrow')?.end).toEqual({ x: 1, y: 30 });
+});
+
 test('flushPendingEdits lands a pending nudge as its undo step, without touching a selection', async () => {
   // This is what a pagehide must be able to reach to keep a nudge or restyle from being lost on
   // an immediate reload or app switch, so it has to actually commit the amend — not merely act as

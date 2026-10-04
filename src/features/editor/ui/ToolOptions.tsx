@@ -3,6 +3,7 @@ import { Kbd } from '@astryxdesign/core/Kbd';
 import { Slider } from '@astryxdesign/core/Slider';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useEffect } from 'react';
+import { useReturnFocusAfterPress } from '../../../shared/react/pressFocus';
 import { BRUSH_SIZES, brushSizeAt, brushSizeIndex } from '../core/brush';
 import { shapeInfo, toolInfo, usesBrush } from '../core/tools';
 import type { Layout } from '../session/session';
@@ -34,6 +35,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
   const selection = useEditorState((state) => state.selection);
   const selectedShape = useEditorState((state) => state.selectedShape);
   const phone = layout === 'phone';
+  const returnFocus = useReturnFocusAfterPress();
   const selects = tool === 'select' || tool === 'shapes';
   useEffect(() => {
     if (selects) ToolActions.preload();
@@ -59,7 +61,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
         {!phone && !selectedShape && (
           <span {...stylex.props(styles.hint)}>{shapes ? 'Width' : 'Size'}</span>
         )}
-        <div {...stylex.props(styles.slider, phone && styles.fill)}>
+        <div {...returnFocus} {...stylex.props(styles.slider, phone && styles.fill)}>
           <Slider
             label={shapes ? 'Stroke width' : 'Brush size'}
             isLabelHidden

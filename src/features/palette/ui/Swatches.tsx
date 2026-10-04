@@ -4,6 +4,7 @@ import { use, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { PackedColor } from '../../document';
 import { formatColor, toCss } from '../core/color';
+import { keepFocusOnPress } from '../../../shared/react/pressFocus';
 import { PaletteColorSpace } from './colorSpace';
 
 export type SwatchSlot = 'primary' | 'secondary';
@@ -81,6 +82,7 @@ export function Swatches({
             aria-pressed={isPrimary}
             title={name}
             onFocus={() => setFocused(index)}
+            onMouseDown={keepFocusOnPress}
             onClick={() => onChoose(color, 'primary')}
             onContextMenu={(event) => {
               event.preventDefault();

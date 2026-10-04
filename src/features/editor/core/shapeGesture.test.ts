@@ -4,6 +4,7 @@ import type { Annotation } from '../../annotations/model';
 import { packRgba } from '../../document';
 import {
   beginShapeDrag,
+  heldRun,
   isDegenerateShape,
   keepsOnImage,
   leftDeadZone,
@@ -430,5 +431,40 @@ describe('keeping shapes on the image', () => {
       false,
     );
     expect(liveShape(move, { x: 470, y: 100 }, none, style, image).start.x).toBe(420);
+  });
+
+  test('a shape kept at a high zoom still holds after zooming out', () => {
+    const at = (x: number, y = 50): Annotation => ({
+      ...arrow,
+      start: { x, y },
+      end: { x: x + 60, y },
+    });
+    const zoomedOut = image;
+    const kept = at(-58);
+    // Kept at 4×, it shows less than 8 screen px at 1×, yet it still touches the image.
+    expect(keepsOnImage(kept, { ...image, zoom: 4 })).toBe(true);
+    expect(keepsOnImage(kept, zoomedOut)).toBe(false);
+    const need = heldRun(kept, zoomedOut)!;
+    expect(need).toBeGreaterThan(0);
+    expect(need).toBeLessThan(8);
+    // So it holds what it has: no further off, but along the edge or back on freely.
+    const move = beginShapeDrag(
+      { shape: kept, handle: null },
+      { x: -40, y: 50 },
+      { kind: 'arrow', width: style.width },
+      ids,
+      false,
+    );
+    expect(liveShape(move, { x: -140, y: 50 }, none, style, zoomedOut).start.x).toBe(-58);
+    expect(liveShape(move, { x: -40, y: 90 }, none, style, zoomedOut).start).toEqual({
+      x: -58,
+      y: 90,
+    });
+    expect(liveShape(move, { x: 0, y: 50 }, none, style, zoomedOut).start.x).toBe(-18);
+    // At 4× it held 8 screen px, so it asks no more than that.
+    expect(heldRun(at(100), zoomedOut)).toBe(8);
+    expect(heldRun(at(100), { ...image, zoom: 4 })).toBe(2);
+    // Only a shape none of whose centerline touches the image is free.
+    expect(heldRun(at(-100), zoomedOut)).toBeNull();
   });
 });

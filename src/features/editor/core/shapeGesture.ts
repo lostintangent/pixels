@@ -161,7 +161,8 @@ function handleCenter(shape: Annotation, handle: AnnotationHandleId): PixelPoint
 /**
  * The shape a drag shows at `point`. Shift squares a rectangle, snaps an arrow to 45°, and locks a
  * move to one axis. Option draws a rectangle out from its center. With `bounds`, a move or reshape
- * of a shape on the image stops where any further would leave too little of it there.
+ * of a shape that touches the image stops where any further would leave less of it there than
+ * `heldRun` asks for.
  */
 export function liveShape(
   drag: ShapeDrag,
@@ -171,8 +172,9 @@ export function liveShape(
   bounds?: ShapeBounds,
 ): Annotation {
   const shape = freeShape(drag, point, modifiers, style);
-  if (drag.mode === 'draw' || !bounds || keepsOnImage(shape, bounds)) return shape;
-  if (!keepsOnImage(drag.original, bounds)) return shape;
+  if (drag.mode === 'draw' || !bounds) return shape;
+  const need = heldRun(drag.original, bounds);
+  if (need === null || keepsOnImage(shape, bounds, need)) return shape;
   // Moving or reshaping on the image is a straight path, so search it for the last place it stays.
   const from = drag.mode === 'move' ? drag.start : handleCenter(drag.original, drag.handle);
   const to = drag.mode === 'move' ? point : { x: point.x + drag.grab.x, y: point.y + drag.grab.y };
@@ -187,7 +189,7 @@ export function liveShape(
   for (let step = 0; step < 16; step++) {
     const mid = (lo + hi) / 2;
     const candidate = freeShape(drag, toward(mid), modifiers, style);
-    if (keepsOnImage(candidate, bounds)) {
+    if (keepsOnImage(candidate, bounds, need)) {
       lo = mid;
       kept = candidate;
     } else hi = mid;
@@ -246,38 +248,65 @@ export function isDegenerateShape(shape: Annotation): boolean {
 
 /**
  * Whether enough of the shape's stroke lands on the image to see and grab: a run of its centerline
- * at least `KEEP_ON_IMAGE` screen pixels long, or a whole side when that side is shorter. A stroke
- * centered on the image's edge counts, since half of it is drawn there.
+ * at least `need` long, `KEEP_ON_IMAGE` screen pixels by default, or a whole side when that side is
+ * shorter. A stroke centered on the image's edge counts, since half of it is drawn there.
  */
-export function keepsOnImage(shape: Annotation, bounds: ShapeBounds): boolean {
-  const keep = KEEP_ON_IMAGE / bounds.zoom;
+export function keepsOnImage(
+  shape: Annotation,
+  bounds: ShapeBounds,
+  need = KEEP_ON_IMAGE / bounds.zoom,
+): boolean {
+  return centerlines(shape).some(([ax, ay, bx, by]) => {
+    const run = runOnImage(ax, ay, bx, by, bounds);
+    // A hair of tolerance so a run of exactly `need` survives the clipping arithmetic.
+    return run >= 0 && run >= Math.min(Math.hypot(bx - ax, by - ay), need) - 1e-9;
+  });
+}
+
+/**
+ * How much of its centerline a move or reshape must keep on the image: `KEEP_ON_IMAGE` screen
+ * pixels, or the run the shape already has when that is shorter, so a shape kept at a high zoom
+ * still holds after zooming out. Null when none of it touches the image, which leaves it free to
+ * come back.
+ */
+export function heldRun(shape: Annotation, bounds: ShapeBounds): number | null {
+  let held = -1;
+  for (const [ax, ay, bx, by] of centerlines(shape)) {
+    held = Math.max(held, runOnImage(ax, ay, bx, by, bounds));
+  }
+  return held < 0 ? null : Math.min(KEEP_ON_IMAGE / bounds.zoom, held);
+}
+
+type Segment = [number, number, number, number];
+
+/** The stroke's centerline: an arrow's shaft or a rectangle's four sides. */
+function centerlines(shape: Annotation): Segment[] {
   const offset = strokeOffset(shape.width);
   if (shape.kind === 'arrow') {
-    const [x0, y0, x1, y1] = [shape.start.x, shape.start.y, shape.end.x, shape.end.y];
-    return keepsRun(x0 + offset, y0 + offset, x1 + offset, y1 + offset, keep, bounds);
+    const { start, end } = shape;
+    return [[start.x + offset, start.y + offset, end.x + offset, end.y + offset]];
   }
   const rect = rectOf(shape);
   const x0 = rect.x + offset;
   const y0 = rect.y + offset;
   const x1 = Math.max(x0, rect.x + rect.width - offset);
   const y1 = Math.max(y0, rect.y + rect.height - offset);
-  return (
-    keepsRun(x0, y0, x1, y0, keep, bounds) ||
-    keepsRun(x1, y0, x1, y1, keep, bounds) ||
-    keepsRun(x0, y1, x1, y1, keep, bounds) ||
-    keepsRun(x0, y0, x0, y1, keep, bounds)
-  );
+  return [
+    [x0, y0, x1, y0],
+    [x1, y0, x1, y1],
+    [x0, y1, x1, y1],
+    [x0, y0, x0, y1],
+  ];
 }
 
-/** Clips a centerline to the image, edges included, and measures what is left. */
-function keepsRun(
+/** Clips a centerline to the image, edges included, and measures what is left, or -1 if nothing. */
+function runOnImage(
   ax: number,
   ay: number,
   bx: number,
   by: number,
-  keep: number,
   { width, height }: ShapeBounds,
-): boolean {
+): number {
   const dx = bx - ax;
   const dy = by - ay;
   let t0 = 0;
@@ -290,12 +319,10 @@ function keepsRun(
   ];
   for (const [p, q] of sides) {
     if (p === 0) {
-      if (q < 0) return false;
+      if (q < 0) return -1;
     } else if (p < 0) t0 = Math.max(t0, q / p);
     else t1 = Math.min(t1, q / p);
-    if (t0 > t1) return false;
+    if (t0 > t1) return -1;
   }
-  const length = Math.hypot(dx, dy);
-  // A hair of tolerance so a run of exactly `keep` survives the clipping arithmetic.
-  return (t1 - t0) * length >= Math.min(length, keep) - 1e-9;
+  return (t1 - t0) * Math.hypot(dx, dy);
 }
