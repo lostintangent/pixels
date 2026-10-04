@@ -19,6 +19,8 @@ import { withProductionPreview } from '../../../shared/preview';
  *  - Draw a shape through the real Shapes popover, then reload inside the debounce window — a
  *    shape commit dirties no pixel tile, so this is the only case that exercises the
  *    shapes-dirty half of the autosave/crash-recovery path rather than the pixel-dirty half.
+ *  - Draw a shape, nudge it with the keyboard, then reload inside its own, separate 700 ms amend
+ *    window before anything else flushes that pending move into the committed annotation set.
  */
 
 const headed = !process.argv.includes('--headless');
@@ -330,12 +332,95 @@ const drawShapeThenReload: Case = {
   },
 };
 
+/**
+ * Draw a shape, nudge it with the keyboard, then reload immediately — well inside the 700 ms
+ * amend window `ShapeController` gives a nudge or restyle to coalesce into one undo step. Until
+ * `attachAutosave` flushes that pending amend on `pagehide`, the move is only a preview: it never
+ * reaches the committed annotation set, so it's invisible to the crash journal and the save below,
+ * and a reload reverts to wherever the shape sat right after it was drawn. `restyle` shares the
+ * same `amendShape`/`flush` path as `nudge`, so this one case proves both.
+ *
+ * The assertion never looks at the moved shape's own pixels: its selection halo and handles
+ * render differently from the plain committed shape a reload shows, so a byte-exact comparison
+ * there would be a false mismatch independent of this bug. Instead it watches the patch of canvas
+ * at the shape's original corner, which the nudge moves the shape away from. If the amend commits,
+ * that patch stays background after reload; if it's lost, the shape reverts there and repaints it.
+ */
+const nudgeShapeThenReload: Case = {
+  name: 'nudge a shape, then reload inside the amend window',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    try {
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/d/${crypto.randomUUID()}`, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+
+      await page.getByRole('radio', { name: 'Shapes' }).click();
+      await page.getByRole('menuitemradio', { name: 'Rectangle' }).click();
+
+      const origin = await clipNear(page, -20, -20);
+      const end = await clipNear(page, 20, 20);
+      const empty = await page.screenshot({
+        clip: origin.clip,
+        animations: 'disabled',
+        scale: 'device',
+      });
+      await page.mouse.move(origin.x, origin.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 5 });
+      await page.mouse.up();
+      await page.mouse.move(0, 0);
+
+      const drawnDeadline = Date.now() + 2_000;
+      for (;;) {
+        const after = await page.screenshot({
+          clip: origin.clip,
+          animations: 'disabled',
+          scale: 'device',
+        });
+        if (!after.equals(empty)) break;
+        if (Date.now() >= drawnDeadline) throw new Error('Shape did not paint over its corner');
+        await Bun.sleep(16);
+      }
+
+      // Nudges the shape away from `origin`, never through Escape or any other action that would
+      // itself call `shapes?.flush()` and launder past the very bug this case exists to catch.
+      await page.keyboard.press('Shift+ArrowRight');
+      await page.keyboard.press('Shift+ArrowRight');
+      await page.keyboard.press('Shift+ArrowDown');
+      await page.keyboard.press('Shift+ArrowDown');
+
+      const nudgedDeadline = Date.now() + 2_000;
+      for (;;) {
+        const after = await page.screenshot({
+          clip: origin.clip,
+          animations: 'disabled',
+          scale: 'device',
+        });
+        if (after.equals(empty)) break;
+        if (Date.now() >= nudgedDeadline) throw new Error('Nudge did not clear the shape corner');
+        await Bun.sleep(16);
+      }
+
+      await page.reload({ waitUntil: 'load' });
+      await waitForCanvasReady(page);
+      return await samePixels(page, origin.clip, empty);
+    } finally {
+      await context.close();
+    }
+  },
+};
+
 const allCases: Case[] = [
   reloadDuringDebounce,
   closeAndReopen,
   switchDocumentsAndReturn,
   reloadDuringInFlightSave,
   drawShapeThenReload,
+  nudgeShapeThenReload,
 ];
 const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
 const cases = onlyArg ? [allCases[Number(onlyArg.slice('--only='.length))]!] : allCases;

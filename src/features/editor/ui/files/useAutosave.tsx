@@ -8,7 +8,9 @@ import { useToast } from '../toasts';
 /**
  * Keeps the live document persisted. A resize swaps in a new document with a new tile grid, so
  * autosave re-attaches with a full resave. Leaving commits a floating selection, then flushes
- * pending tiles instead of dropping them.
+ * pending tiles instead of dropping them. A pagehide or hidden visibilitychange (reload, app
+ * switch) instead commits only a pending shape nudge or restyle still inside its debounce window,
+ * via `flushPendingEdits` — not the floating selection, which a reload must leave untouched.
  */
 export function useAutosave(session: EditorSession, store: DocumentStore): void {
   const showToast = useToast();
@@ -21,6 +23,7 @@ export function useAutosave(session: EditorSession, store: DocumentStore): void 
       autosave?.dispose();
       const current = attachAutosave(session.bitmap.state, store, {
         initialResave,
+        flushPendingEdits: () => session.flushPendingEdits(),
         onStatus(status) {
           session.setSaveStatus(status);
           if (status !== 'error') {

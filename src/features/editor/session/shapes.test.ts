@@ -162,6 +162,28 @@ test('nudges and restyles coalesce until another command lands them', async () =
   expect(session.state.state.canUndo).toBe(false);
 });
 
+test('flushPendingEdits lands a pending nudge as its undo step, without touching a selection', async () => {
+  // This is what a pagehide must be able to reach to keep a nudge or restyle from being lost on
+  // an immediate reload or app switch, so it has to actually commit the amend — not merely act as
+  // a no-op alias for some other command that happens to flush shapes as a side effect — and it
+  // must leave an unrelated floating selection alone, since a reload is expected to keep that
+  // uncommitted (unlike a shape amend, which the artist already saw applied).
+  const { session, set } = await open([box('box')]);
+  session.run({ type: 'tool', tool: 'select' });
+  drag(session, [10, 15], [10, 15]);
+
+  session.run({ type: 'nudge', dx: 1, dy: 0 });
+  expect(set().preview?.start).toEqual({ x: 11, y: 10 });
+  expect(set().get('box')?.start).toEqual({ x: 10, y: 10 }); // not committed yet
+
+  session.flushPendingEdits();
+  expect(set().get('box')?.start).toEqual({ x: 11, y: 10 });
+  expect(session.state.state.canUndo).toBe(true);
+
+  session.run({ type: 'undo' });
+  expect(set().get('box')?.start).toEqual({ x: 10, y: 10 });
+});
+
 test('the eyedropper picks a shape’s exact color over the pixels beneath it', async () => {
   const { session } = await open([box('box', BLUE)]);
   session.run({ type: 'tool', tool: 'eyedropper' });

@@ -138,6 +138,13 @@ export interface EditorSession {
   readonly gesturing: boolean;
   /** Commits a floating selection before a document snapshot such as PNG export. */
   commitFloatingSelection(): boolean;
+  /**
+   * Commits a shape nudge or restyle still inside its debounce window, without touching a
+   * floating selection. For an exit signal (pagehide, app switch) that must not lose an edit the
+   * artist already made, but also must not silently finish an in-progress paste move the way
+   * leaving for another document does.
+   */
+  flushPendingEdits(): void;
   run(command: EditorCommand): void;
   chooseColor(color: PackedColor, slot: ColorSlot): void;
   setBrushSize(size: number): void;
@@ -646,6 +653,9 @@ export function createEditorSession({
       return gesture !== null;
     },
     commitFloatingSelection: commitFloating,
+    flushPendingEdits() {
+      shapes?.flush();
+    },
 
     run(command) {
       // Nudges and width steps coalesce into the pending shape edit. Everything else lands it.

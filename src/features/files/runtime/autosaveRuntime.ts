@@ -44,6 +44,14 @@ export interface AttachAutosaveOptions extends AutosaveOptions {
    * stroke) and for a document just loaded unchanged from storage (nothing has changed yet).
    */
   initialResave?: boolean;
+  /**
+   * Called synchronously, before a `pagehide` or a hidden `visibilitychange` reads what's dirty,
+   * so another feature's own debounced edit still inside its amend window (e.g. a shape nudge or
+   * restyle, not yet committed into the document) lands first and the exit snapshot sees it.
+   * Never called on an ordinary in-app dispose (switching documents), which already runs its own
+   * teardown in whatever order that feature chooses.
+   */
+  flushPendingEdits?: () => void;
 }
 
 /**
@@ -215,10 +223,15 @@ export function attachAutosave(
     store.stashForRecovery(snapshot);
   }
   function handlePageHide(): void {
+    // Runs before `stashForExit` reads what's dirty: an in-progress shape amend is still just a
+    // preview the committed snapshot can't see, so without this call a nudge or restyle caught
+    // inside its debounce window would vanish from both the crash journal and the save below.
+    options.flushPendingEdits?.();
     stashForExit();
     flushNow();
   }
   function handleVisibilityChange(): void {
+    options.flushPendingEdits?.();
     // Fires on becoming visible too; the journal is only worth its cost on the way to being
     // hidden, the one transition that can precede an actual close.
     if (globalThis.document?.visibilityState === 'hidden') stashForExit();

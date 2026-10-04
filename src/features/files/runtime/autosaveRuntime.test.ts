@@ -619,6 +619,60 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     });
   });
 
+  test('flushPendingEdits runs before a pagehide stash reads what is dirty', async () => {
+    // Stands in for `ShapeController.flush()`: a shape nudge or restyle still inside its own
+    // debounce window is only a preview, invisible to `pendingShapesDirty` until something
+    // commits it. Synchronously committing an annotation inside the callback, the same way a
+    // real `flush()` does, must be reflected in this same pagehide's stash — not merely
+    // scheduled for whatever save runs next.
+    await withFakeWindow(async (fakeWindow) => {
+      const { annotationsFor } = await import('../../annotations/model');
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const { clock } = createManualClock();
+      const autosave = attachAutosave(document, store, {
+        clock,
+        debounceMs: 5000,
+        maxWaitMs: 20000,
+        flushPendingEdits() {
+          annotationsFor(document).commit({
+            id: 'r1',
+            kind: 'rectangle',
+            start: { x: 0, y: 0 },
+            end: { x: 5, y: 5 },
+            width: 1,
+            color: packRgba(1, 2, 3),
+          });
+        },
+      });
+
+      fakeWindow.dispatch('pagehide');
+      expect(store.stashes).toHaveLength(1);
+      expect(store.stashes[0]!.shapes).toHaveLength(1);
+
+      await store.waitForIdle();
+      autosave.dispose();
+    });
+  });
+
+  test('flushPendingEdits never runs on an ordinary dispose', async () => {
+    const document = createBitmapDocument('doc', 32, 32);
+    const store = createFakeStore();
+    const { clock } = createManualClock();
+    let called = false;
+    const autosave = attachAutosave(document, store, {
+      clock,
+      debounceMs: 5000,
+      maxWaitMs: 20000,
+      flushPendingEdits() {
+        called = true;
+      },
+    });
+    autosave.dispose();
+    await store.waitForIdle();
+    expect(called).toBe(false);
+  });
+
   test('visibilitychange stashes only when the page is becoming hidden, not becoming visible', async () => {
     await withFakeWindow(async (fakeWindow) => {
       const document = createBitmapDocument('doc', 32, 32);
