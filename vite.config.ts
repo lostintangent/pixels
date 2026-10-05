@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite-plus';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
-import { Features } from 'lightningcss';
 import { astryxIcons } from './src/shared/build/astryxIcons';
 import { astryxMessages } from './src/shared/build/astryxMessages';
 import { modulePreload } from './src/shared/build/modulePreload';
+import { stylexOptions } from './src/shared/build/stylexOptions';
 
 const preload = modulePreload();
 
@@ -47,12 +47,7 @@ export default defineConfig({
     preload.plugin,
     astryxMessages(),
     astryxIcons(),
-    stylex({
-      devMode: 'full',
-      useCSSLayers: true,
-      // Astryx themes already require native light-dark(); the fallback breaks custom tokens.
-      lightningcssOptions: { exclude: Features.LightDark },
-    }),
+    stylex(stylexOptions),
     react(),
     {
       name: 'stylex-dev-html',
