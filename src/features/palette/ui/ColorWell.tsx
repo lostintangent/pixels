@@ -118,6 +118,8 @@ const COARSE = '@media (pointer: coarse)';
 const chipRing = `0 0 0 1.5px ${colorVars['--color-background-surface']}, 0 0 0 2.5px ${colorVars['--color-border-emphasized']}`;
 const chipFocus = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`;
 
+const FORCED = '@media (forced-colors: active)';
+
 const styles = stylex.create({
   well: {
     position: 'relative',
@@ -141,11 +143,16 @@ const styles = stylex.create({
     borderRadius: 10,
     backgroundColor: 'transparent',
     cursor: 'pointer',
-    outline: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: 'none', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: 2,
     WebkitTapHighlightColor: 'transparent',
     boxShadow: {
       default: null,
       ':focus-visible': `0 0 0 2px ${colorVars['--color-text-primary']}`,
+      [FORCED]: 'none',
     },
     transform: { default: null, ':active': 'scale(0.94)' },
     transitionProperty: 'transform',
@@ -164,8 +171,14 @@ const styles = stylex.create({
     borderWidth: 0,
     padding: 0,
     cursor: 'pointer',
-    outline: 'none',
-    boxShadow: { default: chipRing, ':focus-visible': chipFocus },
+    // Keeps the artist's colors under forced colors, edged in a system color instead of a ring.
+    forcedColorAdjust: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '1px solid CanvasText', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: { default: null, [FORCED]: { default: 0, ':focus-visible': 2 } },
+    boxShadow: { default: chipRing, ':focus-visible': chipFocus, [FORCED]: 'none' },
     transform: { default: null, ':active': 'scale(0.94)' },
     transitionProperty: 'transform, box-shadow',
     transitionDuration: durationVars['--duration-fast'],

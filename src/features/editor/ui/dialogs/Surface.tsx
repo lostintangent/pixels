@@ -6,6 +6,7 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Link2, Unlink2 } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
 import { canStepSide, sideProblem } from '../../core/dimensions';
 import type { Layout } from '../../session/session';
@@ -30,6 +31,7 @@ export function Surface({
   width = 440,
   children,
 }: SurfaceProps) {
+  const finalFocus = useReturnFocus(isOpen, layout);
   if (layout === 'phone') {
     return (
       <BottomSheet
@@ -38,8 +40,9 @@ export function Surface({
         label={title}
         height="hug"
         purpose="form"
+        finalFocusRef={finalFocus}
       >
-        <div {...stylex.props(styles.sheet)}>
+        <div onKeyDown={wrapTab} {...stylex.props(styles.sheet)}>
           <div {...stylex.props(styles.sheetHead)}>
             <div {...stylex.props(styles.sheetTitle)}>{title}</div>
             {subtitle && <div {...stylex.props(styles.hint)}>{subtitle}</div>}
@@ -51,17 +54,110 @@ export function Surface({
   }
   return (
     <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={width} purpose="form" padding={0}>
-      <div {...stylex.props(styles.header)}>
-        <DialogHeader
-          title={title}
-          subtitle={subtitle}
-          onOpenChange={onOpenChange}
-          hasDivider={false}
-        />
+      <div onKeyDown={wrapTab} {...stylex.props(styles.contents)}>
+        <div {...stylex.props(styles.header)}>
+          <DialogHeader
+            title={title}
+            subtitle={subtitle}
+            onOpenChange={onOpenChange}
+            hasDivider={false}
+          />
+        </div>
+        {children}
       </div>
-      {children}
     </Dialog>
   );
+}
+
+/**
+ * Returns focus to whatever opened the surface, or to the canvas once that is gone, for
+ * example a closed menu's item. The opener is read in a layout effect: a surface that mounts
+ * already open would otherwise see its own header, which focuses its title on mount. The first
+ * capture stands, since a replayed effect would see that title too.
+ * The dialog restores in this parent effect, after Astryx's own attempt; the sheet takes the
+ * target through `finalFocusRef` when its exit motion ends.
+ */
+function useReturnFocus(isOpen: boolean, layout: Layout) {
+  const opener = useRef<HTMLElement | null>(null);
+  const finalFocus = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    opener.current ??= openerOf(document.activeElement);
+  }, [isOpen]);
+  useEffect(() => {
+    if (isOpen) {
+      wasOpen.current = true;
+      return;
+    }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const target = returnTarget(opener.current);
+    opener.current = null;
+    if (layout === 'phone') finalFocus.current = target;
+    else target?.focus({ preventScroll: true });
+  }, [isOpen, layout]);
+  return finalFocus;
+}
+
+/**
+ * A menu item closes with its menu, so the opener is the button that showed the menu: the one
+ * naming it in `aria-controls`, or for a phone's sheet menu, the popup trigger it renders beside.
+ */
+function openerOf(active: Element | null): HTMLElement | null {
+  let element = active;
+  // A submenu climbs through its parent menu. The bound only guards against a malformed tree.
+  for (let hops = 0; element && hops < 4; hops++) {
+    const popup = element.closest('[role="menu"], dialog');
+    if (!popup) break;
+    element = triggerOf(popup);
+  }
+  return element instanceof HTMLElement && element !== document.body ? element : null;
+}
+
+function triggerOf(popup: Element): Element | null {
+  if (popup.id) {
+    const controller = document.querySelector(`[aria-controls="${CSS.escape(popup.id)}"]`);
+    if (controller) return controller;
+  }
+  for (let host = popup.parentElement; host; host = host.parentElement) {
+    const trigger = [...host.querySelectorAll('[aria-haspopup]')].find(
+      (candidate) => !popup.contains(candidate),
+    );
+    if (trigger) return trigger;
+  }
+  return null;
+}
+
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea, select, [tabindex]';
+
+/**
+ * A modal dialog leaves the last Tab to the browser, which reads as focus escaping to the page.
+ * The cycle wraps here instead, whichever controls are disabled.
+ */
+function wrapTab(event: KeyboardEvent<HTMLElement>) {
+  if (event.key !== 'Tab' || event.defaultPrevented) return;
+  const dialog = event.currentTarget.closest('dialog');
+  if (!dialog) return;
+  const stops = [...dialog.querySelectorAll<HTMLElement>(TABBABLE)].filter(
+    (element) => element.tabIndex >= 0 && !element.closest('[inert]') && element.checkVisibility(),
+  );
+  const first = stops[0];
+  const last = stops.at(-1);
+  if (!first || !last) return;
+  const active = document.activeElement;
+  const wraps = event.shiftKey
+    ? active === first || !stops.includes(active as HTMLElement)
+    : active === last;
+  if (!wraps) return;
+  event.preventDefault();
+  (event.shiftKey ? last : first).focus();
+}
+
+function returnTarget(opener: HTMLElement | null): HTMLElement | null {
+  if (opener?.isConnected && !opener.closest('[inert], dialog:not([open])')) return opener;
+  return document.querySelector<HTMLElement>('[role="application"]');
 }
 
 export function Form({ children }: { children: ReactNode }) {
@@ -205,6 +301,7 @@ export function formatBytes(bytes: number): string {
 }
 
 const styles = stylex.create({
+  contents: { display: 'contents' },
   sheet: { display: 'flex', flexDirection: 'column', paddingTop: spacingVars['--spacing-5'] },
   sheetHead: {
     display: 'flex',

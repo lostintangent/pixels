@@ -26,3 +26,27 @@ body,
     inset: -10px 0;
   }
 }
+
+/*
+ * Forced colors repaint the slider's div track and thumb as Canvas, so the brush size vanishes.
+ * The same theme classes carry system colors here.
+ */
+@media (forced-colors: active) {
+  .astryx-slider-track {
+    background-color: GrayText;
+  }
+
+  .astryx-slider-track + div {
+    background-color: Highlight;
+  }
+
+  .astryx-slider-thumb {
+    background-color: ButtonText;
+    outline: 2px solid ButtonFace;
+  }
+
+  .astryx-slider-thumb:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}

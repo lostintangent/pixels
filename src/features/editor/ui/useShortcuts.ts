@@ -42,12 +42,12 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
       if (!command) return;
       if (command.type === 'nudge' && target?.closest(OWNS_ARROWS)) return;
       if (command.type === 'selection' && CLIPBOARD.has(command.action)) return;
-      // Tab still moves focus through the chrome. It only hides chrome from the canvas.
+      // Tab moves focus through the chrome and only hides it from the canvas. Hidden chrome is
+      // inert, so from anywhere else Tab brings it back instead of leaving the page.
       if (
         command.type === 'toggle-chrome' &&
-        target &&
-        target !== document.body &&
-        target.getAttribute('role') !== 'application'
+        target?.getAttribute('role') !== 'application' &&
+        !session.state.state.chromeHidden
       )
         return;
       // Leave Enter to the focused button.

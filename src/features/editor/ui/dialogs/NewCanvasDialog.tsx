@@ -32,6 +32,13 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
   const [isLinked, setLinked] = useState(true);
   const [background, setBackground] = useState<Background>('transparent');
   const valid = !sideError(width) && !sideError(height);
+  const selected = PRESETS.findIndex(
+    (preset) => preset.width === width && preset.height === height,
+  );
+  const choose = (index: number) => {
+    setWidth(PRESETS[index]!.width);
+    setHeight(PRESETS[index]!.height);
+  };
   const close = () => session.setPanel(null);
   const create = () => {
     const fill =
@@ -53,20 +60,29 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
       subtitle={isKept ? 'Your current canvas stays in Recent.' : undefined}
     >
       <Form>
-        <div role="radiogroup" aria-label="Preset sizes" {...stylex.props(styles.presets)}>
-          {PRESETS.map((preset) => {
+        <div
+          role="radiogroup"
+          aria-label="Preset sizes"
+          onKeyDown={(event) => {
+            const next = presetKeyTarget(event.key, selected);
+            if (next === null) return;
+            event.preventDefault();
+            choose(next);
+            (event.currentTarget.children[next] as HTMLElement | undefined)?.focus();
+          }}
+          {...stylex.props(styles.presets)}
+        >
+          {PRESETS.map((preset, index) => {
             const scale = 24 / Math.max(preset.width, preset.height);
-            const checked = preset.width === width && preset.height === height;
+            const checked = index === selected;
             return (
               <button
                 key={preset.name}
                 type="button"
                 role="radio"
                 aria-checked={checked}
-                onClick={() => {
-                  setWidth(preset.width);
-                  setHeight(preset.height);
-                }}
+                tabIndex={index === Math.max(0, selected) ? 0 : -1}
+                onClick={() => choose(index)}
                 {...stylex.props(styles.preset, checked && styles.presetChecked)}
               >
                 <span aria-hidden {...stylex.props(styles.glyph)}>
@@ -137,6 +153,33 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
   );
 }
 
+/**
+ * The presets are one Tab stop, like the Background control below them. Arrows choose within
+ * the three-column grid: left and right run through all six, up and down move a row.
+ */
+function presetKeyTarget(key: string, selected: number): number | null {
+  const last = PRESETS.length - 1;
+  const from = Math.max(0, selected);
+  switch (key) {
+    case 'ArrowLeft':
+      return from === 0 ? last : from - 1;
+    case 'ArrowRight':
+      return from === last ? 0 : from + 1;
+    case 'ArrowUp':
+      return from >= 3 ? from - 3 : null;
+    case 'ArrowDown':
+      return from + 3 <= last ? from + 3 : null;
+    case 'Home':
+      return 0;
+    case 'End':
+      return last;
+    default:
+      return null;
+  }
+}
+
+const FORCED = '@media (forced-colors: active)';
+
 const ring = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`;
 
 const styles = stylex.create({
@@ -160,9 +203,14 @@ const styles = stylex.create({
     font: 'inherit',
     color: 'inherit',
     cursor: 'pointer',
-    outline: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '1px solid CanvasText', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: { default: null, [FORCED]: { default: -1, ':focus-visible': 2 } },
     backgroundColor: colorVars['--color-background-muted'],
     boxShadow: {
+      [FORCED]: 'none',
       default: `inset 0 0 0 1px ${colorVars['--color-border']}`,
       '@media (hover: hover)': {
         ':hover': `inset 0 0 0 1px ${colorVars['--color-border-emphasized']}`,
@@ -174,7 +222,13 @@ const styles = stylex.create({
   },
   presetChecked: {
     backgroundColor: colorVars['--color-background-surface'],
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '2px solid Highlight', ':focus-visible': '3px solid Highlight' },
+    },
+    outlineOffset: { default: null, [FORCED]: { default: -2, ':focus-visible': 2 } },
     boxShadow: {
+      [FORCED]: 'none',
       default: `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
       '@media (hover: hover)': {
         ':hover': `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
@@ -189,11 +243,12 @@ const styles = stylex.create({
     height,
     opacity,
     borderRadius: 2,
-    backgroundColor: colorVars['--color-text-primary'],
+    backgroundColor: { default: colorVars['--color-text-primary'], [FORCED]: 'CanvasText' },
   }),
   presetSize: { fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
   presetName: { fontSize: 13, color: colorVars['--color-text-secondary'], marginTop: -6 },
   primaryChip: {
+    forcedColorAdjust: 'none',
     width: 12,
     height: 12,
     borderRadius: 3,

@@ -163,6 +163,8 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   else if (ref) (ref as { current: T | null }).current = value;
 }
 
+const FORCED = '@media (forced-colors: active)';
+
 const styles = stylex.create({
   rail: { display: 'flex' },
   vertical: { flexDirection: 'column', gap: 2 },
@@ -210,10 +212,11 @@ const styles = stylex.create({
   },
   dockTool: { flexShrink: 1, minWidth: 40 },
   selected: {
-    color: colorVars['--color-on-accent'],
+    color: { default: colorVars['--color-on-accent'], [FORCED]: 'HighlightText' },
     backgroundColor: {
       default: colorVars['--color-accent'],
       '@media (hover: hover)': { ':hover': colorVars['--color-accent'] },
+      [FORCED]: 'Highlight',
     },
   },
 });

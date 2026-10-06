@@ -42,6 +42,8 @@ export function ColorSlots({ editing, onEditingChange, primary, secondary }: Col
 
 const ring = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`;
 
+const FORCED = '@media (forced-colors: active)';
+
 const styles = stylex.create({
   slots: { display: 'flex', gap: 8 },
   slot: {
@@ -50,14 +52,25 @@ const styles = stylex.create({
     borderRadius: 12,
     borderWidth: 0,
     cursor: 'pointer',
-    outline: 'none',
+    forcedColorAdjust: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '1px solid CanvasText', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: { default: null, [FORCED]: { default: 0, ':focus-visible': 2 } },
     boxShadow: {
       default: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff1f)',
       ':focus-visible': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-secondary']}`,
+      [FORCED]: 'none',
     },
   },
   active: {
-    boxShadow: { default: ring, ':focus-visible': ring },
+    boxShadow: { default: ring, ':focus-visible': ring, [FORCED]: 'none' },
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '2px solid Highlight', ':focus-visible': '3px solid Highlight' },
+    },
+    outlineOffset: { default: null, [FORCED]: 2 },
   },
   fill: (css: string) => ({ backgroundColor: css }),
 });

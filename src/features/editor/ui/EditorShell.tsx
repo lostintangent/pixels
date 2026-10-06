@@ -136,6 +136,9 @@ interface EditorProps {
   preferences: RefObject<ToolPreferences>;
 }
 
+/** Set when a document switch removes the editor that held focus, so the next canvas takes it. */
+let focusNextCanvas = false;
+
 function Editor({ document, isNew, store, layout, preferences }: EditorProps) {
   const [session] = useState(() =>
     createEditorSession({
@@ -159,12 +162,25 @@ function Editor({ document, isNew, store, layout, preferences }: EditorProps) {
   useEffect(() => session.setLayout(layout), [session, layout]);
   useEffect(() => session.setCanvasColors(CANVAS_COLORS[scheme]), [session, scheme]);
   useAutosave(session, store);
+  // Create, Open, and Back leave focus on chrome that is about to unmount. Keyboard users
+  // land on the new canvas rather than the page body.
+  const main = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const element = main.current;
+    if (focusNextCanvas) {
+      focusNextCanvas = false;
+      element?.querySelector<HTMLElement>('[role="application"]')?.focus({ preventScroll: true });
+    }
+    return () => {
+      if (element?.contains(globalThis.document.activeElement)) focusNextCanvas = true;
+    };
+  }, []);
 
   return (
     <EditorProvider value={session}>
       <PaletteColorSpace value={colorSpace}>
         <FileActionsProvider session={session} store={store} layout={layout}>
-          <main {...stylex.props(styles.app, layout === 'phone' && styles.phone)}>
+          <main ref={main} {...stylex.props(styles.app, layout === 'phone' && styles.phone)}>
             <Canvas session={session} />
             {layout === 'phone' ? <PhoneChrome /> : <DesktopChrome />}
             <Panels layout={layout} />
@@ -261,11 +277,19 @@ function Canvas({ session }: { session: EditorSession }) {
  * The chrome reads only whether it is hidden. Each island selects the state it shows, so the
  * change a stroke makes (history, save status, recent colors) re-renders only what displays it.
  */
-type Fade = StyleXStyles;
+interface Fade {
+  xstyle: StyleXStyles;
+  /** Hidden chrome leaves the tab order and the accessibility tree, not just the screen. */
+  inert: boolean;
+}
+
+function useFade(): Fade {
+  const hidden = useEditorState((state) => state.chromeHidden);
+  return { xstyle: [styles.chrome, hidden && styles.hidden], inert: hidden };
+}
 
 function DesktopChrome() {
-  const hidden = useEditorState((state) => state.chromeHidden);
-  const fade = [styles.chrome, hidden && styles.hidden];
+  const fade = useFade();
   const doc = useRef<HTMLElement>(null);
   const options = useRef<HTMLElement>(null);
   const actions = useRef<HTMLElement>(null);
@@ -273,7 +297,12 @@ function DesktopChrome() {
 
   return (
     <>
-      <Island as="header" ref={doc} xstyle={[styles.doc, styles.topRow, fade]}>
+      <Island
+        as="header"
+        ref={doc}
+        xstyle={[styles.doc, styles.topRow, fade.xstyle]}
+        inert={fade.inert}
+      >
         <DocMenu layout="desktop" />
         <DocumentMeta />
       </Island>
@@ -281,7 +310,8 @@ function DesktopChrome() {
         role="toolbar"
         aria-label="Tool options"
         ref={options}
-        xstyle={[styles.options, styles.topRow, fade]}
+        xstyle={[styles.options, styles.topRow, fade.xstyle]}
+        inert={fade.inert}
       >
         <ToolOptions layout="desktop" />
       </Island>
@@ -289,7 +319,8 @@ function DesktopChrome() {
         role="toolbar"
         aria-label="History and view"
         ref={actions}
-        xstyle={[styles.actions, styles.topRow, fade]}
+        xstyle={[styles.actions, styles.topRow, fade.xstyle]}
+        inert={fade.inert}
       >
         <HistoryButtons hasTooltips />
         <IslandDivider />
@@ -384,7 +415,14 @@ function DesktopTools({ fade }: { fade: Fade }) {
 
   return (
     <>
-      <Island ref={rail} as="nav" axis="y" aria-label="Tools" xstyle={[styles.rail, fade]}>
+      <Island
+        ref={rail}
+        as="nav"
+        axis="y"
+        aria-label="Tools"
+        xstyle={[styles.rail, fade.xstyle]}
+        inert={fade.inert}
+      >
         <ToolRail
           tool={shapes.tool}
           onSelect={shapes.onSelect}
@@ -443,7 +481,13 @@ function DesktopColors({ fade }: { fade: Fade }) {
   const panel = useRef<HTMLElement>(null);
   useFitClearance(session, panel);
   return (
-    <Island ref={panel} as="aside" aria-label="Colors" xstyle={[styles.panel, fade]}>
+    <Island
+      ref={panel}
+      as="aside"
+      aria-label="Colors"
+      xstyle={[styles.panel, fade.xstyle]}
+      inert={fade.inert}
+    >
       <ColorPanel
         anchorRef={panel}
         palette={DEFAULT_PALETTE}
@@ -488,22 +532,30 @@ function useFitClearance(session: EditorSession, island: RefObject<HTMLElement |
 }
 
 function PhoneChrome() {
-  const hidden = useEditorState((state) => state.chromeHidden);
+  const fade = useFade();
   // Which color the sheet edits, chosen by the dock's well.
   const [editing, setEditing] = useState<ColorSlot>('primary');
-  const fade = [styles.chrome, hidden && styles.hidden];
 
   return (
     <>
       {/* One row, so a long title truncates instead of running under the zoom and history. */}
       <div {...stylex.props(styles.phoneTop)}>
-        <Island as="header" xstyle={[styles.inRow, styles.docPhone, fade]}>
+        <Island
+          as="header"
+          xstyle={[styles.inRow, styles.docPhone, fade.xstyle]}
+          inert={fade.inert}
+        >
           <DocMenu layout="phone" />
         </Island>
-        <Island xstyle={[styles.inRow, fade]}>
+        <Island xstyle={[styles.inRow, fade.xstyle]} inert={fade.inert}>
           <ZoomMenu layout="phone" />
         </Island>
-        <Island role="toolbar" aria-label="History" xstyle={[styles.inRow, fade]}>
+        <Island
+          role="toolbar"
+          aria-label="History"
+          xstyle={[styles.inRow, fade.xstyle]}
+          inert={fade.inert}
+        >
           <HistoryButtons hasTooltips={false} />
         </Island>
       </div>
@@ -520,7 +572,13 @@ function PhoneDock({ fade, onEdit }: { fade: Fade; onEdit: (slot: ColorSlot) => 
   const secondary = useEditorState((state) => state.secondary);
   const dock = useRef<HTMLElement>(null);
   return (
-    <Island ref={dock} aria-label="Tools" axis="y" xstyle={[styles.dock, fade]}>
+    <Island
+      ref={dock}
+      aria-label="Tools"
+      axis="y"
+      xstyle={[styles.dock, fade.xstyle]}
+      inert={fade.inert}
+    >
       <div {...stylex.props(styles.dockOptions)}>
         <ToolOptions layout="phone" />
       </div>

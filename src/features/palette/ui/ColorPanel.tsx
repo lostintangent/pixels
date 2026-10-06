@@ -78,6 +78,8 @@ export function ColorPanel({
 
 const COARSE = '@media (pointer: coarse)';
 
+const FORCED = '@media (forced-colors: active)';
+
 const styles = stylex.create({
   panel: { display: 'flex', flexDirection: 'column', gap: spacingVars['--spacing-2'] },
   label: {
@@ -100,7 +102,12 @@ const styles = stylex.create({
     borderWidth: 0,
     padding: 0,
     cursor: 'pointer',
-    outline: 'none',
+    forcedColorAdjust: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '1px solid CanvasText', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: { default: null, [FORCED]: { default: 0, ':focus-visible': 2 } },
     backgroundImage:
       'radial-gradient(circle, #fff 0 22%, transparent 60%), conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
     boxShadow: {
@@ -109,6 +116,7 @@ const styles = stylex.create({
         ':hover': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 3px ${colorVars['--color-border-emphasized']}`,
       },
       ':focus-visible': `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`,
+      [FORCED]: 'none',
     },
     // A 44px touch target around the small wheel, reaching into the panel's padding and gap.
     '::before': {
@@ -118,6 +126,11 @@ const styles = stylex.create({
     },
   },
   customOpen: {
-    boxShadow: `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`,
+    boxShadow: {
+      default: `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`,
+      [FORCED]: 'none',
+    },
+    outline: { default: 'none', [FORCED]: '2px solid Highlight' },
+    outlineOffset: { default: null, [FORCED]: 2 },
   },
 });

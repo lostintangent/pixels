@@ -175,6 +175,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
 }
 
 const COARSE = '@media (pointer: coarse)';
+const FORCED = '@media (forced-colors: active)';
 
 const thumbRing = '0 0 0 2px #fff, 0 0 0 3px #0000004d, 0 2px 6px #00000059';
 const thumbFocus = `0 0 0 2px #fff, 0 0 0 4px ${colorVars['--color-text-primary']}, 0 2px 6px #00000059`;
@@ -191,7 +192,9 @@ const styles = stylex.create({
     borderRadius: 10,
     cursor: 'crosshair',
     touchAction: 'none',
-    outline: 'none',
+    forcedColorAdjust: 'none',
+    outline: { default: 'none', [FORCED]: { ':focus-visible': '2px solid CanvasText' } },
+    outlineOffset: 2,
     backgroundImage:
       'linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent)',
     boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff14)',
@@ -203,7 +206,9 @@ const styles = stylex.create({
     borderRadius: radiusVars['--radius-full'],
     cursor: 'pointer',
     touchAction: 'none',
-    outline: 'none',
+    forcedColorAdjust: 'none',
+    outline: { default: 'none', [FORCED]: { ':focus-visible': '2px solid CanvasText' } },
+    outlineOffset: 2,
     backgroundImage:
       'linear-gradient(to right, #f00, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00)',
     // On touch the thin rail takes presses across a 44px band that fills the gaps around it.
@@ -244,6 +249,8 @@ const styles = stylex.create({
     height: { default: 32, [COARSE]: 44 },
     borderRadius: 8,
     flexShrink: 0,
+    forcedColorAdjust: 'none',
+    outline: { default: null, [FORCED]: '1px solid CanvasText' },
     boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff1f)',
   },
 });

@@ -113,6 +113,8 @@ export function Swatches({
 const ring = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-primary']}`;
 const focusRing = `0 0 0 2px ${colorVars['--color-background-surface']}, 0 0 0 4px ${colorVars['--color-text-secondary']}`;
 
+const FORCED = '@media (forced-colors: active)';
+
 const styles = stylex.create({
   grid: {
     display: 'grid',
@@ -132,10 +134,17 @@ const styles = stylex.create({
     borderWidth: 0,
     padding: 0,
     cursor: 'pointer',
-    outline: 'none',
+    // A chip is the artist's color, so forced colors keep it and draw its edges in system colors.
+    forcedColorAdjust: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '1px solid CanvasText', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: { default: null, [FORCED]: { default: 0, ':focus-visible': 2 } },
     boxShadow: {
       default: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff2e)',
       ':focus-visible': focusRing,
+      [FORCED]: 'none',
     },
     transform: {
       default: null,
@@ -155,7 +164,12 @@ const styles = stylex.create({
   swatchLarge: { width: 38, height: 38, borderRadius: 9 },
   fill: (css: string) => ({ backgroundColor: css }),
   primary: {
-    boxShadow: { default: ring, ':focus-visible': ring },
+    boxShadow: { default: ring, ':focus-visible': ring, [FORCED]: 'none' },
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '2px solid Highlight', ':focus-visible': '3px solid Highlight' },
+    },
+    outlineOffset: { default: null, [FORCED]: 2 },
   },
   secondaryDot: {
     position: 'absolute',
@@ -170,7 +184,9 @@ const styles = stylex.create({
   empty: {
     cursor: 'default',
     backgroundColor: 'transparent',
-    boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
+    boxShadow: { default: `inset 0 0 0 1px ${colorVars['--color-border']}`, [FORCED]: 'none' },
+    outline: { default: 'none', [FORCED]: '1px dashed GrayText' },
+    outlineOffset: { default: null, [FORCED]: -1 },
     transform: { default: null, '@media (hover: hover)': { ':hover': null }, ':active': null },
   },
 });

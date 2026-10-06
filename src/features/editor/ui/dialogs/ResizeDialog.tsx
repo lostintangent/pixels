@@ -143,6 +143,7 @@ function AnchorPicker({
 
 // Cells on a 44px pitch for touch.
 const COARSE = '@media (pointer: coarse)';
+const FORCED = '@media (forced-colors: active)';
 
 const styles = stylex.create({
   anchorRow: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-4'] },
@@ -156,6 +157,8 @@ const styles = stylex.create({
     borderRadius: 10,
     backgroundColor: colorVars['--color-background-muted'],
     boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
+    outline: { default: null, [FORCED]: '1px solid CanvasText' },
+    outlineOffset: -1,
   },
   anchor: {
     width: { default: 28, [COARSE]: 40 },
@@ -166,8 +169,12 @@ const styles = stylex.create({
     borderWidth: 0,
     borderRadius: 6,
     cursor: 'pointer',
-    outline: 'none',
-    color: colorVars['--color-text-secondary'],
+    outline: {
+      default: 'none',
+      [FORCED]: { default: 'none', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: 1,
+    color: { default: colorVars['--color-text-secondary'], [FORCED]: 'CanvasText' },
     backgroundColor: {
       default: 'transparent',
       '@media (hover: hover)': { ':hover': colorVars['--color-overlay-hover'] },
@@ -178,10 +185,11 @@ const styles = stylex.create({
     },
   },
   anchorChecked: {
-    color: colorVars['--color-on-accent'],
+    color: { default: colorVars['--color-on-accent'], [FORCED]: 'HighlightText' },
     backgroundColor: {
       default: colorVars['--color-accent'],
       '@media (hover: hover)': { ':hover': colorVars['--color-accent'] },
+      [FORCED]: 'Highlight',
     },
   },
   anchorDot: {
@@ -189,7 +197,13 @@ const styles = stylex.create({
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'currentColor',
+    // Forced colors repaint a currentColor background as Canvas, so the dots take system colors.
+    backgroundColor: { default: 'currentColor', [FORCED]: 'CanvasText' },
   },
-  anchorDotChecked: { width: 10, height: 10, borderRadius: 3 },
+  anchorDotChecked: {
+    width: 10,
+    height: 10,
+    borderRadius: 3,
+    backgroundColor: { default: 'currentColor', [FORCED]: 'HighlightText' },
+  },
 });

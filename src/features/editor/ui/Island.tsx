@@ -10,6 +10,7 @@ export interface IslandProps {
   axis?: 'x' | 'y';
   role?: string;
   'aria-label'?: string;
+  inert?: boolean;
   xstyle?: stylex.StyleXStyles;
   ref?: Ref<HTMLElement>;
   children: ReactNode;
@@ -59,6 +60,8 @@ const styles = stylex.create({
     color: colorVars['--color-text-primary'],
     borderRadius: pixelVars.islandRadius,
     boxShadow: pixelVars.islandShadow,
+    // Forced colors drop the shadow, which is the island's only edge.
+    outline: { default: null, '@media (forced-colors: active)': '1px solid CanvasText' },
   },
   column: { flexDirection: 'column' },
   divider: { flexShrink: 0, backgroundColor: colorVars['--color-border'] },
