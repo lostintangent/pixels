@@ -32,6 +32,14 @@ body,
  * The same theme classes carry system colors here.
  */
 @media (forced-colors: active) {
+  /* Forced colors drop surface shadows and backgrounds, so floating layers draw an edge.
+     A submenu is its own surface, directly inside its popover. */
+  .astryx-popover-surface,
+  [popover] > .astryx-dropdown-menu,
+  .astryx-tooltip {
+    outline: 1px solid CanvasText;
+  }
+
   .astryx-slider-track {
     background-color: GrayText;
   }

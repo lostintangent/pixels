@@ -153,8 +153,11 @@ const pop = stylex.keyframes({
   to: { opacity: 1, transform: 'none' },
 });
 
+const FORCED = '@media (forced-colors: active)';
+
 const styles = stylex.create({
   menu: {
+    outline: { default: null, [FORCED]: '1px solid CanvasText' },
     position: 'fixed',
     zIndex: 4,
     display: 'flex',
@@ -197,7 +200,11 @@ const styles = stylex.create({
       default: 'transparent',
       '@media (hover: hover)': { ':hover': colorVars['--color-overlay-hover'] },
     },
-    outline: 'none',
+    outline: {
+      default: 'none',
+      [FORCED]: { default: 'none', ':focus-visible': '2px solid CanvasText' },
+    },
+    outlineOffset: -2,
     boxShadow: {
       default: null,
       ':focus-visible': `inset 0 0 0 2px ${colorVars['--color-text-primary']}`,
@@ -228,6 +235,11 @@ const styles = stylex.create({
     backgroundColor: {
       default: colorVars['--color-background-muted'],
       '@media (hover: hover)': { ':hover': colorVars['--color-background-muted'] },
+    },
+    // A Highlight fill would put the label on Chrome's Canvas text backplate, so it's an edge.
+    outline: {
+      default: 'none',
+      [FORCED]: { default: '2px solid Highlight', ':focus-visible': '3px solid Highlight' },
     },
   },
 });
