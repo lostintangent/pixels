@@ -23,10 +23,18 @@ export function snapLineEndpoint(from: PixelPoint, to: PixelPoint): PixelPoint {
   if (ax === 0 || ay === 0) return { x: to.x, y: to.y };
   const ratio = ay / ax;
   if (ratio < 0.198912367) return { x: to.x, y: from.y };
-  if (ratio < 0.668178638) return { x: to.x, y: from.y + sy * Math.round(ax / 2) };
+  if (ratio < 0.668178638) {
+    // The odd long side avoids Bresenham ties, giving uniform two-pixel runs.
+    // Choose the closest lattice point (2n + 1, n) to the pointer.
+    const short = Math.max(1, Math.round((2 * ax + ay - 2) / 5));
+    return { x: from.x + sx * (2 * short + 1), y: from.y + sy * short };
+  }
   if (ratio < 1.496605763)
     return { x: from.x + sx * Math.max(ax, ay), y: from.y + sy * Math.max(ax, ay) };
-  if (ratio < 5.027339492) return { x: from.x + sx * Math.round(ay / 2), y: to.y };
+  if (ratio < 5.027339492) {
+    const short = Math.max(1, Math.round((ax + 2 * ay - 2) / 5));
+    return { x: from.x + sx * short, y: from.y + sy * (2 * short + 1) };
+  }
   return { x: from.x, y: to.y };
 }
 

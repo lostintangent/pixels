@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
 import { createDocumentHistory } from '../../history';
 import { beginLinePreview, LinePreviewWorkspace, snapLineEndpoint } from './line';
+import { rasterLine } from './raster';
 
 const INK = packRgba(0, 180, 120);
 
@@ -62,7 +63,59 @@ test('changing preview clears its old pixels; cancel leaves document untouched',
 test('snap covers horizontal, diagonal, and two-to-one pixel slopes', () => {
   expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 8, y: 1 })).toEqual({ x: 8, y: 0 });
   expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 7, y: 6 })).toEqual({ x: 7, y: 7 });
-  expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 8, y: 4 })).toEqual({ x: 8, y: 4 });
+  expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 8, y: 4 })).toEqual({ x: 9, y: 4 });
+  expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 4, y: 8 })).toEqual({ x: 4, y: 9 });
+  expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 12, y: 6 })).toEqual({ x: 13, y: 6 });
+  expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 10, y: 4 })).toEqual({ x: 9, y: 4 });
+  expect(snapLineEndpoint({ x: 0, y: 0 }, { x: 10, y: 5 })).toEqual({ x: 11, y: 5 });
+});
+
+test('snapped two-to-one lines use uniform runs and paint the same pixels in reverse', () => {
+  const endpoints: [number, number][] = [
+    [13, 6],
+    [13, -6],
+    [6, 13],
+    [-6, 13],
+  ];
+  for (const [endX, endY] of endpoints) {
+    const forward: [number, number][] = [];
+    const reverse: [number, number][] = [];
+    rasterLine(0, 0, endX, endY, (x, y) => forward.push([x, y]));
+    rasterLine(endX, endY, 0, 0, (x, y) => reverse.push([x, y]));
+    expect(forward.length).toBe(14);
+    expect(reverse.map(([x, y]) => `${x},${y}`).sort()).toEqual(
+      forward.map(([x, y]) => `${x},${y}`).sort(),
+    );
+    const counts = new Map<number, number>();
+    for (const [x, y] of forward) {
+      const shortAxis = Math.abs(endX) > Math.abs(endY) ? y : x;
+      counts.set(shortAxis, (counts.get(shortAxis) ?? 0) + 1);
+    }
+    expect([...counts.values()]).toEqual([2, 2, 2, 2, 2, 2, 2]);
+  }
+});
+
+test('Shift line preview commits the same exact pixels from either end', () => {
+  function commitLine(from: { x: number; y: number }, to: { x: number; y: number }) {
+    const document = createBitmapDocument('snapped', 16, 8);
+    const preview = beginLinePreview(
+      document,
+      from,
+      { color: INK, size: 1, pixelPerfect: false },
+      createDocumentHistory(),
+    );
+    preview.update(to, true);
+    expect(preview.commit()).toBe(true);
+    return Array.from(document.pixels);
+  }
+
+  const forward = commitLine({ x: 0, y: 0 }, { x: 12, y: 6 });
+  const reverse = commitLine({ x: 13, y: 6 }, { x: 0, y: 0 });
+  expect(reverse).toEqual(forward);
+  for (let x = 0; x <= 13; x++) {
+    expect(forward[Math.floor(x / 2) * 16 + x]).toBe(INK);
+  }
+  expect(forward.filter((pixel) => pixel === INK)).toHaveLength(14);
 });
 
 test('short line on a large canvas keeps a compact reusable preview', () => {
