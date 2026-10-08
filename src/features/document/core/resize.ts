@@ -19,17 +19,18 @@ export function canvasAnchorOffset(
   height: number,
   anchor: CanvasAnchor,
 ): { x: number; y: number } {
+  // Truncation keeps odd grow and shrink offsets inverse, with the extra pixel at right/bottom.
   return {
     x: anchor.endsWith('left')
       ? 0
       : anchor.endsWith('right')
         ? width - sourceWidth
-        : Math.floor((width - sourceWidth) / 2),
+        : Math.trunc((width - sourceWidth) / 2),
     y: anchor.startsWith('top')
       ? 0
       : anchor.startsWith('bottom')
         ? height - sourceHeight
-        : Math.floor((height - sourceHeight) / 2),
+        : Math.trunc((height - sourceHeight) / 2),
   };
 }
 

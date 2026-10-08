@@ -225,3 +225,26 @@ test('resize shifts pixels and annotations in one document replacement entry', (
   expect(annotationsFor(document).shapes[0]?.start).toEqual({ x: 10, y: 10 });
   expect(history.redo(document)).toEqual({ document: resized });
 });
+
+test('odd Center growth and shrink round-trip every pixel and shape coordinate', () => {
+  const document = createBitmapDocument('odd-resize', 16, 16);
+  for (let i = 0; i < document.pixels.length; i++) document.pixels[i] = i + 1;
+  const shape: Annotation = {
+    ...rectangle,
+    start: { x: 2, y: 3 },
+    end: { x: 12, y: 14 },
+  };
+  annotationsFor(document).commit(shape);
+  const history = createDocumentHistory();
+
+  const grown = resizeAnnotatedDocument(document, history, 17, 17, 'center');
+  expect(grown.pixels[0]).toBe(1);
+  expect(grown.pixels[15 * 17 + 15]).toBe(256);
+  expect(grown.pixels[16]).toBe(0);
+  expect(grown.pixels[16 * 17]).toBe(0);
+  expect(annotationsFor(grown).shapes).toEqual([shape]);
+
+  const restored = resizeAnnotatedDocument(grown, history, 16, 16, 'center');
+  expect(Array.from(restored.pixels)).toEqual(Array.from(document.pixels));
+  expect(annotationsFor(restored).shapes).toEqual([shape]);
+});
