@@ -6,9 +6,16 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Link2, Unlink2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
-import { canStepSide, sideProblem } from '../../core/dimensions';
+import {
+  canStepSide,
+  isUsableSize,
+  linkedSide,
+  sideProblem,
+  textNamesSide,
+} from '../../core/dimensions';
+import type { Size } from '../../core/dimensions';
 import type { Layout } from '../../session/session';
 
 export interface SurfaceProps {
@@ -220,37 +227,98 @@ export function sideError(value: number): { type: 'error'; message: string } | u
   return message === null ? undefined : { type: 'error', message };
 }
 
-export interface DimensionsProps {
-  width: number;
-  height: number;
-  onWidthChange: (value: number) => void;
-  onHeightChange: (value: number) => void;
+export interface SizeFields extends Size {
   isLinked: boolean;
-  onLinkedChange: (isLinked: boolean) => void;
+  /** The pair as of the last commit, current even inside the keystroke that committed it. */
+  latest: () => Size;
+  setWidth: (value: number) => void;
+  setHeight: (value: number) => void;
+  setLinked: (isLinked: boolean) => void;
+  /** A preset or the document: sets both sides and the ratio a link keeps. */
+  reset: (size: Size) => void;
 }
 
-export function Dimensions({
-  width,
-  height,
-  onWidthChange,
-  onHeightChange,
-  isLinked,
-  onLinkedChange,
-}: DimensionsProps) {
+/**
+ * Width and height with an optional link. The link keeps the ratio the pair had when it was
+ * linked or last reset, so a 320 × 180 preset stays 16:9 and a square stays square.
+ */
+export function useSizeFields(initial: Size, initiallyLinked: boolean): SizeFields {
+  const [size, setSize] = useState(initial);
+  const [isLinked, setLinkedState] = useState(initiallyLinked);
+  const latest = useRef(initial);
+  const ratio = useRef(initial);
+  const linked = useRef(initiallyLinked);
+  const actions = useMemo(() => {
+    const apply = (next: Size) => {
+      latest.current = next;
+      setSize(next);
+    };
+    return {
+      latest: () => latest.current,
+      setWidth: (width: number) => {
+        const { height } = latest.current;
+        const { width: from, height: to } = ratio.current;
+        apply({ width, height: linked.current ? linkedSide(width, from, to, height) : height });
+      },
+      setHeight: (height: number) => {
+        const { width } = latest.current;
+        const { height: from, width: to } = ratio.current;
+        apply({ width: linked.current ? linkedSide(height, from, to, width) : width, height });
+      },
+      setLinked: (next: boolean) => {
+        if (next && isUsableSize(latest.current)) ratio.current = latest.current;
+        linked.current = next;
+        setLinkedState(next);
+      },
+      reset: (next: Size) => {
+        ratio.current = next;
+        apply(next);
+      },
+    };
+  }, []);
+  return { ...size, isLinked, ...actions };
+}
+
+export interface DimensionsProps {
+  fields: SizeFields;
+  /** Return in either field, once both sides are usable. The dialog decides whether it applies. */
+  onSubmit: (size: Size) => void;
+}
+
+export function Dimensions({ fields, onSubmit }: DimensionsProps) {
+  const { width, height, isLinked } = fields;
   const Glyph = isLinked ? Link2 : Unlink2;
+  // NumberInput commits the draft before this runs, so `latest` already holds the typed side.
+  const submitOnReturn = (side: keyof Size) => (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    const size = fields.latest();
+    if (!textNamesSide(event.currentTarget.value, size[side]) || !isUsableSize(size)) return;
+    event.preventDefault();
+    onSubmit(size);
+  };
   return (
     <div {...stylex.props(styles.dimensions)}>
-      <SideInput label="Width" value={width} onChange={onWidthChange} />
+      <SideInput
+        label="Width"
+        value={width}
+        onChange={fields.setWidth}
+        onReturn={submitOnReturn('width')}
+      />
       <div {...stylex.props(styles.link)}>
         <IconButton
           variant="ghost"
           label={isLinked ? 'Unlink width and height' : 'Link width and height'}
           tooltip={isLinked ? 'Unlink' : 'Link'}
           icon={<Glyph size={18} />}
-          onClick={() => onLinkedChange(!isLinked)}
+          onClick={() => fields.setLinked(!isLinked)}
         />
       </div>
-      <SideInput label="Height" value={height} onChange={onHeightChange} />
+      <SideInput
+        label="Height"
+        value={height}
+        onChange={fields.setHeight}
+        onReturn={submitOnReturn('height')}
+      />
     </div>
   );
 }
@@ -260,10 +328,12 @@ function SideInput({
   label,
   value,
   onChange,
+  onReturn,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
+  onReturn: (event: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   return (
     <NumberInput
@@ -274,7 +344,10 @@ function SideInput({
       status={sideError(value)}
       statusVariant="detached"
       onFocus={selectOnceEditable}
-      onKeyDown={keepStepsInRange}
+      onKeyDown={(event) => {
+        keepStepsInRange(event);
+        onReturn(event);
+      }}
     />
   );
 }

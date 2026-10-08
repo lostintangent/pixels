@@ -4,7 +4,17 @@ import { useEffect, useState } from 'react';
 import type { CanvasAnchor } from '../../../document';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
-import { Dimensions, Field, Footer, Form, Hint, sideError, Surface } from './Surface';
+import type { Size } from '../../core/dimensions';
+import {
+  Dimensions,
+  Field,
+  Footer,
+  Form,
+  Hint,
+  sideError,
+  Surface,
+  useSizeFields,
+} from './Surface';
 
 const ANCHORS: readonly { anchor: CanvasAnchor; label: string }[] = [
   { anchor: 'top-left', label: 'Top left' },
@@ -22,24 +32,24 @@ export function ResizeDialog({ layout }: { layout: Layout }) {
   const session = useEditor();
   const isOpen = useEditorState((state) => state.panel === 'resize');
   const current = useEditorState((state) => state.document);
-  const [width, setWidth] = useState(current.width);
-  const [height, setHeight] = useState(current.height);
-  const [isLinked, setLinked] = useState(false);
+  const fields = useSizeFields(current, false);
+  const { width, height, reset } = fields;
   const [anchor, setAnchor] = useState<CanvasAnchor>('center');
 
   useEffect(() => {
-    if (!isOpen) return;
-    setWidth(current.width);
-    setHeight(current.height);
-  }, [isOpen, current.width, current.height]);
+    if (isOpen) reset({ width: current.width, height: current.height });
+  }, [isOpen, current.width, current.height, reset]);
 
   const valid = !sideError(width) && !sideError(height);
   const changed = width !== current.width || height !== current.height;
   const crops = width < current.width || height < current.height;
   const close = () => session.setPanel(null);
-  const resize = async () => {
-    await session.resizeDocument(width, height, anchor);
+  const resize = async (size: Size = fields.latest()) => {
+    await session.resizeDocument(size.width, size.height, anchor);
     close();
+  };
+  const submit = (size: Size) => {
+    if (size.width !== current.width || size.height !== current.height) void resize(size);
   };
 
   return (
@@ -52,22 +62,7 @@ export function ResizeDialog({ layout }: { layout: Layout }) {
       width={420}
     >
       <Form>
-        <Dimensions
-          width={width}
-          height={height}
-          onWidthChange={(value) => {
-            setWidth(value);
-            if (isLinked)
-              setHeight(Math.max(1, Math.round((value * current.height) / current.width)));
-          }}
-          onHeightChange={(value) => {
-            setHeight(value);
-            if (isLinked)
-              setWidth(Math.max(1, Math.round((value * current.width) / current.height)));
-          }}
-          isLinked={isLinked}
-          onLinkedChange={setLinked}
-        />
+        <Dimensions fields={fields} onSubmit={submit} />
         <div {...stylex.props(styles.anchorRow)}>
           <Field label="Anchor">
             <AnchorPicker value={anchor} onChange={setAnchor} />
@@ -88,7 +83,7 @@ export function ResizeDialog({ layout }: { layout: Layout }) {
         note={`${current.width} × ${current.height}  →  ${width || '–'} × ${height || '–'}`}
         action="Resize"
         isDisabled={!valid || !changed}
-        onAction={resize}
+        onAction={() => void resize()}
         onCancel={close}
       />
     </Surface>

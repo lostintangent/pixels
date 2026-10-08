@@ -7,7 +7,17 @@ import { toCss, TRANSPARENT } from '../../../palette';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
 import { useFileActions } from '../files/FileActions';
-import { Dimensions, Field, Footer, Form, formatBytes, sideError, Surface } from './Surface';
+import type { Size } from '../../core/dimensions';
+import {
+  Dimensions,
+  Field,
+  Footer,
+  Form,
+  formatBytes,
+  sideError,
+  Surface,
+  useSizeFields,
+} from './Surface';
 
 const PRESETS = [
   { width: 16, height: 16, name: 'Icon' },
@@ -27,27 +37,23 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
   const primary = useEditorState((state) => state.primary);
   // A blank canvas that was never edited isn't stored, so only a kept one can promise Recent.
   const isKept = useEditorState((state) => state.save === 'saved' || state.save === 'saving');
-  const [width, setWidth] = useState(64);
-  const [height, setHeight] = useState(64);
-  const [isLinked, setLinked] = useState(true);
+  const fields = useSizeFields({ width: 64, height: 64 }, true);
+  const { width, height } = fields;
   const [background, setBackground] = useState<Background>('transparent');
   const valid = !sideError(width) && !sideError(height);
   const selected = PRESETS.findIndex(
     (preset) => preset.width === width && preset.height === height,
   );
-  const choose = (index: number) => {
-    setWidth(PRESETS[index]!.width);
-    setHeight(PRESETS[index]!.height);
-  };
+  const choose = (index: number) => fields.reset(PRESETS[index]!);
   const close = () => session.setPanel(null);
-  const create = () => {
+  const create = (size: Size = fields.latest()) => {
     const fill =
       background === 'transparent'
         ? TRANSPARENT
         : background === 'white'
           ? packRgba(255, 255, 255)
           : primary;
-    files.newCanvas(width, height, fill);
+    files.newCanvas(size.width, size.height, fill);
     close();
   };
 
@@ -104,20 +110,7 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
             );
           })}
         </div>
-        <Dimensions
-          width={width}
-          height={height}
-          onWidthChange={(value) => {
-            setWidth(value);
-            if (isLinked) setHeight(value);
-          }}
-          onHeightChange={(value) => {
-            setHeight(value);
-            if (isLinked) setWidth(value);
-          }}
-          isLinked={isLinked}
-          onLinkedChange={setLinked}
-        />
+        <Dimensions fields={fields} onSubmit={create} />
         <Field label="Background">
           <SegmentedControl
             label="Background"
@@ -146,7 +139,7 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
         }
         action="Create"
         isDisabled={!valid}
-        onAction={create}
+        onAction={() => create()}
         onCancel={close}
       />
     </Surface>
