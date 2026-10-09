@@ -53,7 +53,7 @@ export function ColorSheet({
   };
   return (
     <BottomSheet isOpen={isOpen} onOpenChange={onOpenChange} label="Colors" height="hug">
-      <div {...stylex.props(styles.sheet)}>
+      <div data-passes-history {...stylex.props(styles.sheet)}>
         <div {...stylex.props(styles.head)}>
           <ColorSlots
             editing={editing}

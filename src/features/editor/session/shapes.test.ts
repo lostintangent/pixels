@@ -162,6 +162,29 @@ test('nudges and restyles coalesce until another command lands them', async () =
   expect(session.state.state.canUndo).toBe(false);
 });
 
+test('undo and redo of a restyle bring the color controls along, without touching Recent', async () => {
+  const { session, set } = await open([box('box')]);
+  session.run({ type: 'tool', tool: 'select' });
+  drag(session, [10, 15], [10, 15]);
+  expect(session.state.state.primary).toBe(RED);
+
+  session.chooseColor(BLUE, 'primary');
+  session.flushPendingEdits();
+  const recent = session.state.state.recent;
+  expect(recent[0]).toBe(BLUE);
+
+  session.run({ type: 'undo' });
+  expect(set().get('box')?.color).toBe(RED);
+  expect(session.state.state.selectedShape?.id).toBe('box');
+  expect(session.state.state.primary).toBe(RED);
+  expect(session.state.state.recent).toBe(recent);
+
+  session.run({ type: 'redo' });
+  expect(set().get('box')?.color).toBe(BLUE);
+  expect(session.state.state.primary).toBe(BLUE);
+  expect(session.state.state.recent).toBe(recent);
+});
+
 test('a nudge held at the image edge keeps holding after zooming out', async () => {
   const arrow: Annotation = {
     id: 'arrow',

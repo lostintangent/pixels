@@ -65,7 +65,7 @@ export interface ShapeController {
   /** Lands a pending nudge or restyle run as its undo step. */
   flush(): void;
   deselect(): void;
-  /** Undo, redo, and resize can remove the selected shape or change its width. */
+  /** Undo, redo, and resize can remove the selected shape or change its color or width. */
   revalidate(): void;
 }
 
@@ -266,7 +266,12 @@ export function createShapeController(host: ShapeHost): ShapeController {
       if (!id) return;
       const shape = set().get(id);
       if (!shape) select(null);
-      else host.update((current) => ({ ...current, shapeWidth: shape.width }));
+      // Undo and Redo bring back a color the artist already painted, so Recent stays as it is.
+      else
+        host.update((current) => ({
+          ...chooseColor(current, shape.color, 'primary'),
+          shapeWidth: shape.width,
+        }));
     },
   };
 }

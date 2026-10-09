@@ -9,6 +9,13 @@ const IS_APPLE = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '');
 export const OWNS_KEYS =
   'input, textarea, select, [contenteditable], [role="menu"], [role="listbox"], dialog, [role="dialog"]';
 
+/**
+ * Color surfaces edit live beside the canvas, so Undo and Redo still reach the document from
+ * their sliders and chips. Text fields inside them keep their own native undo.
+ */
+const PASSES_HISTORY = '[data-passes-history]';
+const TEXT_ENTRY = 'input, textarea, [contenteditable]';
+
 /** Composite widgets that move their own focus with arrow keys, even when they don't consume them. */
 const OWNS_ARROWS = '[role="radiogroup"], [role="slider"], [role="tablist"], [role="grid"]';
 
@@ -23,8 +30,9 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(OWNS_KEYS)) return;
-      if (session.state.state.panel) return;
+      const passesHistory = Boolean(target?.closest(PASSES_HISTORY) && !target.closest(TEXT_ENTRY));
+      if (target?.closest(OWNS_KEYS) && !passesHistory) return;
+      if (session.state.state.panel && !passesHistory) return;
 
       const command = resolveShortcut(
         {
@@ -40,6 +48,7 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
         },
       );
       if (!command) return;
+      if (passesHistory && command.type !== 'undo' && command.type !== 'redo') return;
       if (command.type === 'nudge' && target?.closest(OWNS_ARROWS)) return;
       if (command.type === 'selection' && CLIPBOARD.has(command.action)) return;
       // Tab moves focus through the chrome and only hides it from the canvas. Hidden chrome is

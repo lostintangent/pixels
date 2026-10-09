@@ -67,7 +67,7 @@ export function ColorPickerPopover({
       isModal={false}
       hasLightDismiss={false}
       content={
-        <div ref={body} {...stylex.props(styles.body)}>
+        <div ref={body} data-passes-history {...stylex.props(styles.body)}>
           <div {...stylex.props(styles.head)}>
             <span {...stylex.props(styles.title, slots && styles.titleWithSlots)}>{title}</span>
             {slots && (
