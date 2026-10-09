@@ -27,6 +27,8 @@ const HUE_THUMB = 16;
 function dragHandler(onPoint: (x: number, y: number) => void, inset = 0) {
   return (event: ReactPointerEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
+    // A sheet arms its pull-to-dismiss from a pointer press anywhere in its body.
+    event.stopPropagation();
     const rect = element.getBoundingClientRect();
     element.setPointerCapture(event.pointerId);
     const move = (next: PointerEvent | ReactPointerEvent) =>
@@ -43,6 +45,22 @@ function dragHandler(onPoint: (x: number, y: number) => void, inset = 0) {
     element.addEventListener('pointermove', move);
     element.addEventListener('pointerup', stop);
     element.addEventListener('pointercancel', stop);
+  };
+}
+
+/**
+ * Keeps a drag on this control from also dragging the sheet around it. Astryx BottomSheet
+ * tracks every touch in its body with native listeners, so React's propagation can't stop it.
+ * `touch-action: none` already keeps the browser from scrolling, so nothing is cancelled here.
+ */
+function ownsTouchDrag(element: HTMLElement | null) {
+  if (!element) return;
+  const stop = (event: TouchEvent) => event.stopPropagation();
+  element.addEventListener('touchstart', stop, { passive: true });
+  element.addEventListener('touchmove', stop, { passive: true });
+  return () => {
+    element.removeEventListener('touchstart', stop);
+    element.removeEventListener('touchmove', stop);
   };
 }
 
@@ -118,6 +136,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
   return (
     <div {...stylex.props(styles.picker)}>
       <div
+        ref={ownsTouchDrag}
         role="slider"
         tabIndex={0}
         aria-label="Saturation and brightness"
@@ -134,6 +153,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
         <div {...stylex.props(styles.thumb, styles.at(s, 1 - v), styles.fill(css))} />
       </div>
       <div
+        ref={ownsTouchDrag}
         role="slider"
         tabIndex={0}
         aria-label="Hue"
