@@ -73,41 +73,66 @@ export function ColorSheet({
             onClick={onSwap}
           />
         </div>
-        <ColorPicker color={current} onChange={choose} size="lg" />
-        <div {...stylex.props(styles.label)}>Palette</div>
-        <Swatches
-          label="Palette"
-          colors={palette}
-          primary={current}
-          onChoose={chooseAndClose}
-          size="lg"
-        />
-        <div {...stylex.props(styles.label)}>Recent</div>
-        <Swatches
-          label="Recent colors"
-          colors={recent}
-          slots={recentSlots}
-          primary={current}
-          onChoose={chooseAndClose}
-          size="lg"
-        />
+        <div {...stylex.props(styles.picker)}>
+          <ColorPicker color={current} onChange={choose} size="lg" />
+        </div>
+        <div {...stylex.props(styles.swatches)}>
+          <div {...stylex.props(styles.label)}>Palette</div>
+          <Swatches
+            label="Palette"
+            colors={palette}
+            primary={current}
+            onChoose={chooseAndClose}
+            size="lg"
+          />
+          <div {...stylex.props(styles.label)}>Recent</div>
+          <Swatches
+            label="Recent colors"
+            colors={recent}
+            slots={recentSlots}
+            primary={current}
+            onChoose={chooseAndClose}
+            size="lg"
+          />
+        </div>
       </div>
     </BottomSheet>
   );
 }
 
+// A sideways phone has the width for the picker and the swatches side by side, and not the height
+// to stack them, so the slots and picker take the left column and the swatches the right.
+const LANDSCAPE = '@media (orientation: landscape) and (min-width: 600px)';
+
 const styles = stylex.create({
   sheet: {
-    display: 'flex',
+    display: { default: 'flex', [LANDSCAPE]: 'grid' },
     flexDirection: 'column',
+    gridTemplateColumns: { default: null, [LANDSCAPE]: 'minmax(0, 1fr) 340px' },
+    gridTemplateAreas: { default: null, [LANDSCAPE]: '"head swatches" "picker swatches"' },
+    alignItems: { default: null, [LANDSCAPE]: 'start' },
     gap: spacingVars['--spacing-4'],
+    columnGap: { default: null, [LANDSCAPE]: spacingVars['--spacing-6'] },
     paddingTop: spacingVars['--spacing-6'],
     paddingInline: spacingVars['--spacing-4'],
-    paddingBottom: spacingVars['--spacing-5'],
+    paddingBottom: { default: spacingVars['--spacing-5'], [LANDSCAPE]: spacingVars['--spacing-4'] },
   },
-  head: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-3'] },
+  head: {
+    gridArea: 'head',
+    display: 'flex',
+    alignItems: 'center',
+    gap: spacingVars['--spacing-3'],
+  },
+  picker: { gridArea: 'picker', display: { default: 'contents', [LANDSCAPE]: 'block' } },
+  swatches: {
+    gridArea: 'swatches',
+    display: { default: 'contents', [LANDSCAPE]: 'flex' },
+    flexDirection: 'column',
+    gap: spacingVars['--spacing-4'],
+  },
   title: {
     flex: 1,
+    minWidth: 0,
     display: 'flex',
     flexDirection: 'column',
     gap: 2,

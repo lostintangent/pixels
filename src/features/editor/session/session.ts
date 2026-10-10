@@ -153,7 +153,13 @@ export interface EditorSession {
   setPanel(panel: EditorPanel | null): void;
   /** Checker and grid colors follow the resolved color scheme. */
   setCanvasColors(colors: NonNullable<OverlayState['colors']>): void;
+  /** A manually changed view survives the switch. Only an untouched fit refits. */
   setLayout(layout: Layout): void;
+  /**
+   * The canvas the chrome leaves clear for a fit, measured by a layout whose chrome moves, such as
+   * a phone turning sideways. Null falls back to the layout's fixed frame.
+   */
+  setFrame(frame: ViewportInsets | null): void;
   /** Floating chrome a fit should keep the document out from under, in canvas CSS pixels. */
   setIslands(islands: readonly IslandRect[]): void;
   setViewportSize(width: number, height: number, devicePixelRatio: number): void;
@@ -225,6 +231,7 @@ export function createEditorSession({
 
   let layout: Layout = 'desktop';
   let islands: readonly IslandRect[] = [];
+  let measuredFrame: ViewportInsets | null = null;
   let fitted = false;
   // The view a fit produced, so a later island measurement can tell nobody has panned since.
   let lastFit: Viewport | null = null;
@@ -243,7 +250,7 @@ export function createEditorSession({
   const boundsKey = {
     width: 0,
     height: 0,
-    layout: layout as Layout,
+    frame: FRAMES[layout],
     islands,
     documentWidth: 0,
     documentHeight: 0,
@@ -371,16 +378,14 @@ export function createEditorSession({
     return (findAnnotationsFor(bitmap)?.shapes.length ?? 0) > 0;
   }
 
+  function frame(): ViewportInsets {
+    return measuredFrame ?? FRAMES[layout];
+  }
+
   function fit(): void {
     const view = viewport.state;
     if (!view.cssWidth || !view.cssHeight) return;
-    const next = fitAroundIslands(
-      view,
-      document().width,
-      document().height,
-      FRAMES[layout],
-      islands,
-    );
+    const next = fitAroundIslands(view, document().width, document().height, frame(), islands);
     viewport.setState(() => ({
       ...next,
       panX: Math.round(next.panX),
@@ -398,7 +403,7 @@ export function createEditorSession({
       bounds &&
       boundsKey.width === cssWidth &&
       boundsKey.height === cssHeight &&
-      boundsKey.layout === layout &&
+      boundsKey.frame === frame() &&
       boundsKey.islands === islands &&
       boundsKey.documentWidth === width &&
       boundsKey.documentHeight === height
@@ -406,11 +411,11 @@ export function createEditorSession({
       return bounds;
     boundsKey.width = cssWidth;
     boundsKey.height = cssHeight;
-    boundsKey.layout = layout;
+    boundsKey.frame = frame();
     boundsKey.islands = islands;
     boundsKey.documentWidth = width;
     boundsKey.documentHeight = height;
-    bounds = boundsFor(view, width, height, FRAMES[layout], islands);
+    bounds = boundsFor(view, width, height, frame(), islands);
     return bounds;
   }
 
@@ -421,7 +426,7 @@ export function createEditorSession({
   }
 
   function center(): ScreenPoint {
-    return frameCenter(viewport.state, FRAMES[layout]);
+    return frameCenter(viewport.state, frame());
   }
 
   /** Keyboard zoom holds the pixel under a hovering pointer still, else the frame's center. */
@@ -764,10 +769,33 @@ export function createEditorSession({
 
     setLayout(next) {
       if (layout === next) return;
+      const untouched = !fitted || viewport.state === lastFit;
       layout = next;
+      if (!untouched) {
+        viewport.setState((view) => bound(view, center()));
+        return;
+      }
       // The layout flips with the window, before the canvas reports its new size.
       refitOnResize = true;
       fit();
+    },
+
+    setFrame(next) {
+      const current = measuredFrame;
+      if (
+        current === next ||
+        (current &&
+          next &&
+          current.top === next.top &&
+          current.right === next.right &&
+          current.bottom === next.bottom &&
+          current.left === next.left)
+      )
+        return;
+      const untouched = fitted && viewport.state === lastFit;
+      measuredFrame = next;
+      // Like islands, a new frame refits only an untouched view. A resize re-bounds the rest.
+      if (untouched) fit();
     },
 
     setIslands(next) {
@@ -805,7 +833,7 @@ export function createEditorSession({
       }
       // A manual view keeps its zoom unless a larger window raises the floor past it, and its pan
       // comes back within reach.
-      viewport.setState(() => bound(resized, frameCenter(resized, FRAMES[layout])));
+      viewport.setState(() => bound(resized, frameCenter(resized, frame())));
     },
 
     setViewport(next) {

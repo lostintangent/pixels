@@ -51,7 +51,7 @@ export function ToolOptions({ layout }: { layout: Layout }) {
     return (
       <div
         key={selectedShape ? 'shape' : shapes ? 'shapes' : 'brush'}
-        {...stylex.props(styles.body, phone && styles.fill)}
+        {...stylex.props(styles.body, phone && styles.fill, phone && styles.dock)}
       >
         {!phone && (
           <span {...stylex.props(styles.label)}>
@@ -78,7 +78,9 @@ export function ToolOptions({ layout }: { layout: Layout }) {
             }
           />
         </div>
-        <span {...stylex.props(styles.number)}>{size} px</span>
+        <span {...stylex.props(styles.number, phone && selectedShape && styles.cramped)}>
+          {size} px
+        </span>
         {!phone && !selectedShape && (
           <span {...stylex.props(styles.keys)} aria-hidden>
             <Kbd keys="[" />
@@ -92,9 +94,20 @@ export function ToolOptions({ layout }: { layout: Layout }) {
 
   if (tool === 'select' && selection) {
     return (
-      <div key="selection" {...stylex.props(styles.body, phone && styles.fill)}>
+      <div
+        key="selection"
+        {...stylex.props(styles.body, phone && styles.fill, phone && styles.dock)}
+      >
         {!phone && <span {...stylex.props(styles.label)}>Selection</span>}
-        <span {...stylex.props(styles.number, styles.muted, phone && styles.fill)}>
+        <span
+          {...stylex.props(
+            styles.number,
+            styles.muted,
+            phone && styles.fill,
+            phone && styles.ellipsis,
+            phone && styles.cramped,
+          )}
+        >
           {selection.width} × {selection.height}
           {!phone && `  at ${selection.x}, ${selection.y}`}
         </span>
@@ -105,10 +118,10 @@ export function ToolOptions({ layout }: { layout: Layout }) {
 
   if (tool === 'select') {
     return (
-      <div key="select" {...stylex.props(styles.body, phone && styles.fill)}>
+      <div key="select" {...stylex.props(styles.body, phone && styles.fill, phone && styles.dock)}>
         {!phone && <span {...stylex.props(styles.label)}>Select</span>}
         {phone ? (
-          <span {...stylex.props(styles.hint, styles.fill)}>Drag to select</span>
+          <span {...stylex.props(styles.hint, styles.fill, styles.cramped)}>Drag to select</span>
         ) : (
           <Hint kind="select" />
         )}
@@ -141,6 +154,12 @@ function Hint({ kind }: { kind: keyof (typeof HINTS)['mouse'] }) {
 }
 
 const COARSE = '@media (pointer: coarse)';
+/*
+ * The phone dock's options cell is a size container. A sideways or slim phone leaves it less room
+ * than five 44px actions and their gaps, so the gaps go first, then the size readout and hint.
+ */
+const TIGHT = '@container (max-width: 309.98px)';
+const CRAMPED = '@container (max-width: 263.98px)';
 
 const fade = stylex.keyframes({
   from: { opacity: 0, transform: 'translateY(2px)' },
@@ -161,6 +180,9 @@ const styles = stylex.create({
     animationTimingFunction: pixelVars.ease,
   },
   fill: { flex: 1, minWidth: 0 },
+  dock: { gap: { default: spacingVars['--spacing-2'], [TIGHT]: 0 } },
+  cramped: { display: { default: null, [CRAMPED]: 'none' } },
+  ellipsis: { overflow: 'hidden', textOverflow: 'ellipsis' },
   label: { fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' },
   hint: {
     fontSize: 13,

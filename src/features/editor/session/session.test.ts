@@ -420,6 +420,46 @@ test('an untouched fit refits on resize while a manually changed view keeps its 
   expect(session.viewport.state.zoom).toBe(16);
 });
 
+test('a measured frame refits an untouched fit and leaves a manual view alone', () => {
+  const document = createBitmapDocument('frame', 64, 64);
+  const session = createEditorSession({ document, save: null });
+  session.setLayout('phone');
+  session.setViewportSize(844, 390, 3);
+  expect(session.viewport.state.zoom).toBe(2);
+
+  // A sideways phone's one-row dock leaves more height than the fixed phone frame assumes.
+  session.setFrame({ top: 76, right: 63, bottom: 93, left: 63 });
+  expect(session.viewport.state).toMatchObject({ zoom: 3, fittedZoom: 3, panX: 326, panY: 91 });
+  session.setFrame({ top: 76, right: 63, bottom: 93, left: 63 });
+  expect(session.viewport.state.zoom).toBe(3);
+
+  session.run({ type: 'zoom', direction: 1 });
+  const manual = session.viewport.state;
+  session.setFrame({ top: 76, right: 63, bottom: 160, left: 63 });
+  expect(session.viewport.state).toBe(manual);
+
+  session.setFrame(null);
+  session.run({ type: 'zoom-fit' });
+  expect(session.viewport.state.zoom).toBe(2);
+});
+
+test('a layout change refits an untouched fit and keeps a manual view', () => {
+  const document = createBitmapDocument('layout', 64, 64);
+  const session = createEditorSession({ document, save: null });
+  session.setLayout('phone');
+  session.setViewportSize(844, 390, 3);
+  session.run({ type: 'zoom', direction: 1 });
+  const manual = session.viewport.state;
+  expect(manual.zoom).toBe(3);
+
+  session.setLayout('desktop');
+  expect(session.viewport.state).toMatchObject({ zoom: 3, panX: manual.panX });
+  session.run({ type: 'zoom-fit' });
+  expect(session.viewport.state.zoom).toBe(4);
+  session.setLayout('phone');
+  expect(session.viewport.state).toMatchObject({ zoom: 2, fittedZoom: 2 });
+});
+
 test('a touch eyedropper tracks the drag, then returns to the previous tool on lift', () => {
   const document = createBitmapDocument('pick', 2, 1);
   document.pixels.set([A, B]);

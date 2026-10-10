@@ -20,4 +20,7 @@ export const pixelVars = stylex.defineVars({
   ease: 'cubic-bezier(0.2, 0, 0, 1)',
   safeTop: 'max(env(safe-area-inset-top), 12px)',
   safeBottom: 'max(env(safe-area-inset-bottom), 12px)',
+  /** A landscape phone's notch and rounded corners sit on a side. */
+  safeLeft: 'max(env(safe-area-inset-left), 12px)',
+  safeRight: 'max(env(safe-area-inset-right), 12px)',
 });

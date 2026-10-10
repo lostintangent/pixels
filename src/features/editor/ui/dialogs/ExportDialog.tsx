@@ -135,8 +135,14 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
   useEffect(() => {
     const host = room.current;
     if (!isOpen || !host) return;
-    // Layout size, not the bounding box, which the dialog's entrance transform scales.
-    setFit({ document: bitmap, room: { width: host.clientWidth, height: host.clientHeight } });
+    // Layout size, not the bounding box, which the dialog's entrance transform scales. A phone
+    // turned sideways while the sheet is open gives the preview a different room.
+    const measure = () =>
+      setFit({ document: bitmap, room: { width: host.clientWidth, height: host.clientHeight } });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
   }, [isOpen, bitmap]);
 
   const layoutFit = fit?.document === bitmap ? fit : undefined;
@@ -222,11 +228,14 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
   );
 }
 
+const SIDEWAYS = '@media (orientation: landscape) and (max-height: 539px)';
+
 const styles = stylex.create({
   preview: {
     display: 'grid',
     placeItems: 'center',
-    height: 176,
+    // A sideways phone's sheet is short, so the preview gives up height before the fields do.
+    height: { default: 176, [SIDEWAYS]: 112 },
     overflow: 'hidden',
     borderRadius: 12,
     backgroundColor: colorVars['--color-background-muted'],

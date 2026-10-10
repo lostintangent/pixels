@@ -200,15 +200,17 @@ export function Footer({
     <div {...stylex.props(styles.footer, phone && styles.footerPhone)}>
       <span {...stylex.props(styles.note, phone && styles.notePhone)}>{note}</span>
       {!phone && <Button variant="ghost" label="Cancel" onClick={onCancel} />}
-      <Button
-        variant="primary"
-        label={action}
-        icon={actionIcon}
-        isDisabled={isDisabled}
-        width={phone ? '100%' : undefined}
-        size={phone ? 'lg' : 'md'}
-        onClick={onAction}
-      />
+      <div {...stylex.props(phone && styles.actionPhone)}>
+        <Button
+          variant="primary"
+          label={action}
+          icon={actionIcon}
+          isDisabled={isDisabled}
+          width={phone ? '100%' : undefined}
+          size={phone ? 'lg' : 'md'}
+          onClick={onAction}
+        />
+      </div>
     </div>
   );
 }
@@ -373,6 +375,8 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const SIDEWAYS = '@media (orientation: landscape) and (max-height: 539px)';
+
 const styles = stylex.create({
   contents: { display: 'contents' },
   sheet: { display: 'flex', flexDirection: 'column', paddingTop: spacingVars['--spacing-5'] },
@@ -406,18 +410,27 @@ const styles = stylex.create({
     paddingInline: spacingVars['--spacing-5'],
     paddingBottom: spacingVars['--spacing-5'],
   },
+  /*
+   * The action stays in reach when a short screen scrolls the sheet: the footer sticks to the
+   * sheet's bottom over a fade of its surface. Sideways it is one row, the note beside the action.
+   */
   footerPhone: {
-    flexDirection: 'column-reverse',
-    alignItems: 'stretch',
+    position: 'sticky',
+    bottom: 0,
+    zIndex: 1,
+    flexDirection: { default: 'column-reverse', [SIDEWAYS]: 'row' },
+    alignItems: { default: 'stretch', [SIDEWAYS]: 'center' },
     gap: spacingVars['--spacing-3'],
+    backgroundImage: `linear-gradient(to bottom, transparent, ${colorVars['--color-background-surface']} ${spacingVars['--spacing-3']})`,
   },
+  actionPhone: { width: { default: null, [SIDEWAYS]: 200 } },
   note: {
     flex: 1,
     fontSize: 13,
     color: colorVars['--color-text-secondary'],
     fontVariantNumeric: 'tabular-nums',
   },
-  notePhone: { textAlign: 'center' },
+  notePhone: { textAlign: { default: 'center', [SIDEWAYS]: 'start' } },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
   fieldLabel: { fontSize: 13, fontWeight: 500 },
   dimensions: {

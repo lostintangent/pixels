@@ -165,12 +165,21 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
 
 const FORCED = '@media (forced-colors: active)';
 
+// Matches the dock's slim arrangement in EditorShell.
+const SLIM = '@media (max-width: 387.98px) and (orientation: portrait)';
+
 const styles = stylex.create({
   rail: { display: 'flex' },
   vertical: { flexDirection: 'column', gap: 2 },
   // The phone dock holds seven tools and the color well. Targets abut with no gap, so the whole
-  // row is tappable, and they give up a little width only on screens narrower than 390px.
-  horizontal: { gap: 0, minWidth: 0 },
+  // row is tappable. On a slim phone the well moves up and the tools spread across the row,
+  // giving up a little width only below 344px.
+  horizontal: {
+    gap: 0,
+    minWidth: 0,
+    flexGrow: { default: null, [SLIM]: 1 },
+    justifyContent: { default: null, [SLIM]: 'space-between' },
+  },
   tool: {
     width: pixelVars.tool,
     height: pixelVars.tool,

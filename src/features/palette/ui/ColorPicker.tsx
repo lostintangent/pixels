@@ -196,6 +196,7 @@ export function ColorPicker({ color, onChange, size = 'md' }: ColorPickerProps) 
 
 const COARSE = '@media (pointer: coarse)';
 const FORCED = '@media (forced-colors: active)';
+const SIDEWAYS = '@media (orientation: landscape) and (min-width: 600px)';
 
 const thumbRing = '0 0 0 2px #fff, 0 0 0 3px #0000004d, 0 2px 6px #00000059';
 const thumbFocus = `0 0 0 2px #fff, 0 0 0 4px ${colorVars['--color-text-primary']}, 0 2px 6px #00000059`;
@@ -219,7 +220,8 @@ const styles = stylex.create({
       'linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent)',
     boxShadow: 'inset 0 0 0 1px light-dark(#0000001a, #ffffff14)',
   },
-  fieldLarge: { height: 148 },
+  // The sheet's field, shorter on a sideways phone so the sheet fits without scrolling.
+  fieldLarge: { height: { default: 148, [SIDEWAYS]: 112 } },
   hue: {
     position: 'relative',
     height: 12,

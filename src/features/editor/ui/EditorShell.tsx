@@ -63,7 +63,11 @@ import { ToolOptions } from './ToolOptions';
 import { ToolRail } from './ToolRail';
 import { useShortcuts } from './useShortcuts';
 
-const PHONE_QUERY = '(max-width: 640px)';
+/**
+ * Narrow windows and short touch screens take the phone layout. A phone turned sideways is short,
+ * and the desktop rail and palette need about 540px of height to sit beside each other.
+ */
+const PHONE_QUERY = '(max-width: 640px), (max-height: 539px) and (pointer: coarse)';
 
 const CANVAS_COLORS: Record<ColorScheme, NonNullable<OverlayState['colors']>> = {
   light: {
@@ -93,27 +97,33 @@ const FOOTPRINT_CURSOR_ZOOM = 4;
 
 const documentRoute = getRouteApi('/d/$docId');
 
-/** Toasts clear the chrome: bottom right on desktop, just above the dock on a phone. */
 /**
- * ToastViewport pads 16px inside its inset. These cancel that padding so toasts line up with the
- * islands' 12px edge on desktop and float 12px above the phone dock, measured at its tallest.
+ * Toasts clear the chrome: bottom right on desktop, just above the dock on a phone. ToastViewport
+ * pads 16px inside its inset. These cancel that padding so toasts line up with the islands' 12px
+ * edge on desktop and float 12px above the phone dock, measured at its tallest: two rows upright,
+ * one sideways. A sideways phone's notch inset replaces that padding, so there the end edge already
+ * matches the dock's.
  */
-const TOAST_INSETS: Record<Layout, ToastViewportProps['inset']> = {
+const TOAST_INSETS: Record<Layout | 'sideways', ToastViewportProps['inset']> = {
   desktop: { bottom: -4, end: -4 },
   phone: { bottom: 122, start: -4, end: -4 },
+  sideways: { bottom: 65, end: 0 },
 };
+// The query for the dock's one-row arrangement, which `LANDSCAPE` styles.
+const SIDEWAYS_QUERY = '(orientation: landscape) and (min-width: 600px)';
 
 /** The `/d/$docId` route. Each document gets its own session, so switching never mixes history. */
 export function EditorShell() {
   const { document, isNew } = documentRoute.useLoaderData();
   const { documentStore } = documentRoute.useRouteContext();
   const layout = useLayout();
+  const sideways = useMediaQuery(SIDEWAYS_QUERY);
   // Kept current while editing, since the next document mounts before the previous one unmounts.
   const [saved] = useState(readToolPreferences);
   const preferences = useRef(saved);
   useEffect(prefetchWhenIdle, []);
   return (
-    <ToastHost inset={TOAST_INSETS[layout]}>
+    <ToastHost inset={TOAST_INSETS[layout === 'phone' && sideways ? 'sideways' : layout]}>
       <Editor
         key={document.id}
         document={document}
@@ -532,14 +542,18 @@ function useFitClearance(session: EditorSession, island: RefObject<HTMLElement |
 }
 
 function PhoneChrome() {
+  const session = useEditor();
   const fade = useFade();
   // Which color the sheet edits, chosen by the dock's well.
   const [editing, setEditing] = useState<ColorSlot>('primary');
+  const top = useRef<HTMLDivElement>(null);
+  const dock = useRef<HTMLElement>(null);
+  useMeasuredFrame(session, top, dock);
 
   return (
     <>
       {/* One row, so a long title truncates instead of running under the zoom and history. */}
-      <div {...stylex.props(styles.phoneTop)}>
+      <div ref={top} {...stylex.props(styles.phoneTop)}>
         <Island
           as="header"
           xstyle={[styles.inRow, styles.docPhone, fade.xstyle]}
@@ -559,29 +573,76 @@ function PhoneChrome() {
           <HistoryButtons hasTooltips={false} />
         </Island>
       </div>
-      <PhoneDock fade={fade} onEdit={setEditing} />
+      <PhoneDock fade={fade} dock={dock} onEdit={setEditing} />
       <PhoneColors editing={editing} onEditingChange={setEditing} />
     </>
   );
 }
 
-function PhoneDock({ fade, onEdit }: { fade: Fade; onEdit: (slot: ColorSlot) => void }) {
+/** A fit keeps this far from the top row and the dock. */
+const FRAME_GAP = 16;
+// Sideways, past the chrome's edge, which already clears the safe area: 16px from a plain edge.
+const SIDE_GAP = 4;
+
+/**
+ * Tells fit where the phone chrome leaves the canvas clear. The dock is a single row on a sideways
+ * phone and two rows upright, and the side safe areas only matter sideways, so the frame is
+ * measured from the layout boxes rather than fixed. Offsets ignore the fade, which only changes
+ * opacity.
+ */
+function useMeasuredFrame(
+  session: EditorSession,
+  top: RefObject<HTMLElement | null>,
+  dock: RefObject<HTMLElement | null>,
+) {
+  useLayoutEffect(() => {
+    const row = top.current;
+    const tools = dock.current;
+    const editor = row?.offsetParent as HTMLElement | null;
+    if (!row || !tools || !editor) return;
+    const report = () => {
+      const width = editor.clientWidth;
+      const height = editor.clientHeight;
+      if (!width || !height) return;
+      session.setFrame({
+        top: row.offsetTop + row.offsetHeight + FRAME_GAP,
+        bottom: height - tools.offsetTop + FRAME_GAP,
+        left: Math.min(row.offsetLeft, tools.offsetLeft) + SIDE_GAP,
+        right:
+          width -
+          Math.max(row.offsetLeft + row.offsetWidth, tools.offsetLeft + tools.offsetWidth) +
+          SIDE_GAP,
+      });
+    };
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(row);
+    observer.observe(tools);
+    observer.observe(editor);
+    return () => {
+      observer.disconnect();
+      session.setFrame(null);
+    };
+  }, [session, top, dock]);
+}
+
+interface PhoneDockProps {
+  fade: Fade;
+  dock: RefObject<HTMLElement | null>;
+  onEdit: (slot: ColorSlot) => void;
+}
+
+function PhoneDock({ fade, dock, onEdit }: PhoneDockProps) {
   const session = useEditor();
   const shapes = useShapesMenu();
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
-  const dock = useRef<HTMLElement>(null);
   return (
-    <Island
-      ref={dock}
-      aria-label="Tools"
-      axis="y"
-      xstyle={[styles.dock, fade.xstyle]}
-      inert={fade.inert}
-    >
+    <Island ref={dock} aria-label="Tools" xstyle={[styles.dock, fade.xstyle]} inert={fade.inert}>
       <div {...stylex.props(styles.dockOptions)}>
         <ToolOptions layout="phone" />
       </div>
+      <span aria-hidden {...stylex.props(styles.dockRule)} />
       <div {...stylex.props(styles.dockTools)}>
         <ToolRail
           tool={shapes.tool}
@@ -592,6 +653,8 @@ function PhoneDock({ fade, onEdit }: { fade: Fade; onEdit: (slot: ColorSlot) => 
           onShapesPress={shapes.onShapesPress}
           shapesRef={shapes.anchor}
         />
+      </div>
+      <div {...stylex.props(styles.dockWell)}>
         <ColorWell
           size="lg"
           primary={primary}
@@ -714,24 +777,34 @@ function ZoomControls() {
   );
 }
 
-function subscribeToLayout(onChange: () => void): () => void {
-  const query = matchMedia(PHONE_QUERY);
-  query.addEventListener('change', onChange);
-  return () => query.removeEventListener('change', onChange);
+function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const list = matchMedia(query);
+      list.addEventListener('change', onChange);
+      return () => list.removeEventListener('change', onChange);
+    },
+    [query],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => matchMedia(query).matches,
+    () => false,
+  );
 }
 
 function useLayout(): Layout {
-  const isPhone = useSyncExternalStore(
-    subscribeToLayout,
-    () => matchMedia(PHONE_QUERY).matches,
-    () => false,
-  );
-  return isPhone ? 'phone' : 'desktop';
+  return useMediaQuery(PHONE_QUERY) ? 'phone' : 'desktop';
 }
 
 const COARSE = '@media (pointer: coarse)';
 // Where touch-sized selection options stop fitting between the document and history islands.
 const NARROW = '@media (max-width: 1099px)';
+// The phone layout's sideways arrangement: one dock row, so the short screen keeps its canvas.
+// Narrower than this, the row can't hold the tools and a selection's actions, so it stays two rows.
+const LANDSCAPE = '@media (orientation: landscape) and (min-width: 600px)';
+// Seven 44px tools and the well stop fitting in one dock row below this width.
+const SLIM = '@media (max-width: 387.98px) and (orientation: portrait)';
 
 const islandHeight = `calc(${pixelVars.tool} + ${pixelVars.islandPad} * 2)`;
 
@@ -769,7 +842,7 @@ const styles = stylex.create({
   topRow: { [sizeVars['--size-element-md']]: pixelVars.tool },
   doc: {
     top: pixelVars.safeTop,
-    left: pixelVars.edge,
+    left: pixelVars.safeLeft,
     paddingInlineEnd: spacingVars['--spacing-3'],
     gap: spacingVars['--spacing-1'],
   },
@@ -783,8 +856,8 @@ const styles = stylex.create({
     position: 'absolute',
     zIndex: 2,
     top: pixelVars.safeTop,
-    left: pixelVars.edge,
-    right: pixelVars.edge,
+    left: pixelVars.safeLeft,
+    right: pixelVars.safeRight,
     display: 'flex',
     gap: spacingVars['--spacing-2'],
     pointerEvents: 'none',
@@ -799,11 +872,11 @@ const styles = stylex.create({
     minHeight: islandHeight,
     paddingInline: spacingVars['--spacing-3'],
   },
-  actions: { top: pixelVars.safeTop, right: pixelVars.edge },
-  rail: { left: pixelVars.edge, top: '50%', transform: 'translateY(-50%)' },
+  actions: { top: pixelVars.safeTop, right: pixelVars.safeRight },
+  rail: { left: pixelVars.safeLeft, top: '50%', transform: 'translateY(-50%)' },
   panel: {
     top: `calc(${pixelVars.safeTop} + ${islandHeight} + ${spacingVars['--spacing-2']})`,
-    right: pixelVars.edge,
+    right: pixelVars.safeRight,
     // Eight 44px swatch pitches on touch.
     width: { default: 244, [COARSE]: 370 },
     padding: spacingVars['--spacing-3'],
@@ -811,30 +884,50 @@ const styles = stylex.create({
     alignItems: 'stretch',
     gap: spacingVars['--spacing-3'],
   },
+  /*
+   * Upright, the tool options sit above the tools and the well ends the tool row. On a slim phone
+   * the well moves up beside the options so seven tools keep 44px. Sideways, everything is one
+   * row: options under the left thumb, then the tools and the well under the right.
+   */
   dock: {
-    left: pixelVars.edge,
-    right: pixelVars.edge,
+    left: pixelVars.safeLeft,
+    right: pixelVars.safeRight,
     bottom: pixelVars.safeBottom,
-    alignItems: 'stretch',
-    gap: 0,
+    display: 'grid',
+    gridTemplateColumns: {
+      default: 'minmax(0, 1fr) auto',
+      [LANDSCAPE]: 'minmax(0, 1fr) 1px auto auto',
+    },
+    gridTemplateAreas: {
+      default: '"options options" "rule rule" "tools well"',
+      [SLIM]: '"options well" "rule rule" "tools tools"',
+      [LANDSCAPE]: '"options rule tools well"',
+    },
+    alignItems: 'center',
+    rowGap: 6,
+    columnGap: { default: 0, [SLIM]: spacingVars['--spacing-2'], [LANDSCAPE]: 6 },
     padding: 6,
     borderRadius: 22,
   },
   dockOptions: {
+    gridArea: 'options',
     display: 'flex',
     alignItems: 'center',
     gap: spacingVars['--spacing-2'],
+    minWidth: 0,
     minHeight: 44,
     paddingInlineStart: spacingVars['--spacing-2'],
-    marginBottom: 6,
+    // Tool options fold their spacing and labels to the room this cell leaves them.
+    containerType: 'inline-size',
   },
-  dockTools: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopStyle: 'solid',
-    borderTopColor: colorVars['--color-border'],
+  dockRule: {
+    gridArea: 'rule',
+    alignSelf: 'stretch',
+    height: { default: 1, [LANDSCAPE]: 'auto' },
+    width: { default: 'auto', [LANDSCAPE]: 1 },
+    marginBlock: { default: null, [LANDSCAPE]: 10 },
+    backgroundColor: colorVars['--color-border'],
   },
+  dockTools: { gridArea: 'tools', display: 'flex', minWidth: 0 },
+  dockWell: { gridArea: 'well', display: 'flex', justifyContent: 'flex-end' },
 });

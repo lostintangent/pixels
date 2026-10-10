@@ -137,7 +137,7 @@ const styles = stylex.create({
   pill: {
     position: 'absolute',
     zIndex: 2,
-    left: pixelVars.edge,
+    left: pixelVars.safeLeft,
     bottom: pixelVars.safeBottom,
     paddingBlock: 6,
     paddingInline: 10,
