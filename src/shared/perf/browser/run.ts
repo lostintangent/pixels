@@ -15,6 +15,7 @@ if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20)
 const headlessGpu = process.argv.includes('--headless-gpu');
 const headed = !process.argv.includes('--headless') && !headlessGpu;
 const calibrate = process.argv.includes('--calibrate');
+const studioDiagnostic = process.argv.includes('--studio-diagnostic');
 const conditionCpu = !process.argv.includes('--unconditioned');
 const injectIndex = process.argv.indexOf('--inject-large-pan-ms');
 const injectLargePanMs = injectIndex < 0 ? 0 : Number(process.argv[injectIndex + 1]);
@@ -118,22 +119,30 @@ try {
       args: headlessGpu ? ['--enable-gpu', '--use-angle=metal', '--ignore-gpu-blocklist'] : [],
     });
     try {
-      const profiles = [
-        {
-          name: 'desktop',
-          width: 1440,
-          height: 900,
-          dpr: 2,
-          scenarios: ['stroke', 'pan', 'maze', 'large-pan', 'shape-handle'],
-        },
-        {
-          name: 'phone',
-          width: 390,
-          height: 844,
-          dpr: 3,
-          scenarios: ['stroke', 'pan', 'large-pan', 'shape-handle'],
-        },
-      ] as const;
+      const profiles: readonly {
+        name: 'desktop' | 'phone' | 'studio';
+        width: number;
+        height: number;
+        dpr: number;
+        scenarios: readonly Scenario[];
+      }[] = studioDiagnostic
+        ? [{ name: 'studio', width: 2560, height: 1440, dpr: 2, scenarios: ['stroke', 'pan'] }]
+        : [
+            {
+              name: 'desktop',
+              width: 1440,
+              height: 900,
+              dpr: 2,
+              scenarios: ['stroke', 'pan', 'maze', 'large-pan', 'shape-handle'],
+            },
+            {
+              name: 'phone',
+              width: 390,
+              height: 844,
+              dpr: 3,
+              scenarios: ['stroke', 'pan', 'large-pan', 'shape-handle'],
+            },
+          ];
       let failed = false;
       const targets: Record<Exclude<Scenario, 'maze'>, { desktop: number; phone: number }> = {
         stroke: { desktop: 0.59, phone: 0.51 },
@@ -227,15 +236,18 @@ try {
               const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
               const onTimePercent = (onTime / eligible) * 100;
               const refreshHz = median(blocks.map((block) => block.refreshHz));
-              const target = scenario === 'maze' ? Infinity : targets[scenario][profile.name];
+              const target =
+                scenario === 'maze' || profile.name === 'studio'
+                  ? Infinity
+                  : targets[scenario][profile.name];
               const passed =
                 p95 < target &&
                 maxLongTask <= 50 &&
                 (scenario === 'maze' ||
                   (onTimePercent >= 99 && !consecutiveDrops && eligible >= 90));
-              if (!passed) failed = true;
+              if (!passed && !studioDiagnostic) failed = true;
               console.log(
-                `${passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${Number.isFinite(target) ? `main < ${target} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
+                `${studioDiagnostic ? 'DIAG' : passed ? 'PASS' : 'FAIL'} ${scenario}: main p95 ${p95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms [${blocks.map((block) => block.pipelineP95Ms.toFixed(3)).join(', ')}] (diagnostic), max main task ${maxLongTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target ${studioDiagnostic ? 'diagnostic only' : Number.isFinite(target) ? `main < ${target} ms, on-time ≥ 99%` : 'long tasks ≤ 50 ms'}`,
               );
             }
           }
@@ -249,6 +261,7 @@ try {
       }
       if (failed && !calibrate) process.exitCode = 1;
       if (
+        !studioDiagnostic &&
         !process.argv.includes('--fixture-only') &&
         !(await runAppPerf(browser, repeat, calibrate, 0, conditionCpu))
       )

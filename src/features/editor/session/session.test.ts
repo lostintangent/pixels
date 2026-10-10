@@ -22,6 +22,21 @@ function input(x: number, y: number) {
   return { point: { x, y }, shift: false, alt: false };
 }
 
+test('a density-only canvas resize updates viewport DPR without moving the view', () => {
+  const session = createEditorSession({
+    document: createBitmapDocument('density', 32, 32),
+    save: null,
+  });
+  session.setViewportSize(320, 240, 1);
+  const view = { ...session.viewport.state, zoom: 4, fittedZoom: undefined, panX: 41, panY: 27 };
+  session.setViewport(view);
+
+  session.setViewportSize(320, 240, 2);
+  expect(session.viewport.state).toEqual({ ...view, devicePixelRatio: 2 });
+  session.setViewportSize(320, 240, 1);
+  expect(session.viewport.state).toEqual(view);
+});
+
 test('session paste floats through a drag and commits as one undo step', () => {
   const document = createBitmapDocument('paste', 4, 1);
   document.pixels[0] = A;

@@ -3,6 +3,7 @@ import type { Store } from '@tanstack/store';
 import { useEffect, useRef } from 'react';
 import type { BitmapDocument } from '../../document';
 import type { DocumentPoint, ScreenPoint, Viewport } from '../core/contracts';
+import { watchPixelDensity } from '../core/density';
 import {
   type GestureEvent,
   type GesturePointer,
@@ -113,13 +114,26 @@ export function CanvasSurface({
     const refreshActiveOrigin = () => {
       if (down.size > 0) refreshOrigin();
     };
-    const resize = new ResizeObserver(([entry]) => {
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
+    const reportSize = (width: number, height: number) => {
       latest.current.input.resize(Math.round(width), Math.round(height), devicePixelRatio || 1);
       refreshActiveOrigin();
+    };
+    const resize = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      reportSize(entry.contentRect.width, entry.contentRect.height);
     });
-    resize.observe(host);
+    try {
+      // Chromium reports density-only changes here when the window crosses displays.
+      resize.observe(host, { box: 'device-pixel-content-box' });
+    } catch {
+      resize.observe(host);
+    }
+    const reportHostSize = () => {
+      const { width, height } = host.getBoundingClientRect();
+      reportSize(width, height);
+    };
+    const stopWatchingDensity = watchPixelDensity(window, reportHostSize);
+    window.addEventListener('resize', reportHostSize);
     window.addEventListener('scroll', refreshActiveOrigin, true);
     window.visualViewport?.addEventListener('scroll', refreshActiveOrigin);
     window.visualViewport?.addEventListener('resize', refreshActiveOrigin);
@@ -517,6 +531,8 @@ export function CanvasSurface({
     return () => {
       stopSettle();
       resize.disconnect();
+      stopWatchingDensity();
+      window.removeEventListener('resize', reportHostSize);
       window.removeEventListener('scroll', refreshActiveOrigin, true);
       window.visualViewport?.removeEventListener('scroll', refreshActiveOrigin);
       window.visualViewport?.removeEventListener('resize', refreshActiveOrigin);

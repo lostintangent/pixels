@@ -100,6 +100,29 @@ test('full-buffer undo rebinds ImageData, and cursor changes redraw only the ove
       devicePixelRatio: 1,
     });
     flush();
+    expect(viewportCanvas.width).toBe(32);
+    renderer.setViewport({
+      zoom: 8,
+      panX: 0,
+      panY: 0,
+      cssWidth: 32,
+      cssHeight: 32,
+      devicePixelRatio: 2,
+    });
+    flush();
+    expect([viewportCanvas.width, annotationCanvas.width, overlayCanvas.width]).toEqual([
+      64, 64, 64,
+    ]);
+    renderer.setViewport({
+      zoom: 8,
+      panX: 0,
+      panY: 0,
+      cssWidth: 32,
+      cssHeight: 32,
+      devicePixelRatio: 1,
+    });
+    flush();
+    expect(viewportCanvas.width).toBe(32);
     const initialBuffer = document.rgbaBytes.buffer;
     floodFill(document, { at: { x: 0, y: 0 }, color: ink }, history);
     flush();
