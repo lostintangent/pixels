@@ -53,7 +53,7 @@ export async function encodePng(
   const outHeight = height * scale;
   if (outWidth > MAX_EXPORT_SIDE || outHeight > MAX_EXPORT_SIDE) {
     throw new RangeError(
-      `Export size ${outWidth} x ${outHeight} exceeds the ${MAX_EXPORT_SIDE}px side limit. Choose a smaller scale.`,
+      `Export size ${outWidth} × ${outHeight} exceeds the ${MAX_EXPORT_SIDE}px side limit. Choose a smaller scale.`,
     );
   }
   const sourceBytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
@@ -228,7 +228,7 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   if (!ihdr) throw corrupt('The PNG is missing its header.');
   if (ihdr.width > MAX_DOCUMENT_SIDE || ihdr.height > MAX_DOCUMENT_SIDE) {
     throw tooLarge(
-      `This PNG is ${ihdr.width} x ${ihdr.height}. Pixels opens images up to ${MAX_DOCUMENT_SIDE} x ${MAX_DOCUMENT_SIDE}.`,
+      `This PNG is ${ihdr.width} × ${ihdr.height}. Pixels opens images up to ${MAX_DOCUMENT_SIDE} × ${MAX_DOCUMENT_SIDE}.`,
     );
   }
   if (ihdr.interlace !== 0 && ihdr.interlace !== 1) {

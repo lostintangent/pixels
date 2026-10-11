@@ -26,7 +26,7 @@ export async function importPng(
   if (decoded.width > MAX_DOCUMENT_SIDE || decoded.height > MAX_DOCUMENT_SIDE) {
     throw new ImportError(
       'too-large',
-      `This PNG is ${decoded.width} x ${decoded.height}. Pixels opens images up to ${MAX_DOCUMENT_SIDE} x ${MAX_DOCUMENT_SIDE}.`,
+      `This PNG is ${decoded.width} × ${decoded.height}. Pixels opens images up to ${MAX_DOCUMENT_SIDE} × ${MAX_DOCUMENT_SIDE}.`,
     );
   }
   let colorSpace: DocumentColorSpace = 'srgb';
