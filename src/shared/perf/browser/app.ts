@@ -5,7 +5,7 @@ import type { Browser, Page } from 'playwright';
 import { withProductionPreview } from '../../preview';
 import { withConditionedCpu } from './conditioning';
 import { runEditorInput } from './editor';
-import { armInputGuard, assertCleanInput, observedInput } from './inputGuard';
+import { withVisibleIdleMacInput } from './hidIdle';
 
 const loadBudgetMs = 500;
 const initialJsBudgetKiB = 170;
@@ -79,33 +79,38 @@ async function compositorShot(
 }
 
 /** Navigation starts the clock. The first real pointer stroke must alter the viewport bitmap. */
-async function loadAndStroke(page: Page, url: string, activate: boolean): Promise<LoadResult> {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(url, { waitUntil: 'commit' });
-  await page.waitForFunction(() => {
-    const host = document.querySelector<HTMLElement>('[role="application"][aria-label="Canvas"]');
-    const canvas = host?.querySelector('canvas');
-    const rect = host?.getBoundingClientRect();
-    return (
-      canvas &&
-      rect &&
-      canvas.width === Math.round(rect.width * devicePixelRatio) &&
-      canvas.height === Math.round(rect.height * devicePixelRatio)
-    );
-  });
-  const host = page.getByRole('application', { name: 'Canvas' });
-  const box = await host.boundingBox();
-  if (!box) throw new Error('Canvas has no bounding box');
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  const clip = { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 };
-  // Restore Chrome once at the start of the load run. Later samples must fail if
-  // another app takes focus, instead of pulling the window over a person's work.
-  if (activate) await page.bringToFront();
-  await armInputGuard(page, { kind: 'load', first: { x, y }, pointerType: 'mouse' });
-  await assertCleanInput(page, 'First pointer stroke start');
-  try {
+async function loadAndStroke(page: Page, url: string): Promise<LoadResult> {
+  // A covered headed window still presents. Restore Chrome only if its page is hidden.
+  if ((await page.evaluate(() => document.visibilityState)) !== 'visible')
+    await page.bringToFront();
+  return withVisibleIdleMacInput(page, 'First pointer stroke', async () => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(url, { waitUntil: 'commit' });
+    await page.waitForFunction(() => {
+      const host = document.querySelector<HTMLElement>('[role="application"][aria-label="Canvas"]');
+      const canvas = host?.querySelector('canvas');
+      const rect = host?.getBoundingClientRect();
+      return (
+        canvas &&
+        rect &&
+        canvas.width === Math.round(rect.width * devicePixelRatio) &&
+        canvas.height === Math.round(rect.height * devicePixelRatio)
+      );
+    });
+    const host = page.getByRole('application', { name: 'Canvas' });
+    const box = await host.boundingBox();
+    if (!box) throw new Error('Canvas has no bounding box');
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const clip = { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 };
+    await page.evaluate(() => {
+      const counts = { pointerdown: 0, pointerup: 0 };
+      (window as Window & { __pixelsLoadPointerCounts?: typeof counts }).__pixelsLoadPointerCounts =
+        counts;
+      window.addEventListener('pointerdown', () => counts.pointerdown++, true);
+      window.addEventListener('pointerup', () => counts.pointerup++, true);
+    });
     const before = await compositorShot(page, clip);
     await page.mouse.move(x, y);
     await page.mouse.down();
@@ -140,32 +145,27 @@ async function loadAndStroke(page: Page, url: string, activate: boolean): Promis
           { x, y },
         );
         throw new Error(
-          `First pointer stroke did not change displayed pixels: events ${JSON.stringify(await observedInput(page))}, page ${JSON.stringify(state)}`,
+          `First pointer stroke did not change displayed pixels: events ${JSON.stringify(await page.evaluate(() => (window as Window & { __pixelsLoadPointerCounts?: { pointerdown: number; pointerup: number } }).__pixelsLoadPointerCounts))}, page ${JSON.stringify(state)}`,
         );
       }
       await Bun.sleep(16);
     }
-    await assertCleanInput(page, 'First pointer stroke');
-  } catch (error) {
-    // Prefer an observed focus/input incident over a misleading pixel or timeout error.
-    await assertCleanInput(page, 'First pointer stroke');
-    throw error;
-  }
-  // This timestamp is an upper bound that includes compositor capture latency.
-  const strokeAt = await page.evaluate(() => performance.now());
-  if (errors.length) throw new Error(`App load error: ${errors.join(', ')}`);
-  return page.evaluate((ms) => {
-    const resources = performance
-      .getEntriesByType('resource')
-      .filter((entry) =>
-        new URL(entry.name).pathname.endsWith('.js'),
-      ) as PerformanceResourceTiming[];
-    return {
-      ms,
-      js: resources.map((entry) => new URL(entry.name).pathname),
-      transferBytes: resources.reduce((sum, entry) => sum + entry.transferSize, 0),
-    };
-  }, strokeAt);
+    // This timestamp is an upper bound that includes compositor capture latency.
+    const strokeAt = await page.evaluate(() => performance.now());
+    if (errors.length) throw new Error(`App load error: ${errors.join(', ')}`);
+    return page.evaluate((ms) => {
+      const resources = performance
+        .getEntriesByType('resource')
+        .filter((entry) =>
+          new URL(entry.name).pathname.endsWith('.js'),
+        ) as PerformanceResourceTiming[];
+      return {
+        ms,
+        js: resources.map((entry) => new URL(entry.name).pathname),
+        transferBytes: resources.reduce((sum, entry) => sum + entry.transferSize, 0),
+      };
+    }, strokeAt);
+  });
 }
 
 export async function runAppPerf(
@@ -208,7 +208,6 @@ export async function runAppPerf(
             const result = await loadAndStroke(
               page,
               `http://127.0.0.1:${port}/d/load-${run}-${block}-${sample}-${cache}`,
-              block === 0 && sample === 0 && cache === 'cold',
             );
             (cache === 'cold' ? coldSamples : warmSamples).push(result.ms);
             if (cache === 'cold') coldTransferBytes += result.transferBytes;
