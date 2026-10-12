@@ -47,7 +47,13 @@ import type { ColorScheme } from '../session/appearance';
 import { readToolPreferences, writeToolPreferences } from '../session/preferences';
 import { createEditorSession, DESKTOP_FRAME } from '../session/session';
 import type { EditorSession, Layout } from '../session/session';
-import { ExportDialog, NewCanvasDialog, ResizeDialog, ShapesPopover } from './dialogs';
+import {
+  ExportDialog,
+  NewCanvasDialog,
+  ResizeDialog,
+  ShapesPopover,
+  ShortcutsDialog,
+} from './dialogs';
 import { EditorProvider, useEditor, useEditorState } from './EditorContext';
 import { DropOverlay } from './files/DropOverlay';
 import { FileActionsProvider, useFileActions } from './files/FileActions';
@@ -221,6 +227,7 @@ function Panels({ layout }: { layout: Layout }) {
     <>
       <NewCanvasDialog when={panel === 'new'} layout={layout} />
       <ResizeDialog when={panel === 'resize'} layout={layout} />
+      <ShortcutsDialog when={panel === 'shortcuts'} layout={layout} />
       <ExportDialog
         when={panel === 'export'}
         layout={layout}

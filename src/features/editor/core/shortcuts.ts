@@ -15,7 +15,7 @@ export type EditorCommand =
   | { type: 'zoom-actual' }
   | { type: 'toggle-grid' }
   | { type: 'toggle-chrome' }
-  | { type: 'open'; panel: 'new' | 'export' | 'resize' }
+  | { type: 'open'; panel: 'new' | 'export' | 'resize' | 'shortcuts' }
   | { type: 'open-file' }
   | { type: 'selection'; action: SelectionAction }
   | { type: 'nudge'; dx: number; dy: number };
@@ -65,18 +65,21 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
   const shape = context.hasShapeSelection === true;
 
   if (press.mod) {
-    if (press.alt && key === 'n') return { type: 'open', panel: 'new' };
-    if (press.alt && key === 'c') return { type: 'open', panel: 'resize' };
-    if (press.alt) return null;
+    if (press.alt) {
+      if (press.shift) return null;
+      if (key === 'n') return { type: 'open', panel: 'new' };
+      return key === 'c' ? { type: 'open', panel: 'resize' } : null;
+    }
     if (key === 'z') return { type: press.shift ? 'redo' : 'undo' };
     if (key === 'y' && !press.shift) return { type: 'redo' };
     if (key === 'e' && press.shift) return { type: 'open', panel: 'export' };
+    // Shift types + on most layouts, so ⌘+ reads either way, as it does in browsers.
+    if (key === '+') return { type: 'zoom', direction: 1 };
     if (press.shift) return null;
     switch (key) {
       case 'o':
         return { type: 'open-file' };
       case '=':
-      case '+':
         return { type: 'zoom', direction: 1 };
       case '-':
         return { type: 'zoom', direction: -1 };
@@ -124,6 +127,11 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
       return context.hasSelection ? { type: 'selection', action: 'clear' } : null;
     case 'Tab':
       return press.shift ? null : { type: 'toggle-chrome' };
+    // Shift types these on most layouts, so they resolve before the Shift bail-out below.
+    case '?':
+      return { type: 'open', panel: 'shortcuts' };
+    case '+':
+      return { type: 'zoom', direction: 1 };
   }
   const nudge = NUDGES[key];
   if (nudge) {
@@ -148,7 +156,6 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
     case '1':
       return { type: 'zoom-actual' };
     case '=':
-    case '+':
       return { type: 'zoom', direction: 1 };
     case '-':
       return { type: 'zoom', direction: -1 };

@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Grid3x3,
   History,
+  Keyboard,
   Maximize,
   Minus,
   Monitor,
@@ -124,6 +125,12 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
         appearance('light', 'Light', Sun),
         appearance('dark', 'Dark', Moon),
       ],
+    },
+    {
+      label: 'Shortcuts and gestures',
+      icon: icon(Keyboard),
+      endContent: keys('?'),
+      onClick: () => session.run({ type: 'open', panel: 'shortcuts' }),
     },
   ];
 

@@ -25,6 +25,10 @@ export interface SurfaceProps {
   title: string;
   subtitle?: string;
   width?: number;
+  /** The desktop dialog's height limit. */
+  maxHeight?: string;
+  /** `info` surfaces hold nothing to lose, so a scrim tap or a swipe dismisses them too. */
+  purpose?: 'form' | 'info';
   children: ReactNode;
 }
 
@@ -36,6 +40,8 @@ export function Surface({
   title,
   subtitle,
   width = 440,
+  maxHeight,
+  purpose = 'form',
   children,
 }: SurfaceProps) {
   const finalFocus = useReturnFocus(isOpen, layout);
@@ -46,7 +52,7 @@ export function Surface({
         onOpenChange={onOpenChange}
         label={title}
         height="hug"
-        purpose="form"
+        purpose={purpose}
         finalFocusRef={finalFocus}
       >
         <div onKeyDown={wrapTab} {...stylex.props(styles.sheet)}>
@@ -60,7 +66,14 @@ export function Surface({
     );
   }
   return (
-    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={width} purpose="form" padding={0}>
+    <Dialog
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      width={width}
+      maxHeight={maxHeight}
+      purpose={purpose}
+      padding={0}
+    >
       <div onKeyDown={wrapTab} {...stylex.props(styles.contents)}>
         <div {...stylex.props(styles.header)}>
           <DialogHeader
@@ -77,6 +90,20 @@ export function Surface({
 }
 
 /**
+ * A menu item pressed with the mouse can leave focus on the body for a moment while its menu
+ * hands focus back to the trigger, so a surface already mounted would see no opener. The last
+ * element to take focus stands in.
+ */
+let lastFocused: Element | null = null;
+globalThis.document?.addEventListener(
+  'focusin',
+  (event) => {
+    lastFocused = event.target instanceof Element ? event.target : null;
+  },
+  true,
+);
+
+/**
  * Returns focus to whatever opened the surface, or to the canvas once that is gone, for
  * example a closed menu's item. The opener is read in a layout effect: a surface that mounts
  * already open would otherwise see its own header, which focuses its title on mount. The first
@@ -90,7 +117,8 @@ function useReturnFocus(isOpen: boolean, layout: Layout) {
   const wasOpen = useRef(false);
   useLayoutEffect(() => {
     if (!isOpen) return;
-    opener.current ??= openerOf(document.activeElement);
+    const active = document.activeElement;
+    opener.current ??= openerOf(active && active !== document.body ? active : lastFocused);
   }, [isOpen]);
   useEffect(() => {
     if (isOpen) {

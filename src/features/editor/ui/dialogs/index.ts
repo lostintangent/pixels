@@ -8,6 +8,7 @@ const dialogs = () => import('./all');
 export const NewCanvasDialog = deferred(() => dialogs().then((m) => m.NewCanvasDialog));
 export const ResizeDialog = deferred(() => dialogs().then((m) => m.ResizeDialog));
 export const ExportDialog = deferred(() => dialogs().then((m) => m.ExportDialog));
+export const ShortcutsDialog = deferred(() => dialogs().then((m) => m.ShortcutsDialog));
 export const ShapesPopover = deferred(() => dialogs().then((m) => m.ShapesPopover));
 export const DropCard = deferred(() => dialogs().then((m) => m.DropCard));
 export const ToolActions = deferred(() => dialogs().then((m) => m.ToolActions));
@@ -18,6 +19,7 @@ export function preloadDialogs(): void {
     NewCanvasDialog,
     ResizeDialog,
     ExportDialog,
+    ShortcutsDialog,
     ShapesPopover,
     DropCard,
     ToolActions,

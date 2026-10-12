@@ -34,6 +34,7 @@ body,
 @media (forced-colors: active) {
   /* Forced colors drop surface shadows and backgrounds, so floating layers draw an edge.
      A submenu is its own surface, directly inside its popover. */
+  .astryx-dialog,
   .astryx-popover-surface,
   [popover] > .astryx-dropdown-menu,
   .astryx-tooltip {
