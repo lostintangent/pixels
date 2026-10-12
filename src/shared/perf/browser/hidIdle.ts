@@ -4,6 +4,7 @@ import type { Page } from 'playwright';
 
 const execFileAsync = promisify(execFile);
 const requiredIdleNs = 60_000_000_000n;
+const idleWaitTimeoutMs = 15 * 60_000;
 
 async function macHidIdleNs(): Promise<bigint | null> {
   if (process.platform !== 'darwin') return null;
@@ -13,6 +14,21 @@ async function macHidIdleNs(): Promise<bigint | null> {
   const match = /"HIDIdleTime" = (\d+)/.exec(stdout);
   if (!match) throw new Error('Could not read macOS HIDIdleTime');
   return BigInt(match[1]!);
+}
+
+/** A person starting the command resets HID idle when they press Return. Wait
+ * after the build so that ordinary CLI use reaches the same clean start. */
+export async function waitForIdleMacInput(): Promise<void> {
+  let idle = await macHidIdleNs();
+  if (idle === null || idle >= requiredIdleNs) return;
+  console.log('Waiting for 60 s with no keyboard, mouse, or trackpad input');
+  const deadline = performance.now() + idleWaitTimeoutMs;
+  while (performance.now() < deadline) {
+    await Bun.sleep(5_000);
+    idle = await macHidIdleNs();
+    if (idle !== null && idle >= requiredIdleNs) return;
+  }
+  throw new Error('Mac did not reach 60 s without keyboard, mouse, or trackpad input in 15 min');
 }
 
 /** Read the OS HID clock outside Chrome traces. A physical key, mouse, or trackpad

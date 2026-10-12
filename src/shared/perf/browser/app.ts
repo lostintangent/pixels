@@ -5,7 +5,7 @@ import type { Browser, Page } from 'playwright';
 import { withProductionPreview } from '../../preview';
 import { withConditionedCpu } from './conditioning';
 import { runEditorInput } from './editor';
-import { withVisibleIdleMacInput } from './hidIdle';
+import { waitForIdleMacInput, withVisibleIdleMacInput } from './hidIdle';
 
 const loadBudgetMs = 500;
 const initialJsBudgetKiB = 170;
@@ -188,6 +188,7 @@ export async function runAppPerf(
     const assets = await initialAssets(output);
     const initialJsKiB = (await gzipAssets(output, assets.js)) / 1024;
     const initialCssKiB = (await gzipAssets(output, assets.css)) / 1024;
+    await waitForIdleMacInput();
     for (let run = 0; run < repeat; run++) {
       const coldBlocks: number[] = [];
       const warmBlocks: number[] = [];
