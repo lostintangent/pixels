@@ -15,9 +15,9 @@ const ISLAND_GAP = 12;
 /**
  * Fits the document inside `frame` and keeps it truly centered unless that would put it under an
  * island. Then it shrinks around the same center to the largest fit zoom that clears every island:
- * a whole number at or above 1×, a whole percentage below. Moving beside the island's column is
- * the last resort. So a tall window doesn't shove a document sideways for a panel that sits
- * entirely above it.
+ * a whole number at or above 1×, a whole percentage below. Portrait views can also center the
+ * document beneath the islands, and either orientation can move beside their columns. The largest
+ * clear zoom wins, with the original frame center preferred on a tie.
  */
 export function fitAroundIslands(
   view: Viewport,
@@ -50,8 +50,17 @@ export function fitAroundIslands(
   for (const island of blocking)
     clear = Math.min(clear, clearingZoom(island, center, documentWidth, documentHeight));
   const zoom = fitZoom(clear);
-  if (zoom < beside.zoom) return beside;
-  return centerAt(view, zoom, documentWidth, documentHeight, center);
+  let best = centerAt(view, zoom, documentWidth, documentHeight, center);
+  if (view.cssHeight > view.cssWidth) {
+    const top = Math.max(frame.top, ...blocking.map((island) => island.bottom + ISLAND_GAP));
+    if (top < view.cssHeight - frame.bottom) {
+      const below = fitViewport(view, documentWidth, documentHeight, { ...frame, top });
+      if (below.zoom > best.zoom && clearsIslands(below, documentWidth, documentHeight, islands))
+        best = below;
+    }
+  }
+  if (beside.zoom > best.zoom) best = beside;
+  return best;
 }
 
 /**
@@ -135,4 +144,22 @@ function documentRect(view: Viewport, width: number, height: number): IslandRect
 
 function overlaps(a: IslandRect, b: IslandRect): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+function clearsIslands(
+  view: Viewport,
+  documentWidth: number,
+  documentHeight: number,
+  islands: readonly IslandRect[],
+): boolean {
+  const document = documentRect(view, documentWidth, documentHeight);
+  return islands.every(
+    (island) =>
+      !overlaps(document, {
+        left: island.left - ISLAND_GAP,
+        top: island.top - ISLAND_GAP,
+        right: island.right + ISLAND_GAP,
+        bottom: island.bottom + ISLAND_GAP,
+      }),
+  );
 }

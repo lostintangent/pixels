@@ -45,7 +45,7 @@ import type { EditorTool, ShapeKind } from '../core/tools';
 import { useColorScheme } from '../session/appearance';
 import type { ColorScheme } from '../session/appearance';
 import { readToolPreferences, writeToolPreferences } from '../session/preferences';
-import { createEditorSession } from '../session/session';
+import { createEditorSession, DESKTOP_FRAME } from '../session/session';
 import type { EditorSession, Layout } from '../session/session';
 import { ExportDialog, NewCanvasDialog, ResizeDialog, ShapesPopover } from './dialogs';
 import { EditorProvider, useEditor, useEditorState } from './EditorContext';
@@ -299,11 +299,13 @@ function useFade(): Fade {
 }
 
 function DesktopChrome() {
+  const session = useEditor();
   const fade = useFade();
   const doc = useRef<HTMLElement>(null);
   const options = useRef<HTMLElement>(null);
   const actions = useRef<HTMLElement>(null);
   useRoomBeside(doc, [options, actions]);
+  useDesktopFitFrame(session, options);
 
   return (
     <>
@@ -582,6 +584,34 @@ function PhoneChrome() {
 
 /** A fit keeps this far from the top row and the dock. */
 const FRAME_GAP = 16;
+
+/** Keeps a fitted document above Tool options when the tablet layout docks it at the bottom. */
+function useDesktopFitFrame(session: EditorSession, options: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const toolbar = options.current;
+    const editor = toolbar?.offsetParent as HTMLElement | null;
+    if (!toolbar || !editor) return;
+    const report = () => {
+      const height = editor.clientHeight;
+      if (!height) return;
+      const bottom =
+        toolbar.offsetTop > height / 2
+          ? Math.max(DESKTOP_FRAME.bottom, height - toolbar.offsetTop + 12)
+          : DESKTOP_FRAME.bottom;
+      session.setFrame(bottom === DESKTOP_FRAME.bottom ? null : { ...DESKTOP_FRAME, bottom });
+    };
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(toolbar);
+    observer.observe(editor);
+    window.addEventListener('resize', report);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', report);
+      session.setFrame(null);
+    };
+  }, [session, options]);
+}
 // Sideways, past the chrome's edge, which already clears the safe area: 16px from a plain edge.
 const SIDE_GAP = 4;
 

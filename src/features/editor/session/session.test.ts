@@ -394,14 +394,16 @@ test('an island measured after the first fit refits only an untouched view', () 
   const session = createEditorSession({ document, save: null });
   session.setViewportSize(820, 1180, 2);
   expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 90, panY: 278 });
+  session.setFrame({ top: 72, right: 76, bottom: 76, left: 76 });
 
   const panel = { left: 434, top: 16, right: 804, bottom: 397 };
   session.setIslands([panel]);
-  expect(session.viewport.state).toMatchObject({ zoom: 5, panX: 250, panY: 438 });
+  expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 90, panY: 437 });
+  expect(session.viewport.state.panY + 64 * session.viewport.state.zoom).toBeLessThanOrEqual(1104);
 
   session.setViewport({ ...session.viewport.state, panX: 10 });
   session.setIslands([]);
-  expect(session.viewport.state).toMatchObject({ zoom: 5, panX: 10 });
+  expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 10 });
   session.run({ type: 'zoom-fit' });
   expect(session.viewport.state).toMatchObject({ zoom: 10, panX: 90 });
 });

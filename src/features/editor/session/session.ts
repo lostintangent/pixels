@@ -90,8 +90,10 @@ export type Layout = 'desktop' | 'phone';
  * that only sometimes collide with the document, like the desktop color panel, are reported
  * separately and cleared only when they would overlap.
  */
+export const DESKTOP_FRAME: ViewportInsets = { top: 72, right: 76, bottom: 56, left: 76 };
+
 const FRAMES: Record<Layout, ViewportInsets> = {
-  desktop: { top: 72, right: 76, bottom: 56, left: 76 },
+  desktop: DESKTOP_FRAME,
   phone: { top: 72, right: 16, bottom: 148, left: 16 },
 };
 

@@ -4,6 +4,7 @@ import { boundsFor, fitAroundIslands, frameCenter } from './fit';
 import type { IslandRect } from './fit';
 
 const FRAME: ViewportInsets = { top: 72, right: 76, bottom: 56, left: 76 };
+const TABLET_FRAME: ViewportInsets = { ...FRAME, bottom: 76 };
 
 function view(cssWidth: number, cssHeight: number): Viewport {
   return { zoom: 1, panX: 0, panY: 0, cssWidth, cssHeight, devicePixelRatio: 2 };
@@ -20,11 +21,17 @@ describe('fitAroundIslands', () => {
     expect(fit).toMatchObject({ zoom: 12, panX: 336, panY: 74 });
   });
 
-  test('keeps a smaller zoom centered when that clears an island above the document', () => {
-    // 6× would clear the panel by only 9 px, short of the 12 px gap the beside fit keeps.
-    const fit = fitAroundIslands(view(820, 1180), 64, 64, FRAME, [panel(820, 370, 397)]);
-    expect(fit).toMatchObject({ zoom: 5, panX: 250, panY: 438 });
+  test.each([
+    [820, 1180, 10, 90, 436.5],
+    [768, 1024, 8, 128, 422.5],
+    [1024, 1366, 13, 96, 433.5],
+  ])('fits a 64px tablet document beneath the panel at %i × %i', (width, height, zoom, x, y) => {
+    const fit = fitAroundIslands(view(width, height), 64, 64, TABLET_FRAME, [
+      panel(width, 370, 397),
+    ]);
+    expect(fit).toMatchObject({ zoom, panX: x, panY: y });
     expect(fit.panY - 397).toBeGreaterThanOrEqual(12);
+    expect(height - 76 - (fit.panY + 64 * zoom)).toBeGreaterThanOrEqual(0);
   });
 
   test('moves beside an island only when centering would still overlap it', () => {
