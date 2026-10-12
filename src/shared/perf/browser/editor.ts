@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { captureTrace } from './capture';
+import { armInputGuard, assertCleanInput, type InputPath } from './inputGuard';
 import type { TraceEvent, TraceSummary } from './trace';
 
 interface Profile {
@@ -44,11 +45,11 @@ async function canvasBox(page: Page) {
 }
 
 async function visualAt(page: Page, x: number, y: number): Promise<Buffer> {
-  await page.bringToFront();
   return page.screenshot({
     clip: { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 },
     animations: 'disabled',
     scale: 'device',
+    timeout: 3_000,
   });
 }
 
@@ -66,8 +67,12 @@ async function assertStrokeGeometry(page: Page, profile: Profile): Promise<void>
       width: 32,
       height: 32,
     };
-    await page.bringToFront();
-    const screenshot = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+    const screenshot = await page.screenshot({
+      clip,
+      animations: 'disabled',
+      scale: 'device',
+      timeout: 3_000,
+    });
     const match = await page.evaluate(async (encoded) => {
       const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
       const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
@@ -160,6 +165,7 @@ async function prepareDocument(
   if (brush !== '16 px') throw new Error(`Brush size did not become 16 px: ${brush}`);
   await page.getByRole('application', { name: 'Canvas' }).focus();
   await afterPaint(page);
+  await page.bringToFront();
   await assertStrokeGeometry(page, profile);
 }
 
@@ -268,6 +274,15 @@ async function panZoom(
   await afterPaint(page);
 }
 
+async function panInputPath(page: Page, profile: Profile): Promise<InputPath> {
+  const box = await canvasBox(page);
+  return {
+    kind: 'pan',
+    first: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+    pointerType: profile.name === 'phone' ? 'touch' : 'mouse',
+  };
+}
+
 function summarizeBlocks(
   blocks: TraceSummary[],
   target: number,
@@ -348,12 +363,20 @@ export async function runEditorInput(
                 }, injectStrokeMs);
               let summary: TraceSummary;
               try {
+                await armInputGuard(page, {
+                  kind: 'stroke',
+                  first: path.first,
+                  last: path.point(119),
+                  pointerType: profile.name === 'phone' ? 'touch' : 'mouse',
+                });
+                await assertCleanInput(page, `${profile.name} stroke block ${block + 1} start`);
                 summary = await captureTrace(
                   context,
                   page,
                   (markFirstInput) => drawStroke(context, page, profile, path, markFirstInput),
                   retainTrace,
                 );
+                await assertCleanInput(page, `${profile.name} stroke block ${block + 1}`);
               } finally {
                 if (profile.name === 'desktop' && injectStrokeMs > 0)
                   await page.evaluate(() =>
@@ -369,6 +392,8 @@ export async function runEditorInput(
               await page.keyboard.press('Meta+z');
               await afterPaint(page);
             } else {
+              await armInputGuard(page, await panInputPath(page, profile));
+              await assertCleanInput(page, `${profile.name} pan block ${block + 1} start`);
               blocks.push(
                 await captureTrace(
                   context,
@@ -377,15 +402,24 @@ export async function runEditorInput(
                   retainTrace,
                 ),
               );
+              await assertCleanInput(page, `${profile.name} pan block ${block + 1}`);
             }
           }
           if (scenario === 'stroke') {
             // Verify the same real input path after tracing. Screenshot capture
             // never changes the app's 2D canvas readback mode during a block.
             const path = await strokePath(page, profile);
+            await armInputGuard(page, {
+              kind: 'stroke',
+              first: path.first,
+              last: path.point(119),
+              pointerType: profile.name === 'phone' ? 'touch' : 'mouse',
+            });
+            await assertCleanInput(page, `${profile.name} verification stroke start`);
             const before = await visualAt(page, path.first.x, path.first.y);
             await drawStroke(context, page, profile, path);
             const after = await visualAt(page, path.first.x, path.first.y);
+            await assertCleanInput(page, `${profile.name} verification stroke`);
             if (after.equals(before))
               throw new Error(
                 `${profile.name} stroke did not change the displayed pixels at ${path.first.x.toFixed(1)},${path.first.y.toFixed(1)}`,

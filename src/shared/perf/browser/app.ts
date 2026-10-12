@@ -5,6 +5,7 @@ import type { Browser, Page } from 'playwright';
 import { withProductionPreview } from '../../preview';
 import { withConditionedCpu } from './conditioning';
 import { runEditorInput } from './editor';
+import { armInputGuard, assertCleanInput, observedInput } from './inputGuard';
 
 const loadBudgetMs = 500;
 const initialJsBudgetKiB = 170;
@@ -70,18 +71,15 @@ interface LoadResult {
   transferBytes: number;
 }
 
-/** Activate the headed page before compositor capture. This also restores it if a person
- * switches apps between the before and after checks. */
 async function compositorShot(
   page: Page,
   clip: { x: number; y: number; width: number; height: number },
 ) {
-  await page.bringToFront();
-  return page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+  return page.screenshot({ clip, animations: 'disabled', scale: 'device', timeout: 3_000 });
 }
 
 /** Navigation starts the clock. The first real pointer stroke must alter the viewport bitmap. */
-async function loadAndStroke(page: Page, url: string): Promise<LoadResult> {
+async function loadAndStroke(page: Page, url: string, activate: boolean): Promise<LoadResult> {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(url, { waitUntil: 'commit' });
@@ -102,18 +100,56 @@ async function loadAndStroke(page: Page, url: string): Promise<LoadResult> {
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   const clip = { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 };
-  const before = await compositorShot(page, clip);
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.up();
-  await page.mouse.move(0, 0);
-  const deadline = Date.now() + 2_000;
-  while (true) {
-    const after = await compositorShot(page, clip);
-    if (!after.equals(before)) break;
-    if (Date.now() >= deadline)
-      throw new Error('First pointer stroke did not change displayed pixels');
-    await Bun.sleep(16);
+  // Restore Chrome once at the start of the load run. Later samples must fail if
+  // another app takes focus, instead of pulling the window over a person's work.
+  if (activate) await page.bringToFront();
+  await armInputGuard(page, { kind: 'load', first: { x, y }, pointerType: 'mouse' });
+  await assertCleanInput(page, 'First pointer stroke start');
+  try {
+    const before = await compositorShot(page, clip);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.mouse.move(0, 0);
+    const deadline = Date.now() + 2_000;
+    while (true) {
+      const after = await compositorShot(page, clip);
+      if (!after.equals(before)) break;
+      if (Date.now() >= deadline) {
+        const state = await page.evaluate(
+          ({ x, y }) => {
+            const host = document.querySelector<HTMLElement>(
+              '[role="application"][aria-label="Canvas"]',
+            );
+            const canvas = host?.querySelector('canvas');
+            const hit = document.elementFromPoint(x, y);
+            const rect = host?.getBoundingClientRect();
+            return {
+              url: location.pathname,
+              title: document.title,
+              hit: hit?.outerHTML.slice(0, 180),
+              host: rect && [rect.x, rect.y, rect.width, rect.height],
+              canvas: canvas && [canvas.width, canvas.height],
+              zoom: [...document.querySelectorAll('button')]
+                .map((button) => button.getAttribute('aria-label'))
+                .find((label) => label?.startsWith('Zoom ')),
+              visible: document.visibilityState,
+              focused: document.hasFocus(),
+            };
+          },
+          { x, y },
+        );
+        throw new Error(
+          `First pointer stroke did not change displayed pixels: events ${JSON.stringify(await observedInput(page))}, page ${JSON.stringify(state)}`,
+        );
+      }
+      await Bun.sleep(16);
+    }
+    await assertCleanInput(page, 'First pointer stroke');
+  } catch (error) {
+    // Prefer an observed focus/input incident over a misleading pixel or timeout error.
+    await assertCleanInput(page, 'First pointer stroke');
+    throw error;
   }
   // This timestamp is an upper bound that includes compositor capture latency.
   const strokeAt = await page.evaluate(() => performance.now());
@@ -172,6 +208,7 @@ export async function runAppPerf(
             const result = await loadAndStroke(
               page,
               `http://127.0.0.1:${port}/d/load-${run}-${block}-${sample}-${cache}`,
+              block === 0 && sample === 0 && cache === 'cold',
             );
             (cache === 'cold' ? coldSamples : warmSamples).push(result.ms);
             if (cache === 'cold') coldTransferBytes += result.transferBytes;
