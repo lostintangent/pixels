@@ -78,8 +78,12 @@ async function prepareDocument(
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('application', { name: 'Canvas' }).waitFor();
   // A fitted 1024² document is below 1× on both profiles; its exact percentage follows the viewport.
-  await page.getByRole('button', { name: /^Zoom \d+%$/ }).waitFor();
+  const zoom = page.getByRole('button', { name: /^Zoom \d+%$/ });
+  await zoom.waitFor();
   await afterPaint(page);
+  // A pointer left over the fitted phone canvas anchors keyboard zoom there. Move it onto
+  // chrome so the fixed trace and verification path stays over the image at 8×.
+  if (profile.name === 'phone') await zoom.hover();
   for (let step = 0; step < 12; step++) {
     if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) > 0) break;
     if (profile.name === 'phone') await page.keyboard.press('Equal');
