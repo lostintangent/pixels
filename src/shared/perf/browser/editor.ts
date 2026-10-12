@@ -51,6 +51,46 @@ async function visualAt(page: Page, x: number, y: number): Promise<Buffer> {
   });
 }
 
+/** Verify the planned input starts and ends over the blank document, from compositor pixels.
+ * Reading the app canvas would move its GPU surface into software mode before the trace. */
+async function assertStrokeGeometry(page: Page, profile: Profile): Promise<void> {
+  const path = await strokePath(page, profile);
+  for (const [name, point] of [
+    ['start', path.first],
+    ['end', path.point(119)],
+  ] as const) {
+    const clip = {
+      x: Math.floor(point.x) - 16,
+      y: Math.floor(point.y) - 16,
+      width: 32,
+      height: 32,
+    };
+    const screenshot = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+    const match = await page.evaluate(async (encoded) => {
+      const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+      const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Could not inspect compositor screenshot');
+      context.drawImage(image, 0, 0);
+      const rgba = context.getImageData(0, 0, image.width, image.height).data;
+      let checkerPixels = 0;
+      for (let i = 0; i < rgba.length; i += 4) {
+        if (
+          (rgba[i] === 255 && rgba[i + 1] === 255 && rgba[i + 2] === 255) ||
+          (rgba[i] === 58 && rgba[i + 1] === 58 && rgba[i + 2] === 60)
+        )
+          checkerPixels++;
+      }
+      return { checkerPixels, totalPixels: rgba.length / 4 };
+    }, screenshot.toString('base64'));
+    if (match.checkerPixels < match.totalPixels / 8)
+      throw new Error(
+        `${profile.name} stroke ${name} is outside the blank document at ${point.x.toFixed(1)},${point.y.toFixed(1)}: ${match.checkerPixels}/${match.totalPixels} checker pixels`,
+      );
+  }
+}
+
 async function prepareDocument(
   page: Page,
   baseUrl: string,
@@ -91,11 +131,24 @@ async function prepareDocument(
   }
   if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) === 0)
     throw new Error('Editor zoom did not become 8×');
+  const zoomedUrl = page.url();
+  const canvasHost = await page.getByRole('application', { name: 'Canvas' }).elementHandle();
   await page.waitForTimeout(200);
-  if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) === 0)
+  if ((await page.getByRole('button', { name: 'Zoom 8×' }).count()) === 0) {
+    const sameCanvasHost = canvasHost
+      ? await page
+          .evaluate(
+            (previous) =>
+              previous === document.querySelector('[role="application"][aria-label="Canvas"]'),
+            canvasHost,
+          )
+          .catch(() => false)
+      : false;
     throw new Error(
-      `Editor zoom reverted after document navigation: ${(await page.getByRole('button').allTextContents()).slice(0, 6).join(', ')}`,
+      `Editor zoom reverted during setup: url ${zoomedUrl} → ${page.url()}, same canvas host ${sameCanvasHost}, buttons ${(await page.getByRole('button').allTextContents()).slice(0, 6).join(', ')}`,
     );
+  }
+  await canvasHost?.dispose();
   const slider = page.getByRole('slider', { name: 'Brush size' });
   for (let i = 0; i < 32 && (await slider.getAttribute('aria-valuetext')) !== '16 px'; i++) {
     await slider.focus();
@@ -105,6 +158,7 @@ async function prepareDocument(
   if (brush !== '16 px') throw new Error(`Brush size did not become 16 px: ${brush}`);
   await page.getByRole('application', { name: 'Canvas' }).focus();
   await afterPaint(page);
+  await assertStrokeGeometry(page, profile);
 }
 
 async function strokePath(page: Page, profile: Profile) {
