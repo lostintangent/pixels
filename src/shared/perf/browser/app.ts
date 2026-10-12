@@ -70,6 +70,16 @@ interface LoadResult {
   transferBytes: number;
 }
 
+/** Activate the headed page before compositor capture. This also restores it if a person
+ * switches apps between the before and after checks. */
+async function compositorShot(
+  page: Page,
+  clip: { x: number; y: number; width: number; height: number },
+) {
+  await page.bringToFront();
+  return page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+}
+
 /** Navigation starts the clock. The first real pointer stroke must alter the viewport bitmap. */
 async function loadAndStroke(page: Page, url: string): Promise<LoadResult> {
   const errors: string[] = [];
@@ -92,14 +102,14 @@ async function loadAndStroke(page: Page, url: string): Promise<LoadResult> {
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   const clip = { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 };
-  const before = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+  const before = await compositorShot(page, clip);
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.up();
   await page.mouse.move(0, 0);
   const deadline = Date.now() + 2_000;
   while (true) {
-    const after = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+    const after = await compositorShot(page, clip);
     if (!after.equals(before)) break;
     if (Date.now() >= deadline)
       throw new Error('First pointer stroke did not change displayed pixels');

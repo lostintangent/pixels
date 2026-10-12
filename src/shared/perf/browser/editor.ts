@@ -44,6 +44,7 @@ async function canvasBox(page: Page) {
 }
 
 async function visualAt(page: Page, x: number, y: number): Promise<Buffer> {
+  await page.bringToFront();
   return page.screenshot({
     clip: { x: Math.floor(x) - 2, y: Math.floor(y) - 2, width: 5, height: 5 },
     animations: 'disabled',
@@ -65,6 +66,7 @@ async function assertStrokeGeometry(page: Page, profile: Profile): Promise<void>
       width: 32,
       height: 32,
     };
+    await page.bringToFront();
     const screenshot = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
     const match = await page.evaluate(async (encoded) => {
       const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
