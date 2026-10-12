@@ -449,6 +449,7 @@ function DesktopTools({ fade }: { fade: Fade }) {
           onEdit={(slot) => setEditing((current) => (current === slot ? null : slot))}
           onSwap={() => session.run({ type: 'swap-colors' })}
           onPress={() => setEditing((current) => (current === null ? 'primary' : null))}
+          hasTooltips
         />
       </Island>
       <ShapesPopover

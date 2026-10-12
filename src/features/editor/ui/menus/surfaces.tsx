@@ -22,7 +22,7 @@ import {
   TextCursorInput,
 } from 'lucide-react';
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from 'react';
-import type { ReactElement } from 'react';
+import type { ReactNode } from 'react';
 import { DOCUMENT_NAME_MAX_LENGTH } from '../../../files';
 import { GRID_MIN_ZOOM } from '../../core/zoom';
 import { setAppearance, useAppearance } from '../../session/appearance';
@@ -32,11 +32,12 @@ import { useEditor, useEditorState } from '../EditorContext';
 import { useFileActions } from '../files/FileActions';
 import { formatEdited, useRecents } from '../files/useRecents';
 import type { RecentDocument } from '../files/useRecents';
+import { exposeCheckedState } from './checked';
+import type { CheckedKind } from './checked';
 import { Logo } from './index';
 import type { MenuSurfaceProps } from './index';
 
 const icon = (Glyph: typeof Check) => <Glyph size={16} strokeWidth={1.75} aria-hidden />;
-const checked = (on: boolean): ReactElement | undefined => (on ? icon(Check) : undefined);
 const APPEARANCE_ICON: Record<Appearance, typeof Check> = {
   system: Monitor,
   light: Sun,
@@ -67,7 +68,7 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   ): DropdownMenuItemData => ({
     label,
     icon: icon(glyph),
-    endContent: checked(mode === value),
+    endContent: <Checked kind="radio" isChecked={mode === value} />,
     onClick: () => setAppearance(value),
   });
 
@@ -165,7 +166,8 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
     {
       label: 'Zoom out',
       icon: icon(Minus),
-      endContent: keys('mod+-'),
+      // U+2212, the minus sign the zoom button's tooltip shows, not a hyphen.
+      endContent: keys('mod+\u2212'),
       hasCloseOnSelect: false,
       onClick: () => session.run({ type: 'zoom', direction: -1 }),
     },
@@ -187,7 +189,11 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
       label: 'Pixel grid',
       icon: icon(Grid3x3),
       description: grid && gridTooSmall ? `Shows from ${GRID_MIN_ZOOM}×` : undefined,
-      endContent: grid ? icon(Check) : keys("mod+'"),
+      endContent: (
+        <Checked kind="checkbox" isChecked={grid}>
+          {keys("mod+'")}
+        </Checked>
+      ),
       onClick: () => session.run({ type: 'toggle-grid' }),
     },
   ];
@@ -306,6 +312,7 @@ const styles = stylex.create({
     lineHeight: '20px',
     textOverflow: 'ellipsis',
   },
+  checked: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-2'] },
   shortcut: { display: { default: 'contents', '@media (pointer: coarse)': 'none' } },
   thumb: {
     display: 'grid',
@@ -333,6 +340,31 @@ function Shortcut({ keys }: { keys: string }) {
   return (
     <span {...stylex.props(styles.shortcut)}>
       <Kbd keys={keys} />
+    </span>
+  );
+}
+
+/**
+ * A row's trailing check, which also gives the row its checked role and state. A shortcut stays
+ * beside the check rather than giving way to it.
+ */
+function Checked({
+  kind,
+  isChecked,
+  children,
+}: {
+  kind: CheckedKind;
+  isChecked: boolean;
+  children?: ReactNode;
+}) {
+  const anchor = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    if (anchor.current) exposeCheckedState(anchor.current, kind, isChecked);
+  }, [kind, isChecked]);
+  return (
+    <span ref={anchor} {...stylex.props(styles.checked)}>
+      {isChecked && icon(Check)}
+      {children}
     </span>
   );
 }

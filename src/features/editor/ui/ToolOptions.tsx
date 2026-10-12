@@ -15,7 +15,12 @@ import { pixelVars } from './tokens.stylex';
 const HINTS = {
   mouse: {
     fill: 'Click to fill touching pixels of one color',
-    eyedropper: 'Click to pick a color  ·  Hold Alt from any tool',
+    // A keycap, so the modifier reads ⌥ on a Mac and Alt elsewhere, like the menus' shortcuts.
+    eyedropper: (
+      <>
+        Click to pick a color · Hold <Kbd keys="alt" /> from any tool
+      </>
+    ),
     select: 'Drag to select  ·  Drag inside to move',
   },
   touch: {

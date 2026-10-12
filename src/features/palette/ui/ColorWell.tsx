@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex';
+import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { use } from 'react';
 import type { Ref } from 'react';
 import type { PackedColor } from '../../document';
@@ -20,6 +21,8 @@ export interface ColorWellProps {
    * the slot choice and swap. `md` becomes the same single target under a coarse pointer.
    */
   size?: 'md' | 'lg';
+  /** Names the swap corner and its key, to the side like the rail's tool tips. */
+  hasTooltips?: boolean;
   ref?: Ref<HTMLDivElement>;
 }
 
@@ -31,6 +34,7 @@ export function ColorWell({
   onSwap,
   onPress = () => onEdit('primary'),
   size = 'md',
+  hasTooltips = false,
   ref,
 }: ColorWellProps) {
   const space = use(PaletteColorSpace);
@@ -77,15 +81,22 @@ export function ColorWell({
         onClick={() => onEdit('primary')}
         {...stylex.props(styles.chip, styles.primary, styles.fill(toCss(primary, space)))}
       />
-      <button
-        type="button"
-        aria-label="Swap colors"
-        title="Swap colors  ·  X"
-        onClick={onSwap}
-        {...stylex.props(styles.swap)}
+      <Tooltip
+        content="Swap colors  ·  X"
+        placement="end"
+        hasHoverIndication={false}
+        delay={400}
+        isEnabled={hasTooltips}
       >
-        <SwapGlyph size={10} />
-      </button>
+        <button
+          type="button"
+          aria-label="Swap colors"
+          onClick={onSwap}
+          {...stylex.props(styles.swap)}
+        >
+          <SwapGlyph size={10} />
+        </button>
+      </Tooltip>
       {/* Touch only: one target over the chips. Keyboard and screen readers keep the three. */}
       <button
         type="button"

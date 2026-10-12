@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { packRgba } from '../../../document';
 import { toCss, TRANSPARENT } from '../../../palette';
 import type { Layout } from '../../session/session';
@@ -30,6 +30,15 @@ const PRESETS = [
 
 type Background = 'transparent' | 'white' | 'primary';
 
+/**
+ * Each open starts from the last canvas created here. It lives outside the dialog because
+ * creating one mounts a new editor, and with it a new dialog.
+ */
+let lastCreated: { size: Size; background: Background } = {
+  size: { width: 64, height: 64 },
+  background: 'transparent',
+};
+
 export function NewCanvasDialog({ layout }: { layout: Layout }) {
   const session = useEditor();
   const files = useFileActions();
@@ -37,9 +46,15 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
   const primary = useEditorState((state) => state.primary);
   // A blank canvas that was never edited isn't stored, so only a kept one can promise Recent.
   const isKept = useEditorState((state) => state.save === 'saved' || state.save === 'saving');
-  const fields = useSizeFields({ width: 64, height: 64 }, true);
-  const { width, height } = fields;
-  const [background, setBackground] = useState<Background>('transparent');
+  const fields = useSizeFields(lastCreated.size, true);
+  const { width, height, reset } = fields;
+  const [background, setBackground] = useState<Background>(lastCreated.background);
+  // The dialog stays mounted between opens, so a cancelled draft would otherwise come back.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    reset(lastCreated.size);
+    setBackground(lastCreated.background);
+  }, [isOpen, reset]);
   const valid = !sideError(width) && !sideError(height);
   const selected = PRESETS.findIndex(
     (preset) => preset.width === width && preset.height === height,
@@ -53,6 +68,7 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
         : background === 'white'
           ? packRgba(255, 255, 255)
           : primary;
+    lastCreated = { size, background };
     files.newCanvas(size.width, size.height, fill);
     close();
   };
