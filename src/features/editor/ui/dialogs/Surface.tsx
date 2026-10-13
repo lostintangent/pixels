@@ -4,6 +4,8 @@ import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
+import { SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import type { SegmentedControlItemProps } from '@astryxdesign/core/SegmentedControl';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Link2, Unlink2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -252,6 +254,11 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+/** A segment whose touch target spans the control's full 44px band, not just its inset pill. */
+export function Segment(props: Omit<SegmentedControlItemProps, 'xstyle'>) {
+  return <SegmentedControlItem {...props} xstyle={styles.segment} />;
+}
+
 export function sideError(value: number): { type: 'error'; message: string } | undefined {
   const message = sideProblem(value);
   return message === null ? undefined : { type: 'error', message };
@@ -405,6 +412,8 @@ export function formatBytes(bytes: number): string {
 
 const SIDEWAYS = '@media (orientation: landscape) and (max-height: 539px)';
 
+const TRACK_PADDING = 'var(--_segmented-control-padding, 4px)';
+
 const styles = stylex.create({
   contents: { display: 'contents' },
   sheet: { display: 'flex', flexDirection: 'column', paddingTop: spacingVars['--spacing-5'] },
@@ -460,6 +469,16 @@ const styles = stylex.create({
   },
   notePhone: { textAlign: { default: 'center', [SIDEWAYS]: 'start' } },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
+  // The track's padding and gaps were dead space, which left a 36px pill as a phone's whole target.
+  // Astryx pads the track with this variable, and segments sit one gap apart, so neighbors meet midway.
+  segment: {
+    '::before': {
+      content: "''",
+      position: 'absolute',
+      insetBlock: `calc(${TRACK_PADDING} * -1)`,
+      insetInline: `calc(${spacingVars['--spacing-0-5']} * -0.5)`,
+    },
+  },
   fieldLabel: { fontSize: 13, fontWeight: 500 },
   dimensions: {
     display: 'grid',

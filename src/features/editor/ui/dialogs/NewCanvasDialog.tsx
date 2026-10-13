@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { SegmentedControl } from '@astryxdesign/core/SegmentedControl';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useLayoutEffect, useState } from 'react';
 import { packRgba } from '../../../document';
@@ -14,6 +14,7 @@ import {
   Footer,
   Form,
   formatBytes,
+  Segment,
   sideError,
   Surface,
   useSizeFields,
@@ -134,9 +135,9 @@ export function NewCanvasDialog({ layout }: { layout: Layout }) {
             onChange={(value) => setBackground(value as Background)}
             layout="fill"
           >
-            <SegmentedControlItem value="transparent" label="Transparent" />
-            <SegmentedControlItem value="white" label="White" />
-            <SegmentedControlItem
+            <Segment value="transparent" label="Transparent" />
+            <Segment value="white" label="White" />
+            <Segment
               value="primary"
               label="Primary"
               icon={

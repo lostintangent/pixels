@@ -181,12 +181,16 @@ const styles = stylex.create({
     backgroundColor: colorVars['--color-background-surface'],
     boxShadow: `0 0 0 1px ${colorVars['--color-border-emphasized']}`,
   },
+  // A dashed edge says "nothing here yet", so a white chip's solid hairline can't read as a hole.
   empty: {
     cursor: 'default',
     backgroundColor: 'transparent',
-    boxShadow: { default: `inset 0 0 0 1px ${colorVars['--color-border']}`, [FORCED]: 'none' },
-    outline: { default: 'none', [FORCED]: '1px dashed GrayText' },
-    outlineOffset: { default: null, [FORCED]: -1 },
+    boxShadow: 'none',
+    outline: {
+      default: `1px dashed ${colorVars['--color-border-emphasized']}`,
+      [FORCED]: '1px dashed GrayText',
+    },
+    outlineOffset: -1,
     transform: { default: null, '@media (hover: hover)': { ':hover': null }, ':active': null },
   },
 });

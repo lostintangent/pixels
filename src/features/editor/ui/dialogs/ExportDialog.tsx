@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { SegmentedControl } from '@astryxdesign/core/SegmentedControl';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { colorVars, shadowVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useSelector } from '@tanstack/react-store';
@@ -10,7 +10,7 @@ import type { BitmapDocument } from '../../../document';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
 import type { PreviewRequest, PreviewResponse } from './previewWorker';
-import { Field, Footer, Form, Surface } from './Surface';
+import { Field, Footer, Form, Segment, Surface } from './Surface';
 
 const SCALES = [1, 2, 4, 8, 16] as const;
 const LARGEST_FIRST = [...SCALES].reverse();
@@ -197,7 +197,7 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
             layout="fill"
           >
             {SCALES.map((value) => (
-              <SegmentedControlItem
+              <Segment
                 key={value}
                 value={String(value)}
                 label={`${value}×`}
