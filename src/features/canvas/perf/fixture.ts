@@ -8,6 +8,7 @@ import {
   checkAnnotationLayer,
   checkColorConversion,
   checkP3Canvas,
+  checkPreviewGrid,
   checkZoomOutQuality,
 } from './quality';
 
@@ -92,6 +93,7 @@ export interface BrowserPerfApi {
   checkP3Canvas(): Promise<boolean>;
   checkColorConversion(): number;
   checkAnnotationLayer: typeof checkAnnotationLayer;
+  checkPreviewGrid: typeof checkPreviewGrid;
 }
 
 const api: BrowserPerfApi = {
@@ -228,6 +230,7 @@ const api: BrowserPerfApi = {
   checkP3Canvas,
   checkColorConversion,
   checkAnnotationLayer,
+  checkPreviewGrid,
   async runMazeFill() {
     floodFill(bitmap, { at: { x: 0, y: 0 }, color: INK }, history, fillWorkspace);
     await frames();

@@ -143,6 +143,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   let checkerB = '#d6d6d6';
   const previewCanvas = globalThis.document.createElement('canvas');
   const previewCtx = context(previewCanvas, colorSpace);
+  let previewGridCanvas: HTMLCanvasElement | null = null;
+  let previewGridCtx: CanvasRenderingContext2D | null = null;
   let document: BitmapDocument | null = null;
   let viewport: Viewport | null = null;
   let overlay = EMPTY_OVERLAY;
@@ -276,7 +278,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     return mipmaps[levels - 1]?.canvas ?? surface.documentCanvas;
   }
 
-  function drawPreview(view: Viewport, preview: OverlayPreview): void {
+  function drawPreview(view: Viewport, bitmap: BitmapDocument, preview: OverlayPreview): void {
     const stride = preview.stride ?? preview.bounds.width;
     const rows = preview.stride ? preview.pixels.length / stride : preview.bounds.height;
     if (stride <= 0 || rows <= 0) return;
@@ -309,15 +311,75 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       }
     } else previewCtx.putImageData(previewImage, 0, 0);
     const smoothing = smoothingForView(view);
-    overlayCtx.imageSmoothingEnabled = smoothing !== 'off';
-    if (smoothing !== 'off') overlayCtx.imageSmoothingQuality = smoothing;
-    overlayCtx.drawImage(
+    const gridVisible = overlay.grid === 'on' || (overlay.grid === 'auto' && view.zoom >= 8);
+    let destination = overlayCtx;
+    let left = 0;
+    let top = 0;
+    let width = 0;
+    let height = 0;
+    if (gridVisible) {
+      const scale = view.devicePixelRatio;
+      left = Math.max(0, Math.floor((view.panX + preview.bounds.x * view.zoom) * scale));
+      top = Math.max(0, Math.floor((view.panY + preview.bounds.y * view.zoom) * scale));
+      const right = Math.min(
+        surface.overlayCanvas.width,
+        Math.ceil((view.panX + (preview.bounds.x + preview.bounds.width) * view.zoom) * scale),
+      );
+      const bottom = Math.min(
+        surface.overlayCanvas.height,
+        Math.ceil((view.panY + (preview.bounds.y + preview.bounds.height) * view.zoom) * scale),
+      );
+      width = right - left;
+      height = bottom - top;
+      if (width <= 0 || height <= 0) return;
+      if (!previewGridCanvas) {
+        previewGridCanvas = globalThis.document.createElement('canvas');
+        previewGridCtx = context(previewGridCanvas, colorSpace);
+      }
+      if (previewGridCanvas.width < width) previewGridCanvas.width = width;
+      if (previewGridCanvas.height < height) previewGridCanvas.height = height;
+      destination = previewGridCtx!;
+      destination.setTransform(1, 0, 0, 1, 0, 0);
+      destination.clearRect(0, 0, width, height);
+      destination.setTransform(scale, 0, 0, scale, -left, -top);
+    }
+    destination.imageSmoothingEnabled = smoothing !== 'off';
+    if (smoothing !== 'off') destination.imageSmoothingQuality = smoothing;
+    destination.drawImage(
       previewCanvas,
       view.panX + preview.bounds.x * view.zoom,
       view.panY + preview.bounds.y * view.zoom,
       preview.bounds.width * view.zoom,
       preview.bounds.height * view.zoom,
     );
+    if (gridVisible) {
+      destination.save();
+      destination.beginPath();
+      destination.rect(
+        view.panX + preview.bounds.x * view.zoom,
+        view.panY + preview.bounds.y * view.zoom,
+        preview.bounds.width * view.zoom,
+        preview.bounds.height * view.zoom,
+      );
+      destination.clip();
+      // Mask the grid to preview alpha. Transparent line and selection pixels already
+      // show the viewport grid, and the cleared source may have its own grid below.
+      destination.globalCompositeOperation = 'source-atop';
+      drawGrid(destination, bitmap, view);
+      destination.restore();
+      const scale = view.devicePixelRatio;
+      overlayCtx.drawImage(
+        previewGridCanvas!,
+        0,
+        0,
+        width,
+        height,
+        left / scale,
+        top / scale,
+        width / scale,
+        height / scale,
+      );
+    }
   }
 
   function drawGrid(ctx: CanvasRenderingContext2D, bitmap: BitmapDocument, view: Viewport): void {
@@ -457,7 +519,7 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     overlayCtx.clearRect(0, 0, surface.overlayCanvas.width, surface.overlayCanvas.height);
     overlayCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
     if (overlay.sourceClear) drawClearedSource(view, bitmap, overlay.sourceClear);
-    if (overlay.preview) drawPreview(view, overlay.preview);
+    if (overlay.preview) drawPreview(view, bitmap, overlay.preview);
     if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, phase);
     if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, phase);
     if (overlay.selectedAnnotationId && annotations) {

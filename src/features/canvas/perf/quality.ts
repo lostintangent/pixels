@@ -218,6 +218,107 @@ export function checkColorConversion(): number {
   return Math.max(Math.abs(bytes[0]! - 100), Math.abs(bytes[1]! - 120), Math.abs(bytes[2]! - 140));
 }
 
+/** Compare the composited live overlay with the same pixels after commit. */
+export async function checkPreviewGrid(): Promise<Record<string, number>> {
+  const width = 24;
+  const height = 16;
+  const zoom = 10;
+  const viewportCanvas = document.createElement('canvas');
+  const overlayCanvas = document.createElement('canvas');
+  const composite = document.createElement('canvas');
+  const scale = window.devicePixelRatio;
+  composite.width = width * zoom * scale;
+  composite.height = height * zoom * scale;
+  const compositeCtx = composite.getContext('2d')!;
+  const renderer = createCanvasRenderer({
+    documentCanvas: document.createElement('canvas'),
+    viewportCanvas,
+    annotationCanvas: document.createElement('canvas'),
+    overlayCanvas,
+  });
+  const emptyOverlay = { grid: 'auto' as const, cursor: null, marquee: null, preview: null };
+  const capture = async () => {
+    await frames();
+    compositeCtx.clearRect(0, 0, composite.width, composite.height);
+    compositeCtx.drawImage(viewportCanvas, 0, 0);
+    compositeCtx.drawImage(overlayCanvas, 0, 0);
+    return compositeCtx.getImageData(0, 0, composite.width, composite.height).data.slice();
+  };
+  const difference = (before: Uint8ClampedArray, after: Uint8ClampedArray) => {
+    let max = 0;
+    for (let i = 0; i < before.length; i++) max = Math.max(max, Math.abs(before[i]! - after[i]!));
+    return max;
+  };
+  const ink = packRgba(27, 27, 38);
+  const errors: Record<string, number> = {};
+  try {
+    renderer.setViewport({
+      zoom,
+      panX: 0,
+      panY: 0,
+      cssWidth: width * zoom,
+      cssHeight: height * zoom,
+      devicePixelRatio: scale,
+    });
+    const line = createBitmapDocument('preview-line', width, height);
+    const lineBounds = { x: 2, y: 4, width: 12, height: 1 };
+    const linePixels = new Uint32Array(lineBounds.width).fill(ink);
+    renderer.setDocument(line);
+    renderer.setOverlay({ ...emptyOverlay, preview: { bounds: lineBounds, pixels: linePixels } });
+    const liveLine = await capture();
+    line.pixels.set(linePixels, lineBounds.y * width + lineBounds.x);
+    line.events.invalidate(lineBounds);
+    renderer.setOverlay(emptyOverlay);
+    errors.line = difference(liveLine, await capture());
+
+    for (const [name, targetX] of [
+      ['float', 9],
+      ['overlapping float', 4],
+    ] as const) {
+      const bitmap = createBitmapDocument(name, width, height);
+      const source = { x: 2, y: 2, width: 4, height: 4 };
+      const pixels = new Uint32Array(source.width * source.height);
+      for (let y = 0; y < source.height; y++) {
+        for (let x = 0; x < source.width; x++) {
+          const color = x === 0 || y === 0 ? ink : packRgba(255, 207, 139);
+          pixels[y * source.width + x] = color;
+          bitmap.pixels[(source.y + y) * width + source.x + x] = color;
+        }
+      }
+      const target = { ...source, x: targetX };
+      renderer.setDocument(bitmap);
+      renderer.setOverlay({
+        ...emptyOverlay,
+        sourceClear: source,
+        preview: { bounds: target, pixels },
+      });
+      const liveFloat = await capture();
+      for (let y = 0; y < source.height; y++) {
+        bitmap.pixels.fill(
+          0,
+          (source.y + y) * width + source.x,
+          (source.y + y) * width + source.x + source.width,
+        );
+        bitmap.pixels.set(
+          pixels.subarray(y * source.width, (y + 1) * source.width),
+          (target.y + y) * width + target.x,
+        );
+      }
+      bitmap.events.invalidate({
+        x: source.x,
+        y: source.y,
+        width: targetX + source.width - source.x,
+        height: source.height,
+      });
+      renderer.setOverlay(emptyOverlay);
+      errors[name] = difference(liveFloat, await capture());
+    }
+    return errors;
+  } finally {
+    renderer.dispose();
+  }
+}
+
 export async function checkAnnotationLayer(): Promise<{
   passed: boolean;
   primary: number[];

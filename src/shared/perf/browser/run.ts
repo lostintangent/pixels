@@ -39,6 +39,7 @@ interface BrowserPerfApi {
     outside: number[];
     handle: number[];
   }>;
+  checkPreviewGrid(): Promise<Record<string, number>>;
 }
 declare global {
   interface Window {
@@ -170,14 +171,16 @@ try {
             p3: await window.__pixelsPerf!.checkP3Canvas(),
             conversionError: window.__pixelsPerf!.checkColorConversion(),
             annotations: await window.__pixelsPerf!.checkAnnotationLayer(),
+            previewGrid: await window.__pixelsPerf!.checkPreviewGrid(),
           }));
           console.log(
-            `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, P3 annotation layer ${quality.annotations.passed ? 'PASS' : `FAIL ${JSON.stringify(quality.annotations)}`}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, conversion error ≤ 2`,
+            `Viewport quality: box-reference MAE ${JSON.stringify(quality.zoom)}, P3 contexts and bytes ${quality.p3 ? 'PASS' : 'FAIL'}, P3 annotation layer ${quality.annotations.passed ? 'PASS' : `FAIL ${JSON.stringify(quality.annotations)}`}, preview vs commit maximum byte error ${JSON.stringify(quality.previewGrid)}, sRGB→P3→sRGB maximum byte error ${quality.conversionError}, targets MAE ≤ 2, P3 exact, preview ≤ 1 byte, conversion error ≤ 2`,
           );
           if (
             !quality.p3 ||
             !quality.annotations.passed ||
             quality.conversionError > 2 ||
+            Object.values(quality.previewGrid).some((error) => error > 1) ||
             Object.values(quality.zoom).some((error) => error > 2)
           )
             failed = true;
