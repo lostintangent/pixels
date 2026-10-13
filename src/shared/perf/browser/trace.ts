@@ -1,4 +1,6 @@
 /** Chrome trace timestamps and durations are microseconds. */
+import { gapDistribution, type GapDistribution } from './cadence';
+
 export interface TraceEvent {
   name: string;
   ph: string;
@@ -17,8 +19,10 @@ export interface TraceEvent {
       has_high_latency: boolean;
     };
     args?: { interval_us?: number };
+    data?: { type?: string };
     sync_id?: string;
   };
+  id2?: { local?: string };
 }
 
 export interface TraceSummary {
@@ -38,6 +42,9 @@ export interface TraceSummary {
   missedFrameRuns: Array<{ state: string; start: number; end: number }>;
   preInputEligibleFrames: number;
   preInputMisses: Array<{ state: string; beforeInputMs: number }>;
+  receivedMoveGaps: GapDistribution;
+  inputLatencyStageP95Ms: Record<string, number>;
+  inputLatencyStageMaxMs: Record<string, number>;
 }
 
 function p95(sorted: number[]): number {
@@ -69,9 +76,68 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
     if (event.name === 'thread_name' && event.args?.name)
       threads.set(`${event.pid}:${event.tid}`, event.args.name);
   }
-  const mainThread = [...threads].find(([, name]) => name === 'CrRendererMain')?.[0];
+  // A trace can contain both the editor and its interleaved control tab. The
+  // page receiving the gesture owns the first pointermove after our marker.
+  const inputRendererPid = events.find(
+    (event) =>
+      event.name === 'EventDispatch' &&
+      event.args?.data?.type === 'pointermove' &&
+      event.ts > firstInputTs &&
+      threads.get(`${event.pid}:${event.tid}`) === 'CrRendererMain',
+  )?.pid;
+  const mainThread = [...threads].find(
+    ([key, name]) =>
+      name === 'CrRendererMain' &&
+      (inputRendererPid === undefined || Number(key.split(':')[0]) === inputRendererPid),
+  )?.[0];
   if (!mainThread) throw new Error('Chrome trace has no renderer main thread');
   const rendererPid = Number(mainThread.split(':')[0]);
+  const receivedMoveTimesMs = events
+    .filter(
+      (event) =>
+        event.pid === rendererPid &&
+        event.name === 'EventDispatch' &&
+        event.args?.data?.type === 'pointermove' &&
+        event.ts > firstInputTs,
+    )
+    .map((event) => event.ts / 1000)
+    .sort((a, b) => a - b);
+  const inputLatencyStageNames = new Set([
+    'GenerationToBrowserMain',
+    'BrowserMainToRendererCompositor',
+    'RendererCompositorQueueingDelay',
+    'RendererCompositorProcessing',
+    'RendererCompositorToMain',
+    'RendererMainProcessing',
+  ]);
+  const inputStageStarts = new Map<string, number[]>();
+  const inputStageDurations = new Map<string, number[]>();
+  for (const event of events
+    .filter(
+      (event) =>
+        event.pid === rendererPid && event.id2?.local && inputLatencyStageNames.has(event.name),
+    )
+    .sort((a, b) => a.ts - b.ts || (a.ph === 'b' ? -1 : 1))) {
+    const key = `${event.name}:${event.id2!.local}`;
+    if (event.ph === 'b') {
+      const starts = inputStageStarts.get(key) ?? [];
+      starts.push(event.ts);
+      inputStageStarts.set(key, starts);
+    } else if (event.ph === 'e') {
+      const start = inputStageStarts.get(key)?.pop();
+      if (start === undefined || start <= firstInputTs) continue;
+      const durations = inputStageDurations.get(event.name) ?? [];
+      durations.push((event.ts - start) / 1000);
+      inputStageDurations.set(event.name, durations);
+    }
+  }
+  const inputLatencyStageP95Ms: Record<string, number> = {};
+  const inputLatencyStageMaxMs: Record<string, number> = {};
+  for (const [name, durations] of inputStageDurations) {
+    durations.sort((a, b) => a - b);
+    inputLatencyStageP95Ms[name] = p95(durations);
+    inputLatencyStageMaxMs[name] = durations.at(-1)!;
+  }
   const reports = new Map<string, NonNullable<NonNullable<TraceEvent['args']>['frame_reporter']>>();
   const reportTimes = new Map<string, number>();
   const refreshIntervals: number[] = [];
@@ -232,5 +298,8 @@ export function summarizeTrace(events: TraceEvent[]): TraceSummary {
     missedFrameRuns,
     preInputEligibleFrames,
     preInputMisses,
+    receivedMoveGaps: gapDistribution(receivedMoveTimesMs),
+    inputLatencyStageP95Ms,
+    inputLatencyStageMaxMs,
   };
 }

@@ -53,6 +53,13 @@ test('Chrome trace summary clips tasks to frame windows and includes compositor 
     event('ThreadControllerImpl::RunTask', 'X', 2, 13, 12_000, 10_000),
     event('ThreadControllerImpl::RunTask', 'X', 3, 14, 20_000, 1_000),
     event('ThreadControllerImpl::RunTask', 'X', 1, 10, 40_000, 60_000),
+    { ...event('EventDispatch', 'X', 1, 10, 5_000, 100), args: { data: { type: 'pointermove' } } },
+    { ...event('EventDispatch', 'X', 1, 10, 15_000, 100), args: { data: { type: 'pointermove' } } },
+    { ...event('EventDispatch', 'X', 1, 10, 45_000, 100), args: { data: { type: 'pointermove' } } },
+    { ...event('RendererCompositorToMain', 'b', 1, 11, 5_000), id2: { local: '0x1' } },
+    { ...event('RendererCompositorToMain', 'e', 1, 11, 12_000), id2: { local: '0x1' } },
+    { ...event('RendererCompositorToMain', 'b', 1, 11, 15_000), id2: { local: '0x1' } },
+    { ...event('RendererCompositorToMain', 'e', 1, 11, 25_000), id2: { local: '0x1' } },
   ];
   const summary = summarizeTrace(events);
   expect(summary.frameCount).toBe(3);
@@ -74,6 +81,14 @@ test('Chrome trace summary clips tasks to frame windows and includes compositor 
     { state: 'STATE_PRESENTED_PARTIAL', start: 5, end: 5 },
   ]);
   expect(summary.consecutiveDrops).toBe(true);
+  expect(summary.receivedMoveGaps).toEqual({
+    samples: 3,
+    p50Ms: 10,
+    p95Ms: 30,
+    maxMs: 30,
+  });
+  expect(summary.inputLatencyStageP95Ms.RendererCompositorToMain).toBe(10);
+  expect(summary.inputLatencyStageMaxMs.RendererCompositorToMain).toBe(10);
 });
 
 test('presentation eligibility begins strictly after the first input marker', () => {
@@ -145,4 +160,32 @@ test('forked Chrome reporters do not replace a complete primary frame', () => {
   expect(summary.droppedFrames).toBe(0);
   expect(summary.presentationStates.STATE_PRESENTED_PARTIAL).toBe(1);
   expect(summary.missedFrameRuns).toEqual([{ state: 'STATE_PRESENTED_PARTIAL', start: 4, end: 4 }]);
+});
+
+test('a trace with two tabs measures the renderer that received the gesture', () => {
+  const events: TraceEvent[] = [
+    { ...event('thread_name', 'M', 1, 10, 0), args: { name: 'CrRendererMain' } },
+    { ...event('thread_name', 'M', 2, 20, 0), args: { name: 'CrRendererMain' } },
+    { ...event('Scheduler::BeginFrame', 'X', 2, 21, 0), args: { args: { interval_us: 16_666 } } },
+    { ...event('clock_sync', 'c', 3, 30, 1_000), args: { sync_id: 'pixels-first-input' } },
+    { ...event('EventDispatch', 'X', 2, 20, 2_000, 100), args: { data: { type: 'pointermove' } } },
+    ...[2_000, 18_666, 35_332].map((ts, frame_sequence) => ({
+      ...event('PipelineReporter', 'b', 2, 21, ts),
+      args: {
+        frame_reporter: {
+          frame_source: 1,
+          frame_sequence,
+          layer_tree_host_id: 1,
+          state: 'STATE_PRESENTED_ALL',
+          has_high_latency: false,
+        },
+      },
+    })),
+    ...[2_000, 18_666, 35_332].map((ts) => event('ProxyMain::BeginMainFrame', 'X', 2, 20, ts, 100)),
+  ];
+  const summary = summarizeTrace(events);
+  expect(summary.eligibleFrames).toBe(3);
+  expect(summary.onTimeFrames).toBe(3);
+  expect(summary.frameCount).toBe(2);
+  expect(summary.receivedMoveGaps.samples).toBe(1);
 });

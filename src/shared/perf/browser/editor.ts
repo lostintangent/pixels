@@ -3,6 +3,7 @@ import { loadavg } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Browser, BrowserContext, Page } from 'playwright';
+import { dispatchCadence, editorGateVerdict, type DispatchCadence } from './cadence';
 import { captureTrace } from './capture';
 import { withIdleMacInput, withVisibleIdleMacInput } from './hidIdle';
 import type { TraceEvent, TraceSummary } from './trace';
@@ -189,6 +190,7 @@ async function drawStroke(
   profile: Profile,
   path: Awaited<ReturnType<typeof strokePath>>,
   markFirstInput?: () => Promise<void>,
+  dispatchTimes?: number[],
 ): Promise<void> {
   const { first, point } = path;
   if (profile.name === 'phone') {
@@ -199,13 +201,21 @@ async function drawStroke(
         type: 'touchStart',
         touchPoints: [{ id: 1, ...first }],
       });
+      const startedAt = performance.now();
+      const pendingMoves: Promise<unknown>[] = [];
       for (let sample = 1; sample < 120; sample++) {
-        await Bun.sleep(8);
-        await session.send('Input.dispatchTouchEvent', {
-          type: 'touchMove',
-          touchPoints: [{ id: 1, ...point(sample) }],
-        });
+        const delay = startedAt + sample * 17 - performance.now();
+        if (delay > 0) await Bun.sleep(delay);
+        dispatchTimes?.push(performance.now());
+        pendingMoves.push(
+          session.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ id: 1, ...point(sample) }],
+          }),
+        );
+        if (pendingMoves.length === 3) await pendingMoves.shift();
       }
+      await Promise.all(pendingMoves);
       await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     } finally {
       await session.detach();
@@ -214,8 +224,11 @@ async function drawStroke(
     await markFirstInput?.();
     await page.mouse.move(first.x, first.y);
     await page.mouse.down();
+    const startedAt = performance.now();
     for (let sample = 1; sample < 120; sample++) {
-      await Bun.sleep(8);
+      const delay = startedAt + sample * 17 - performance.now();
+      if (delay > 0) await Bun.sleep(delay);
+      dispatchTimes?.push(performance.now());
       const next = point(sample);
       await page.mouse.move(next.x, next.y);
     }
@@ -229,6 +242,7 @@ async function panZoom(
   page: Page,
   profile: Profile,
   markFirstInput: () => Promise<void>,
+  dispatchTimes?: number[],
 ): Promise<void> {
   const box = await canvasBox(page);
   const x = box.x + box.width / 2;
@@ -244,8 +258,11 @@ async function panZoom(
           { id: 2, x: x + 60, y },
         ],
       });
+      const startedAt = performance.now();
       for (let frame = 1; frame <= 90; frame++) {
-        await Bun.sleep(16);
+        const delay = startedAt + frame * 33 - performance.now();
+        if (delay > 0) await Bun.sleep(delay);
+        dispatchTimes?.push(performance.now());
         const phase = (frame / 90) * Math.PI * 2;
         const shiftX = 40 * Math.sin(phase);
         const shiftY = 30 * Math.cos(phase) - 30;
@@ -265,8 +282,11 @@ async function panZoom(
     await markFirstInput();
     await page.mouse.move(x, y);
     await page.mouse.down({ button: 'middle' });
+    const startedAt = performance.now();
     for (let frame = 1; frame <= 90; frame++) {
-      await Bun.sleep(16);
+      const delay = startedAt + frame * 33 - performance.now();
+      if (delay > 0) await Bun.sleep(delay);
+      dispatchTimes?.push(performance.now());
       const phase = (frame / 90) * Math.PI * 2;
       await page.mouse.move(x + 100 * Math.sin(phase), y + 60 * (Math.cos(phase) - 1));
     }
@@ -275,11 +295,65 @@ async function panZoom(
   await afterPaint(page);
 }
 
+/** Same browser, viewport, input driver, and frame gate as the editor. This
+ * small canvas tells us when Chrome drops input frames without Pixels present. */
+async function createInputControl(context: BrowserContext, profile: Profile): Promise<Page> {
+  const page = await context.newPage();
+  await page.setContent(`<!doctype html><html><body style="margin:0">
+    <div role="application" aria-label="Canvas" tabindex="0" style="width:100vw;height:100vh;touch-action:none">
+      <canvas width="${profile.width}" height="${profile.height}"></canvas>
+    </div>
+    <script>
+      const host = document.querySelector('[role=application]');
+      const canvas = document.querySelector('canvas');
+      const ctx = canvas.getContext('2d');
+      window.__pixelsControlMoves = 0;
+      let requested = false, x = 0, y = 0;
+      host.addEventListener('pointerdown', (event) => host.setPointerCapture(event.pointerId));
+      host.addEventListener('pointermove', (event) => {
+        if (!event.buttons) return;
+        window.__pixelsControlMoves++;
+        x = event.clientX; y = event.clientY;
+        if (requested) return;
+        requested = true;
+        requestAnimationFrame(() => {
+          requested = false;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#ee3';
+          ctx.fillRect(x - 30, y - 30, 60, 60);
+        });
+      });
+    </script></body></html>`);
+  return page;
+}
+
+async function controlGesture(
+  context: BrowserContext,
+  page: Page,
+  profile: Profile,
+  scenario: 'stroke' | 'pan',
+  markFirstInput?: () => Promise<void>,
+  dispatchTimes?: number[],
+): Promise<void> {
+  if (scenario === 'stroke')
+    await drawStroke(
+      context,
+      page,
+      profile,
+      await strokePath(page, profile),
+      markFirstInput,
+      dispatchTimes,
+    );
+  else await panZoom(context, page, profile, markFirstInput ?? (async () => {}), dispatchTimes);
+}
+
 function summarizeBlocks(
   blocks: TraceSummary[],
   target: number,
 ): {
   passed: boolean;
+  mainPassed: boolean;
+  framesPassed: boolean;
   details: string;
 } {
   const frames = blocks.map((block) => block.frameCount);
@@ -299,13 +373,12 @@ function summarizeBlocks(
   const consecutiveDrops = blocks.some((block) => block.consecutiveDrops);
   const onTimePercent = (onTime / eligible) * 100;
   const refreshHz = median(blocks.map((block) => block.refreshHz));
+  const mainPassed = mainP95 < target && maxMainTask <= 50;
+  const framesPassed = onTimePercent >= 99 && !consecutiveDrops && eligible >= 90;
   return {
-    passed:
-      mainP95 < target &&
-      maxMainTask <= 50 &&
-      onTimePercent >= 99 &&
-      !consecutiveDrops &&
-      eligible >= 90,
+    passed: mainPassed && framesPassed,
+    mainPassed,
+    framesPassed,
     details: `main p95 ${mainP95.toFixed(3)} ms [${blocks.map((block) => block.mainP95Ms.toFixed(3)).join(', ')}], aggregate pipeline CPU p95 ${pipelineP95.toFixed(3)} ms (diagnostic), max main task ${maxMainTask.toFixed(3)} ms, on-time ${onTime}/${eligible} (${onTimePercent.toFixed(2)}%, dropped ${dropped}, high latency ${highLatency}, consecutive drops ${consecutiveDrops}, states ${JSON.stringify(Object.fromEntries(states))}), refresh ${refreshHz.toFixed(2)} Hz, frames [${frames.join(', ')}], target main < ${target} ms and on-time ≥ 99%`,
   };
 }
@@ -334,13 +407,26 @@ export async function runEditorInput(
         await withIdleMacInput(`${profile.name} setup`, () =>
           prepareDocument(page, baseUrl, profile, run),
         );
+        const controlPage = await createInputControl(context, profile);
+        await page.bringToFront();
         for (const scenario of ['stroke', 'pan'] as const) {
           const blocks: TraceSummary[] = [];
+          const cadences: DispatchCadence[] = [];
+          const controlBlocks: TraceSummary[] = [];
+          const controlCadences: DispatchCadence[] = [];
           const retainedTraces: TraceEvent[][] = [];
+          const controlTraces: TraceEvent[][] = [];
           const retainTrace = process.env.PIXELS_PERF_TRACE_DIR
             ? (events: TraceEvent[]) => retainedTraces.push(events)
             : undefined;
+          await controlPage.bringToFront();
+          await controlGesture(context, controlPage, profile, scenario);
+          await page.bringToFront();
+          await afterPaint(page);
           for (let block = 0; block < 3; block++) {
+            await page.bringToFront();
+            await afterPaint(page);
+            const dispatchTimes: number[] = [];
             if (scenario === 'stroke') {
               const path = await strokePath(page, profile);
               if (profile.name === 'desktop' && injectStrokeMs > 0)
@@ -364,7 +450,8 @@ export async function runEditorInput(
                     captureTrace(
                       context,
                       page,
-                      (markFirstInput) => drawStroke(context, page, profile, path, markFirstInput),
+                      (markFirstInput) =>
+                        drawStroke(context, page, profile, path, markFirstInput, dispatchTimes),
                       retainTrace,
                     ),
                 );
@@ -375,26 +462,83 @@ export async function runEditorInput(
                   );
               }
               blocks.push(summary);
+              // A 30 ms gap remains below two 60 Hz frames. Shorter jitter has
+              // appeared with every control frame presented; 33 ms is a miss.
+              const cadence = dispatchCadence(dispatchTimes, 119, 30);
+              cadences.push(cadence);
               console.log(
-                `stroke block ${profile.name} ${run + 1}/${repeat} ${block + 1}/3: on-time ${summary.onTimeFrames}/${summary.eligibleFrames}, states ${JSON.stringify(summary.presentationStates)}, misses ${JSON.stringify(summary.missedFrameRuns)}, before input ${JSON.stringify(summary.preInputMisses)}, main p95 ${summary.mainP95Ms.toFixed(3)} ms, pipeline p95 ${summary.pipelineP95Ms.toFixed(3)} ms, stages ${JSON.stringify(summary.stageP95Ms)}, loadavg ${loadavg()
+                `stroke block ${profile.name} ${run + 1}/${repeat} ${block + 1}/3: on-time ${summary.onTimeFrames}/${summary.eligibleFrames}, states ${JSON.stringify(summary.presentationStates)}, misses ${JSON.stringify(summary.missedFrameRuns)}, before input ${JSON.stringify(summary.preInputMisses)}, input send gaps p50/p95/max ${cadence.p50Ms.toFixed(1)}/${cadence.p95Ms.toFixed(1)}/${cadence.maxMs.toFixed(1)} ms, late ${cadence.lateGaps}/${cadence.samples - 1} over ${cadence.maxAllowedGapMs} ms, Chrome receipt gaps p50/p95/max ${summary.receivedMoveGaps.p50Ms.toFixed(1)}/${summary.receivedMoveGaps.p95Ms.toFixed(1)}/${summary.receivedMoveGaps.maxMs.toFixed(1)} ms, EventLatency stage p95 ${JSON.stringify(summary.inputLatencyStageP95Ms)}, main p95 ${summary.mainP95Ms.toFixed(3)} ms, pipeline p95 ${summary.pipelineP95Ms.toFixed(3)} ms, stages ${JSON.stringify(summary.stageP95Ms)}, loadavg ${loadavg()
                   .map((value) => value.toFixed(2))
                   .join('/')}`,
               );
               await page.keyboard.press('Meta+z');
               await afterPaint(page);
             } else {
-              blocks.push(
-                await withVisibleIdleMacInput(page, `${profile.name} pan block ${block + 1}`, () =>
+              const summary = await withVisibleIdleMacInput(
+                page,
+                `${profile.name} pan block ${block + 1}`,
+                () =>
                   captureTrace(
                     context,
                     page,
-                    (markFirstInput) => panZoom(context, page, profile, markFirstInput),
+                    (markFirstInput) =>
+                      panZoom(context, page, profile, markFirstInput, dispatchTimes),
                     retainTrace,
                   ),
-                ),
+              );
+              blocks.push(summary);
+              const cadence = dispatchCadence(dispatchTimes, 90, 45);
+              cadences.push(cadence);
+              console.log(
+                `pan block ${profile.name} ${run + 1}/${repeat} ${block + 1}/3: input send gaps p50/p95/max ${cadence.p50Ms.toFixed(1)}/${cadence.p95Ms.toFixed(1)}/${cadence.maxMs.toFixed(1)} ms, late ${cadence.lateGaps}/${cadence.samples - 1} over ${cadence.maxAllowedGapMs} ms, Chrome receipt gaps p50/p95/max ${summary.receivedMoveGaps.p50Ms.toFixed(1)}/${summary.receivedMoveGaps.p95Ms.toFixed(1)}/${summary.receivedMoveGaps.maxMs.toFixed(1)} ms, EventLatency stage p95 ${JSON.stringify(summary.inputLatencyStageP95Ms)}, on-time ${summary.onTimeFrames}/${summary.eligibleFrames}`,
               );
             }
+            await controlPage.bringToFront();
+            await afterPaint(controlPage);
+            await controlPage.evaluate(() => {
+              (window as Window & { __pixelsControlMoves?: number }).__pixelsControlMoves = 0;
+            });
+            const controlDispatchTimes: number[] = [];
+            const controlSummary = await withVisibleIdleMacInput(
+              controlPage,
+              `${profile.name} ${scenario} control block ${block + 1}`,
+              () =>
+                captureTrace(
+                  context,
+                  controlPage,
+                  (markFirstInput) =>
+                    controlGesture(
+                      context,
+                      controlPage,
+                      profile,
+                      scenario,
+                      markFirstInput,
+                      controlDispatchTimes,
+                    ),
+                  process.env.PIXELS_PERF_TRACE_DIR
+                    ? (events) => controlTraces.push(events)
+                    : undefined,
+                ),
+            );
+            const controlMoves = await controlPage.evaluate(
+              () => (window as Window & { __pixelsControlMoves?: number }).__pixelsControlMoves,
+            );
+            if (controlMoves === undefined || controlMoves < 50)
+              throw new Error(
+                `${profile.name} ${scenario} control received only ${controlMoves ?? 0} pointer moves`,
+              );
+            controlBlocks.push(controlSummary);
+            const controlCadence = dispatchCadence(
+              controlDispatchTimes,
+              scenario === 'stroke' ? 119 : 90,
+              scenario === 'stroke' ? 30 : 45,
+            );
+            controlCadences.push(controlCadence);
+            console.log(
+              `control block ${profile.name} ${scenario} ${run + 1}/${repeat} ${block + 1}/3: on-time ${controlSummary.onTimeFrames}/${controlSummary.eligibleFrames}, input send gaps p50/p95/max ${controlCadence.p50Ms.toFixed(1)}/${controlCadence.p95Ms.toFixed(1)}/${controlCadence.maxMs.toFixed(1)} ms, late ${controlCadence.lateGaps}/${controlCadence.samples - 1} over ${controlCadence.maxAllowedGapMs} ms, Chrome receipt gaps p50/p95/max ${controlSummary.receivedMoveGaps.p50Ms.toFixed(1)}/${controlSummary.receivedMoveGaps.p95Ms.toFixed(1)}/${controlSummary.receivedMoveGaps.maxMs.toFixed(1)} ms, main p95 ${controlSummary.mainP95Ms.toFixed(3)} ms`,
+            );
           }
+          await page.bringToFront();
           if (scenario === 'stroke') {
             // Verify the same real input path after tracing. Screenshot capture
             // never changes the app's 2D canvas readback mode during a block.
@@ -417,11 +561,26 @@ export async function runEditorInput(
             await afterPaint(page);
           }
           if (errors.length) throw new Error(errors.join(', '));
-          const { passed, details } = summarizeBlocks(
-            blocks,
+          const app = summarizeBlocks(blocks, mainThreadTargetMs[profile.name][scenario]);
+          const control = summarizeBlocks(
+            controlBlocks,
             mainThreadTargetMs[profile.name][scenario],
           );
-          if (!passed && process.env.PIXELS_PERF_TRACE_DIR) {
+          const invalidBlocks = cadences.flatMap((cadence, index) =>
+            cadence.valid ? [] : [index + 1],
+          );
+          const invalidControlBlocks = controlCadences.flatMap((cadence, index) =>
+            cadence.valid ? [] : [index + 1],
+          );
+          const gates = editorGateVerdict({
+            appMainPassed: app.mainPassed,
+            appFramesPassed: app.framesPassed,
+            appCadenceValid: invalidBlocks.length === 0,
+            controlPassed: control.passed,
+            controlCadenceValid: invalidControlBlocks.length === 0,
+          });
+          const { verdict } = gates;
+          if (verdict !== 'PASS' && process.env.PIXELS_PERF_TRACE_DIR) {
             const worstBlock = blocks.reduce(
               (worst, block, index) =>
                 block.eligibleFrames - block.onTimeFrames >
@@ -438,10 +597,29 @@ export async function runEditorInput(
             );
             await Bun.write(path, gzipSync(JSON.stringify(retainedTraces[worstBlock])));
             console.log(`Failed frame trace: ${path}`);
+            if (gates.frames === 'INVALID') {
+              const worstControlBlock = controlBlocks.reduce(
+                (worst, block, index) =>
+                  block.eligibleFrames - block.onTimeFrames >
+                  controlBlocks[worst]!.eligibleFrames - controlBlocks[worst]!.onTimeFrames
+                    ? index
+                    : worst,
+                0,
+              );
+              const controlPath = join(
+                directory,
+                `${profile.name}-${scenario}-${run + 1}-control-${worstControlBlock + 1}.json.gz`,
+              );
+              await Bun.write(
+                controlPath,
+                gzipSync(JSON.stringify(controlTraces[worstControlBlock])),
+              );
+              console.log(`Control frame trace: ${controlPath}`);
+            }
           }
-          if (!passed) failed = true;
+          if (verdict !== 'PASS') failed = true;
           console.log(
-            `${passed ? 'PASS' : 'FAIL'} real editor ${profile.name} ${profile.width}×${profile.height} @ ${profile.dpr}× ${scenario} ${run + 1}/${repeat}: ${details}, loadavg ${loadavg()
+            `${verdict} real editor ${profile.name} ${profile.width}×${profile.height} @ ${profile.dpr}× ${scenario} ${run + 1}/${repeat}: main gate ${gates.main}, frame gate ${gates.frames}; ${invalidBlocks.length ? `app driver missed input cadence in block(s) ${invalidBlocks.join(', ')}; ` : ''}${invalidControlBlocks.length ? `control driver missed input cadence in block(s) ${invalidControlBlocks.join(', ')}; ` : ''}${app.details}; control ${control.details}, loadavg ${loadavg()
               .map((value) => value.toFixed(2))
               .join('/')}`,
           );
