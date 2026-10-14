@@ -82,11 +82,9 @@ function floodFillLarge(
   const rowRight = workspace.rowRight;
   const tileColumns = Math.ceil(width / CAPTURE_BLOCK_SIZE);
   const tileCount = tileColumns * Math.ceil(height / CAPTURE_BLOCK_SIZE);
-  if (!fullSnapshot) {
-    if (workspace.capturedTiles.length < tileCount)
-      workspace.capturedTiles = new Uint8Array(tileCount);
-    else workspace.capturedTiles.fill(0, 0, tileCount);
-  }
+  if (workspace.capturedTiles.length < tileCount)
+    workspace.capturedTiles = new Uint8Array(tileCount);
+  else workspace.capturedTiles.fill(0, 0, tileCount);
   const capturedTiles = workspace.capturedTiles;
   const tileRect: PixelRect = {
     x: 0,
@@ -116,20 +114,21 @@ function floodFillLarge(
     span.x = left - rowStart;
     span.y = row;
     span.width = right - left + 1;
-    if (!fullSnapshot) {
-      // Capture each block only before its first write; history owns the
-      // actual snapshot tiles and clips edge blocks to the document.
-      const tileRow = row >>> CAPTURE_BLOCK_SHIFT;
-      const startTile = span.x >>> CAPTURE_BLOCK_SHIFT;
-      const endTile = (span.x + span.width - 1) >>> CAPTURE_BLOCK_SHIFT;
-      for (let tileX = startTile; tileX <= endTile; tileX++) {
-        const tileIndex = tileRow * tileColumns + tileX;
-        if (capturedTiles[tileIndex]) continue;
+    // Record touched blocks even after a full capture: a small connected
+    // region can live in a very common source color. History can then discard
+    // the full copy at commit and retain only its changed blocks.
+    const tileRow = row >>> CAPTURE_BLOCK_SHIFT;
+    const startTile = span.x >>> CAPTURE_BLOCK_SHIFT;
+    const endTile = (span.x + span.width - 1) >>> CAPTURE_BLOCK_SHIFT;
+    for (let tileX = startTile; tileX <= endTile; tileX++) {
+      const tileIndex = tileRow * tileColumns + tileX;
+      if (capturedTiles[tileIndex]) continue;
+      if (!fullSnapshot) {
         tileRect.x = tileX << CAPTURE_BLOCK_SHIFT;
         tileRect.y = tileRow << CAPTURE_BLOCK_SHIFT;
         transaction.capture(tileRect);
-        capturedTiles[tileIndex] = 1;
       }
+      capturedTiles[tileIndex] = 1;
     }
     pixels.fill(color, left, right + 1);
     rowLeft[row] = span.x;
@@ -163,8 +162,9 @@ function floodFillLarge(
       }
     }
   }
-  transaction.commit();
   const dirty = { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+  if (fullSnapshot) transaction.narrowFullCapture(capturedTiles, dirty);
+  transaction.commit();
   document.events.invalidate(dirty);
   return { dirty, changedPixels };
 }

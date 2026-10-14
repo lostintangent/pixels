@@ -158,3 +158,51 @@ test('a screenshot-scale window fills exactly and undo restores every byte in on
   history.redo(document);
   expect(hash(document.pixels)).toBe(expectedHash);
 });
+
+for (const whiteBackground of [false, true]) {
+  test(`ten small screenshot fills retain all undo steps with ${whiteBackground ? 'above 75%' : 'about 66%'} source color`, () => {
+    const width = 3456;
+    const height = 2234;
+    const document = createBitmapDocument('buttons', width, height);
+    const background = packRgba(90, 110, 140, 255);
+    const white = packRgba(255, 255, 255, 255);
+    const border = packRgba(30, 30, 32, 255);
+    const ink = packRgba(220, 40, 40, 255);
+    document.pixels.fill(whiteBackground ? white : background);
+    if (!whiteBackground) {
+      for (let y = 201; y < 2000; y++)
+        document.pixels.fill(white, y * width + 301, y * width + 3150);
+    }
+    const buttons: number[] = [];
+    for (let button = 0; button < 10; button++) {
+      const x = 500 + button * 200;
+      const y = 1000;
+      buttons.push(x + 20);
+      for (let row = y; row < y + 24; row++) {
+        document.pixels.fill(border, row * width + x, row * width + x + 40);
+        if (row > y && row < y + 23)
+          document.pixels.fill(white, row * width + x + 1, row * width + x + 39);
+      }
+    }
+    const hash = () =>
+      createHash('sha256').update(new Uint8Array(document.pixels.buffer)).digest('hex');
+    const originalHash = hash();
+    const history = createDocumentHistory();
+    const workspace = new FillWorkspace();
+    for (const x of buttons) {
+      const result = floodFill(document, { at: { x, y: 1010 }, color: ink }, history, workspace);
+      expect(result.changedPixels).toBe(38 * 22);
+    }
+    expect(history.usedBytes).toBeLessThan(1024 * 1024);
+    const filledHash = hash();
+    for (let i = buttons.length - 1; i >= 0; i--) {
+      expect(history.canUndo).toBe(true);
+      history.undo(document);
+      expect(document.pixels[1010 * width + buttons[i]!]).toBe(white);
+    }
+    expect(history.canUndo).toBe(false);
+    expect(hash()).toBe(originalHash);
+    for (let i = 0; i < buttons.length; i++) history.redo(document);
+    expect(hash()).toBe(filledHash);
+  });
+}

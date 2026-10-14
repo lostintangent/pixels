@@ -144,6 +144,44 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
             }
           }
         },
+        narrowFullCapture(changedTiles, dirty) {
+          if (closed) throw new Error('History transaction is closed');
+          if (!full) return;
+          const tileRows = Math.ceil(document.height / TILE_SIZE);
+          if (changedTiles.length < tileColumns * tileRows)
+            throw new RangeError('Changed tile mask does not cover the document');
+          let touchedBytes = 0;
+          for (let ty = 0; ty < tileRows; ty++) {
+            for (let tx = 0; tx < tileColumns; tx++) {
+              if (!changedTiles[ty * tileColumns + tx]) continue;
+              touchedBytes +=
+                Math.min(TILE_SIZE, document.width - tx * TILE_SIZE) *
+                Math.min(TILE_SIZE, document.height - ty * TILE_SIZE) *
+                Uint32Array.BYTES_PER_ELEMENT;
+            }
+          }
+          // Keep the O(1) buffer swap for a broad edit. Sparse edits only
+          // retain tiles copied from the pre-edit full snapshot.
+          if (touchedBytes >= full.byteLength / 2) return;
+          for (let ty = 0; ty < tileRows; ty++) {
+            for (let tx = 0; tx < tileColumns; tx++) {
+              const key = ty * tileColumns + tx;
+              if (!changedTiles[key]) continue;
+              const x = tx * TILE_SIZE;
+              const y = ty * TILE_SIZE;
+              const width = Math.min(TILE_SIZE, document.width - x);
+              const height = Math.min(TILE_SIZE, document.height - y);
+              const saved = new Uint32Array(width * height);
+              for (let row = 0; row < height; row++) {
+                const source = (y + row) * document.width + x;
+                saved.set(full.subarray(source, source + width), row * width);
+              }
+              tiles.set(key, { x, y, width, height, saved });
+            }
+          }
+          full = null;
+          bounds = { ...dirty };
+        },
         commit() {
           close();
           if (extra && extra.adapter.equals(extra.snapshot, extra.adapter.snapshot())) extra = null;
