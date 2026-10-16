@@ -16,6 +16,30 @@ function copyRegion(document: BitmapDocument, rect: PixelRect): FloatingSelectio
   return { bounds: { ...region }, sourceBounds: region, pixels, colorSpace: document.colorSpace };
 }
 
+function sourceOver(source: number, destination: number): number {
+  const sourceAlpha = source >>> 24;
+  if (destination >>> 24 === 0) return source;
+  const destinationAlpha = destination >>> 24;
+  const inverseAlpha = 255 - sourceAlpha;
+  const sourceWeight = sourceAlpha * 255;
+  const destinationWeight = destinationAlpha * inverseAlpha;
+  const denominator = sourceWeight + destinationWeight;
+  const outputAlpha = Math.round(denominator / 255);
+  const red = Math.round(
+    (((source >>> 0) & 255) * sourceWeight + ((destination >>> 0) & 255) * destinationWeight) /
+      denominator,
+  );
+  const green = Math.round(
+    (((source >>> 8) & 255) * sourceWeight + ((destination >>> 8) & 255) * destinationWeight) /
+      denominator,
+  );
+  const blue = Math.round(
+    (((source >>> 16) & 255) * sourceWeight + ((destination >>> 16) & 255) * destinationWeight) /
+      denominator,
+  );
+  return ((outputAlpha << 24) | (blue << 16) | (green << 8) | red) >>> 0;
+}
+
 function pasteRegion(document: BitmapDocument, selection: FloatingSelection): PixelRect | null {
   const documentBounds: PixelRect = { x: 0, y: 0, width: document.width, height: document.height };
   const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
@@ -24,7 +48,13 @@ function pasteRegion(document: BitmapDocument, selection: FloatingSelection): Pi
     const source =
       (row + clip.y - selection.bounds.y) * selection.bounds.width + clip.x - selection.bounds.x;
     const target = (clip.y + row) * document.width + clip.x;
-    document.pixels.set(selection.pixels.subarray(source, source + clip.width), target);
+    for (let column = 0; column < clip.width; column++) {
+      const pixel = selection.pixels[source + column]!;
+      const alpha = pixel >>> 24;
+      if (alpha === 0) continue;
+      const index = target + column;
+      document.pixels[index] = alpha === 255 ? pixel : sourceOver(pixel, document.pixels[index]!);
+    }
   }
   return { ...clip };
 }
@@ -107,6 +137,17 @@ export function beginSelection(
       floating = null;
       transaction = null;
       lifted = false;
+      // A lifted selection still carries the original RGBA bytes, including
+      // hidden RGB in transparent pixels. Dropping it where it began is an
+      // exact no-op and must not clear those bytes or add an undo step.
+      if (
+        clearSource &&
+        target.bounds.x === target.sourceBounds.x &&
+        target.bounds.y === target.sourceBounds.y
+      ) {
+        current.cancel();
+        return false;
+      }
       const documentBounds: PixelRect = {
         x: 0,
         y: 0,

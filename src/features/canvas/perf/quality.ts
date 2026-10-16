@@ -1,5 +1,7 @@
 import { convertPixelColorSpace, createBitmapDocument, packRgba } from '../../document';
 import { annotationsFor } from '../../annotations';
+import { createDocumentHistory } from '../../history';
+import { beginSelection } from '../../tools';
 import { createCanvasRenderer } from '../render/renderer';
 
 const SIDE = 512;
@@ -313,6 +315,30 @@ export async function checkPreviewGrid(): Promise<Record<string, number>> {
       renderer.setOverlay(emptyOverlay);
       errors[name] = difference(liveFloat, await capture());
     }
+
+    const alphaBitmap = createBitmapDocument('alpha-float-quality', width, height);
+    const source = { x: 2, y: 2, width: 2, height: 1 };
+    const destination = { x: 9, y: 2 };
+    alphaBitmap.pixels[2 * width + 2] = packRgba(255, 0, 0, 128);
+    alphaBitmap.pixels[2 * width + 3] = packRgba(19, 77, 123, 0);
+    alphaBitmap.pixels[2 * width + 9] = packRgba(0, 0, 255);
+    alphaBitmap.pixels[2 * width + 10] = packRgba(0, 255, 0);
+    const alphaSelection = beginSelection(alphaBitmap, createDocumentHistory());
+    alphaSelection.lift(source);
+    alphaSelection.move(destination);
+    renderer.setDocument(alphaBitmap);
+    renderer.setOverlay({
+      ...emptyOverlay,
+      sourceClear: alphaSelection.sourceToClear,
+      preview: {
+        bounds: alphaSelection.floating!.bounds,
+        pixels: alphaSelection.floating!.pixels,
+      },
+    });
+    const liveAlphaFloat = await capture();
+    alphaSelection.commit();
+    renderer.setOverlay(emptyOverlay);
+    errors['alpha float'] = difference(liveAlphaFloat, await capture());
     return errors;
   } finally {
     renderer.dispose();

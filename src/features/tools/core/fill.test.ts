@@ -83,6 +83,58 @@ test('same-color and outside fills are no-ops with no history entry', () => {
   expect(history.canUndo).toBe(false);
 });
 
+test('fully transparent hidden RGB does not divide an imported icon fill', () => {
+  const document = createBitmapDocument('icon', 48, 48);
+  const hidden = [packRgba(0, 0, 0, 0), packRgba(255, 0, 0, 0), packRgba(0, 0, 255, 0)];
+  const wall = packRgba(20, 30, 40, 255);
+  for (let y = 0; y < 48; y++) {
+    for (let x = 0; x < 48; x++) document.pixels[y * 48 + x] = hidden[(x * 7 + y) % 3]!;
+    document.pixels[y * 48 + 10] = wall;
+  }
+  const before = document.rgbaBytes.slice();
+  const history = createDocumentHistory();
+  const invisibleChange = floodFill(
+    document,
+    { at: { x: 0, y: 0 }, color: packRgba(77, 88, 99, 0) },
+    history,
+  );
+  expect(invisibleChange.changedPixels).toBe(0);
+  expect(history.canUndo).toBe(false);
+  const result = floodFill(document, { at: { x: 0, y: 0 }, color: BLUE }, history);
+  expect(result.changedPixels).toBe(10 * 48);
+  expect(result.dirty).toEqual({ x: 0, y: 0, width: 10, height: 48 });
+  for (let y = 0; y < 48; y++) {
+    for (let x = 0; x < 10; x++) expect(document.pixels[y * 48 + x]).toBe(BLUE);
+    expect(document.pixels[y * 48 + 10]).toBe(wall);
+    for (let x = 11; x < 48; x++)
+      expect(document.pixels[y * 48 + x]).toBe(hidden[(x * 7 + y) % 3]!);
+  }
+  history.undo(document);
+  expect(document.rgbaBytes).toEqual(before);
+  expect(history.canUndo).toBe(false);
+  history.redo(document);
+  expect(document.pixels[0]).toBe(BLUE);
+});
+
+test('large transparent fill crosses hidden-RGB variations without crossing visible pixels', () => {
+  const width = 1025;
+  const height = 1024;
+  const document = createBitmapDocument('large-alpha', width, height);
+  for (let i = 0; i < document.pixels.length; i++)
+    document.pixels[i] = packRgba(i & 255, (i >>> 8) & 255, 0, 0);
+  const wall = packRgba(7, 8, 9, 255);
+  document.pixels[width * 512 + 512] = wall;
+  const before = document.rgbaBytes.slice();
+  const history = createDocumentHistory();
+  const result = floodFill(document, { at: { x: 0, y: 0 }, color: BLUE }, history);
+  expect(result.changedPixels).toBe(width * height - 1);
+  expect(document.pixels[width * 512 + 512]).toBe(wall);
+  history.undo(document);
+  expect(document.rgbaBytes).toEqual(before);
+  history.redo(document);
+  expect(document.pixels[width * 512 + 511]).toBe(BLUE);
+});
+
 test('a screenshot-scale window fills exactly and undo restores every byte in one step', () => {
   const width = 3456;
   const height = 2234;

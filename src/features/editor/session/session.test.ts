@@ -260,6 +260,27 @@ test('Option-drag inside a selection drags out a copy with the undo cost of Dupl
   expect(floating.undoSteps()).toBe(2);
 });
 
+test('Option-drag copy keeps art visible through transparent selection pixels', () => {
+  const halfRed = packRgba(255, 0, 0, 128);
+  const hidden = packRgba(19, 77, 123, 0);
+  const document = createBitmapDocument('option-alpha', 4, 1);
+  document.pixels.set([halfRed, hidden, B, A]);
+  const before = document.rgbaBytes.slice();
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'select' });
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(1, 0)]);
+  session.endGesture();
+  session.beginGesture({ ...input(0, 0), alt: true });
+  session.extendGesture([input(2, 0)]);
+  session.endGesture();
+  session.run({ type: 'selection', action: 'commit' });
+  expect(Array.from(document.pixels)).toEqual([halfRed, hidden, packRgba(128, 0, 127), A]);
+  session.run({ type: 'undo' });
+  expect(document.rgbaBytes).toEqual(before);
+  expect(session.state.state.canUndo).toBe(false);
+});
+
 test('Option-drag outside a selection starts a new marquee and never eyedrops', () => {
   const { document, session } = selectionSession(6);
   const primary = session.state.state.primary;

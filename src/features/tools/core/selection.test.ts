@@ -120,3 +120,54 @@ test('copy and paste use the same compact buffer and clip at document edges', ()
   history.undo(document);
   expect(Array.from(document.pixels)).toEqual([A, B, 0, 0, 0, 0]);
 });
+
+test('paste keeps art under transparent pixels and blends translucent pixels in one undo step', () => {
+  const hidden = packRgba(19, 77, 123, 0);
+  const halfRed = packRgba(255, 0, 0, 128);
+  const copiedFrom = createBitmapDocument('copy', 2, 1);
+  copiedFrom.pixels.set([hidden, halfRed]);
+  const document = createBitmapDocument('paste', 2, 1);
+  document.pixels.set([A, B]);
+  const history = createDocumentHistory();
+  const selection = beginSelection(document, history);
+  selection.paste(copySelection(copiedFrom, { x: 0, y: 0, width: 2, height: 1 })!, {
+    x: 0,
+    y: 0,
+  });
+  expect(selection.commit()).toBe(true);
+  expect(Array.from(document.pixels)).toEqual([A, packRgba(128, 0, 127)]);
+  history.undo(document);
+  expect(Array.from(document.pixels)).toEqual([A, B]);
+  expect(history.canUndo).toBe(false);
+  history.redo(document);
+  expect(Array.from(document.pixels)).toEqual([A, packRgba(128, 0, 127)]);
+});
+
+test('lifted move preserves destination art under transparent pixels and undo restores hidden RGB', () => {
+  const halfRed = packRgba(255, 0, 0, 128);
+  const hidden = packRgba(19, 77, 123, 0);
+  const document = createBitmapDocument('move', 4, 1);
+  document.pixels.set([halfRed, hidden, B, A]);
+  const before = document.rgbaBytes.slice();
+  const history = createDocumentHistory();
+  const selection = beginSelection(document, history);
+  selection.lift({ x: 0, y: 0, width: 2, height: 1 });
+  selection.move({ x: 2, y: 0 });
+  expect(selection.commit()).toBe(true);
+  expect(Array.from(document.pixels)).toEqual([0, 0, packRgba(128, 0, 127), A]);
+  history.undo(document);
+  expect(document.rgbaBytes).toEqual(before);
+  expect(history.canUndo).toBe(false);
+});
+
+test('dropping a lifted selection in place leaves hidden RGB byte-identical', () => {
+  const document = createBitmapDocument('same-place', 2, 1);
+  document.pixels.set([packRgba(255, 0, 0, 128), packRgba(19, 77, 123, 0)]);
+  const before = document.rgbaBytes.slice();
+  const history = createDocumentHistory();
+  const selection = beginSelection(document, history);
+  selection.lift({ x: 0, y: 0, width: 2, height: 1 });
+  expect(selection.commit()).toBe(false);
+  expect(document.rgbaBytes).toEqual(before);
+  expect(history.canUndo).toBe(false);
+});

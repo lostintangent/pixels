@@ -36,8 +36,12 @@ function floodFillLarge(
     document.pixels.length,
   );
   const source = pixels[y * width + x]!;
+  // Hidden RGB is not visible when alpha is zero. Treat all such pixels as
+  // one fill color without changing exact matching for visible pixels.
+  const transparentSource = source >>> 24 === 0;
   const color = input.color | 0;
-  if (source === color) return { dirty: null, changedPixels: 0 };
+  if (source === color || (transparentSource && color >>> 24 === 0))
+    return { dirty: null, changedPixels: 0 };
 
   // A full population count is useful only when a large source region might
   // justify a full history snapshot or the uniform-canvas fast path. For a
@@ -46,7 +50,7 @@ function floodFillLarge(
   let hits = 0;
   for (let i = 0; i < SOURCE_SAMPLE_COUNT; i++) {
     const index = (Math.imul(i, 0x9e3779b1) >>> 0) % pixels.length;
-    if (pixels[index] === source) hits++;
+    if (pixels[index] === source || (transparentSource && pixels[index]! >>> 24 === 0)) hits++;
   }
   // A contiguous copy is cheaper than thousands of tile snapshots for a
   // screenshot-sized, mostly uniform window. Bound that tradeoff to 32 MiB;
@@ -56,7 +60,7 @@ function floodFillLarge(
   let sourceCount = 0;
   if (hits === SOURCE_SAMPLE_COUNT || (!boundedSnapshot && hits >= SOURCE_SAMPLE_THRESHOLD)) {
     for (let i = 0; i < pixels.length; i++) {
-      if (pixels[i] === source) sourceCount++;
+      if (pixels[i] === source || (transparentSource && pixels[i]! >>> 24 === 0)) sourceCount++;
     }
   }
   const transaction = history.begin('Fill', document);
@@ -104,13 +108,21 @@ function floodFillLarge(
   const span: PixelRect = { x: 0, y: 0, width: 0, height: 1 };
   while (top > 0) {
     const seed = stack[--top]!;
-    if (pixels[seed] !== source) continue;
+    if (pixels[seed] !== source && !(transparentSource && pixels[seed]! >>> 24 === 0)) continue;
     const row = Math.floor(seed / width);
     const rowStart = row * width;
     let left = seed;
     let right = seed;
-    while (left > rowStart && pixels[left - 1] === source) left--;
-    while (right < rowStart + width - 1 && pixels[right + 1] === source) right++;
+    while (
+      left > rowStart &&
+      (pixels[left - 1] === source || (transparentSource && pixels[left - 1]! >>> 24 === 0))
+    )
+      left--;
+    while (
+      right < rowStart + width - 1 &&
+      (pixels[right + 1] === source || (transparentSource && pixels[right + 1]! >>> 24 === 0))
+    )
+      right++;
     span.x = left - rowStart;
     span.y = row;
     span.width = right - left + 1;
@@ -149,7 +161,12 @@ function floodFillLarge(
       const end = neighborRow * width + span.x + span.width;
       let index = neighborRow * width + span.x;
       while (index < end) {
-        while (index < end && pixels[index] !== source) index++;
+        while (
+          index < end &&
+          pixels[index] !== source &&
+          !(transparentSource && pixels[index]! >>> 24 === 0)
+        )
+          index++;
         if (index === end) break;
         if (top === stack.length) {
           const grown = new Uint32Array(stack.length * 2);
@@ -158,7 +175,11 @@ function floodFillLarge(
           workspace.stack = grown;
         }
         stack[top++] = index;
-        while (index < end && pixels[index] === source) index++;
+        while (
+          index < end &&
+          (pixels[index] === source || (transparentSource && pixels[index]! >>> 24 === 0))
+        )
+          index++;
       }
     }
   }
@@ -188,12 +209,14 @@ function floodFillCompact(
     document.pixels.length,
   );
   const source = pixels[y * width + x]!;
+  const transparentSource = source >>> 24 === 0;
   const color = input.color | 0;
-  if (source === color) return { dirty: null, changedPixels: 0 };
+  if (source === color || (transparentSource && color >>> 24 === 0))
+    return { dirty: null, changedPixels: 0 };
 
   let sourceCount = 0;
   for (let i = 0; i < pixels.length; i++) {
-    if (pixels[i] === source) sourceCount++;
+    if (pixels[i] === source || (transparentSource && pixels[i]! >>> 24 === 0)) sourceCount++;
   }
   const transaction = history.begin('Fill', document);
   if (sourceCount === pixels.length) {
@@ -221,13 +244,21 @@ function floodFillCompact(
   const span: PixelRect = { x: 0, y: 0, width: 0, height: 1 };
   while (top > 0) {
     const seed = stack[--top]!;
-    if (pixels[seed] !== source) continue;
+    if (pixels[seed] !== source && !(transparentSource && pixels[seed]! >>> 24 === 0)) continue;
     const row = Math.floor(seed / width);
     const rowStart = row * width;
     let left = seed;
     let right = seed;
-    while (left > rowStart && pixels[left - 1] === source) left--;
-    while (right < rowStart + width - 1 && pixels[right + 1] === source) right++;
+    while (
+      left > rowStart &&
+      (pixels[left - 1] === source || (transparentSource && pixels[left - 1]! >>> 24 === 0))
+    )
+      left--;
+    while (
+      right < rowStart + width - 1 &&
+      (pixels[right + 1] === source || (transparentSource && pixels[right + 1]! >>> 24 === 0))
+    )
+      right++;
     span.x = left - rowStart;
     span.y = row;
     span.width = right - left + 1;
@@ -244,7 +275,12 @@ function floodFillCompact(
       const end = neighborRow * width + span.x + span.width;
       let index = neighborRow * width + span.x;
       while (index < end) {
-        while (index < end && pixels[index] !== source) index++;
+        while (
+          index < end &&
+          pixels[index] !== source &&
+          !(transparentSource && pixels[index]! >>> 24 === 0)
+        )
+          index++;
         if (index === end) break;
         if (top === stack.length) {
           const grown = new Uint32Array(stack.length * 2);
@@ -253,7 +289,11 @@ function floodFillCompact(
           workspace.stack = grown;
         }
         stack[top++] = index;
-        while (index < end && pixels[index] === source) index++;
+        while (
+          index < end &&
+          (pixels[index] === source || (transparentSource && pixels[index]! >>> 24 === 0))
+        )
+          index++;
       }
     }
   }
