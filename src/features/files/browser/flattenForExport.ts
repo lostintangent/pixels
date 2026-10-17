@@ -67,19 +67,10 @@ export function createScaledShapeOverlay(
       const bandOutRows = (endY - startY) * scale;
       // Pad the canvas a few document rows above and below the band before painting, then keep
       // only the band's own rows. Without this, a shape whose stroke extends right up to (or
-      // just past) the band's edge was missing real context the rasterizer would otherwise see —
-      // and this padding does measurably reduce the pixels that differ from a single monolithic
-      // paint of the same shapes (26,922 → 26,863 of 4,194,304 on this file's 2048² golden case).
-      // A larger, separately diagnosed and still-unavoidable gap remains at the thinnest bands:
-      // Chrome's `getImageData` itself reads a partial-height region of a canvas very slightly
-      // differently than reading the whole canvas, confirmed with identical shape geometry and
-      // canvas size and no translate involved (see the doc comment on `renderScaled` in
-      // `golden/goldenFixture.ts`). That's a browser readback characteristic this streaming,
-      // memory-bounded encoder can't avoid without reading the entire output into memory at once
-      // — `golden/run.ts` allows a small, measured tolerance for it instead.
-      // The padding below matches `verticalExtentOf`'s own margin (half the widest touching
-      // stroke plus 2px of anti-aliasing slack), so the canvas always has at least that much real
-      // stroke geometry on both sides of the band it's keeping.
+      // just past) the band's edge was missing real context the rasterizer would otherwise see.
+      // The padding matches `verticalExtentOf`'s own margin (half the widest touching stroke plus
+      // 2px of anti-aliasing slack), so the canvas always has at least that much real stroke
+      // geometry on both sides of the band it's keeping.
       const padDocRows = Math.ceil(Math.max(...shapesHere.map((shape) => shape.width / 2 + 2)));
       const paddedStartY = Math.max(0, startY - padDocRows);
       const paddedEndY = endY + padDocRows;
@@ -89,7 +80,17 @@ export function createScaledShapeOverlay(
         canvas.width = outWidth;
         canvas.height = paddedOutRows;
       }
-      const ctx = canvas.getContext('2d', { colorSpace }) as OffscreenCanvasRenderingContext2D;
+      // `willReadFrequently` keeps this canvas on the CPU rasterizer for its whole lifetime.
+      // Without it, Chrome paints the first few bands on the GPU, then silently falls back to
+      // software after enough `getImageData` calls — so a band read right at that fallback point
+      // reads back very slightly different anti-aliased pixel values than the bands around it,
+      // even though nothing about the painted geometry changed. Forcing software rasterization
+      // up front makes every band's readback consistent with every other, and was also faster
+      // for this file's heaviest case (see `golden/run.ts` for the measured timing).
+      const ctx = canvas.getContext('2d', {
+        colorSpace,
+        willReadFrequently: true,
+      }) as OffscreenCanvasRenderingContext2D;
       ctx.clearRect(0, 0, outWidth, paddedOutRows);
       paintAnnotationsAtScale(ctx, shapesHere, colorSpace, scale, paddedStartY);
       const bandOffsetRows = (startY - paddedStartY) * scale;

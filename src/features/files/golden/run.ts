@@ -40,18 +40,16 @@ const MIN_CHANGED_FRACTION = 0.5;
  *  already generous headroom below what two thin shape outlines actually produce at scale ≥ 4. */
 const MIN_DIFFERS_FROM_BLOCKY_FRACTION = 0.001;
 
-/** At most scales the real export matches a scale-native reference byte-for-byte. At the
- *  thinnest bands (128² at 16×, an 8-document-row band), isolated testing in
- *  `goldenFixture.ts`'s doc comment on `renderScaled` found Chrome's `getImageData` itself reads
- *  a partial-height region of a canvas very slightly differently than reading the whole canvas —
- *  reproduced with identical shape geometry, identical canvas size, and no `ctx.translate`, so
- *  it isn't a banding, padding, or color-space bug. The measured worst case was 26,863/4,194,304
- *  pixels (0.641%), confined to anti-aliased shape-edge pixels. This budget stays at 1.5× that
- *  measurement, the same margin this project's performance budgets use over an observed
- *  maximum — tight enough to fail hard on a real regression (e.g. shapes rendering at the wrong
- *  position, or a much larger area going wrong), loose enough to absorb this specific, bounded
- *  browser readback characteristic. */
-const MAX_MISMATCH_FRACTION = 0.01;
+/** A banded paint and a truly monolithic paint of the same shapes can still differ very slightly
+ *  even on the identical (software) rasterizer — a stroke rasterized inside a band smaller than
+ *  the whole output doesn't necessarily hit the exact same anti-aliasing rounding as the same
+ *  stroke rasterized inside one giant canvas. Measured at up to 23/255 premultiplied (0.03–0.10%
+ *  of pixels), spread evenly across rows rather than clustered at band boundaries — ordinary
+ *  cross-paint AA rounding, not a seam. This stays at 1.5× that measurement, the same margin this
+ *  project's performance budgets use over an observed maximum: tight enough to fail hard on an
+ *  actual banding seam or dropped shape (which shows up as a premultiplied delta up to 255 on
+ *  every pixel it touches), loose enough to absorb this specific, bounded rounding. */
+const MAX_SEAM_PREMULTIPLIED_DELTA = 35;
 
 declare global {
   interface Window {
@@ -102,20 +100,22 @@ function reportCorrectness(colorSpace: GoldenColorSpace, result: GoldenResult): 
   return true;
 }
 
-/** Checks a scaled export's shapes are rasterized natively at the output scale: matches a shape
- *  painted directly at that scale (not document resolution) within `MAX_MISMATCH_FRACTION`, and
- *  meaningfully different from the old document-resolution-then-nearest-neighbor-replicate bug.
- *  No time budget here — callers that care about timing print `result.ms` themselves. */
+/** Checks a scaled export's shapes are rasterized natively at the output scale: byte-identical to
+ *  a shape painted directly at that scale (not document resolution) by the same banding
+ *  algorithm, meaningfully different from the old document-resolution-then-nearest-neighbor-
+ *  replicate bug, and within `MAX_SEAM_PREMULTIPLIED_DELTA` of a truly monolithic, unbanded paint
+ *  of the same shapes — which is what actually catches a bug in banding itself (a dropped shape
+ *  or a shifted band boundary would move the first, banded-vs-banded check in lockstep and still
+ *  pass it). No time budget here — callers that care about timing print `result.ms` themselves. */
 function reportScaledCorrectness(
   colorSpace: GoldenColorSpace,
   result: GoldenScaledResult,
 ): boolean {
   const label = `${colorSpace} ${result.width}×${result.height} (${result.scale}×)`;
   const pixelCount = result.width * result.height;
-  const mismatchFraction = result.mismatchCount / pixelCount;
-  if (mismatchFraction > MAX_MISMATCH_FRACTION) {
+  if (!result.matches) {
     console.log(
-      `FAIL PNG scaled export golden ${label}: first mismatch at pixel ${result.firstMismatchIndex} (reference 0x${result.referencePixel.toString(16)}, decoded 0x${result.decodedPixel.toString(16)}), ${result.mismatchCount}/${pixelCount} pixels differ (${(mismatchFraction * 100).toFixed(3)}%, limit ${(MAX_MISMATCH_FRACTION * 100).toFixed(1)}%), max channel delta ${result.maxChannelDelta}`,
+      `FAIL PNG scaled export golden ${label}: first mismatch at pixel ${result.firstMismatchIndex} (reference 0x${result.referencePixel.toString(16)}, decoded 0x${result.decodedPixel.toString(16)}), ${result.mismatchCount}/${pixelCount} pixels differ, max channel delta ${result.maxChannelDelta}`,
     );
     return false;
   }
@@ -126,11 +126,16 @@ function reportScaledCorrectness(
     );
     return false;
   }
-  const matchLabel = result.matches
-    ? 'byte-identical'
-    : `${pixelCount - result.mismatchCount}/${pixelCount} pixels match (${(mismatchFraction * 100).toFixed(3)}%, within the ${(MAX_MISMATCH_FRACTION * 100).toFixed(1)}% readback tolerance)`;
+  if (result.seamMaxPremultipliedDelta > MAX_SEAM_PREMULTIPLIED_DELTA) {
+    const seamFraction = result.seamMismatchCount / pixelCount;
+    console.log(
+      `FAIL PNG scaled export golden ${label}: ${result.seamMismatchCount}/${pixelCount} pixels (${(seamFraction * 100).toFixed(3)}%) differ from a monolithic unbanded paint, max premultiplied delta ${result.seamMaxPremultipliedDelta} (limit ${MAX_SEAM_PREMULTIPLIED_DELTA}) — looks like a banding seam, not AA rounding`,
+    );
+    return false;
+  }
+  const seamFraction = result.seamMismatchCount / pixelCount;
   console.log(
-    `PASS PNG scaled export golden ${label}: ${matchLabel} to a scale-native reference, ${result.differsFromBlockyCount}/${pixelCount} pixels (${(differsFraction * 100).toFixed(3)}%) differ from the old blocky-upscale bug`,
+    `PASS PNG scaled export golden ${label}: byte-identical to a scale-native reference, ${result.differsFromBlockyCount}/${pixelCount} pixels (${(differsFraction * 100).toFixed(3)}%) differ from the old blocky-upscale bug, ${result.seamMismatchCount}/${pixelCount} pixels (${(seamFraction * 100).toFixed(3)}%) differ from a monolithic unbanded paint (max premultiplied delta ${result.seamMaxPremultipliedDelta})`,
   );
   return true;
 }
@@ -235,7 +240,7 @@ try {
     const longTaskOk = result.longTaskMaxMs <= 50;
     if (!longTaskOk) failed = true;
     console.log(
-      `${longTaskOk ? 'PASS' : 'FAIL'} PNG scaled export golden 1024×1024 at 16× diagnostic: ${result.width}×${result.height} output, ${(result.byteLength / 1e6).toFixed(1)} MB, ${result.ms.toFixed(3)} ms (no time budget, baseline 5.4 s pre-fix), longest main-thread task ${result.longTaskMaxMs.toFixed(3)} ms (target ≤ 50 ms)`,
+      `${longTaskOk ? 'PASS' : 'FAIL'} PNG scaled export golden 1024×1024 at 16× diagnostic: ${result.width}×${result.height} output, ${(result.byteLength / 1e6).toFixed(1)} MB, ${result.ms.toFixed(3)} ms (no time budget), longest main-thread task ${result.longTaskMaxMs.toFixed(3)} ms (target ≤ 50 ms)`,
     );
   }
 

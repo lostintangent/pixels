@@ -54,12 +54,12 @@ export interface GoldenScaledResult {
   referencePixel: number;
   decodedPixel: number;
   /** How many output pixels differ at all from the scale-native reference, and the largest
-   *  single-channel absolute difference among them — at very high scale, a diagonal stroke
-   *  corner's anti-aliased coverage can legitimately round a shade differently between the DOM
-   *  canvas reference and `OffscreenCanvas` production path, the same kind of cross-backend
-   *  rasterizer divergence the scale-1 case already allows for. `mismatchCount` catches a
-   *  regression that changes far more than a few corner pixels; `maxChannelDelta` catches one
-   *  that's egregious rather than a few rounded shades. */
+   *  single-channel absolute difference among them. With `willReadFrequently: true` forcing both
+   *  this reference's and the real export's canvases onto the same (software) rasterizer from
+   *  their first paint, these are expected to be 0 — `reportScaledCorrectness` in `run.ts` requires
+   *  an exact match, the same as the scale-1 case. Kept as diagnostics so a future divergence
+   *  (e.g. a real `OffscreenCanvas` vs. DOM canvas rasterizer difference) reports its size instead
+   *  of only a pass/fail bit. */
   mismatchCount: number;
   maxChannelDelta: number;
   /** How many output pixels differ from the old, buggy behavior — flattening shapes once at
@@ -68,6 +68,18 @@ export interface GoldenScaledResult {
    *  fixture's "blocky" baseline were built the same (wrong) way, so this is an independent signal
    *  that real anti-aliased edges, not solid replicated blocks, are what actually exported. */
   differsFromBlockyCount: number;
+  /** How many output pixels differ from a *monolithic* reference — the same shapes painted once
+   *  directly onto one canvas sized to the entire output, with no row banding or padding at all.
+   *  `mismatchCount`/`matches` above compare against a reference that bands the same way the real
+   *  export does, so neither catches a bug in banding itself (e.g. a dropped shape or an
+   *  off-by-one band boundary, which would shift both sides identically). This comparison
+   *  actually exercises banding as a variable. `seamMaxPremultipliedDelta` is the largest
+   *  premultiplied per-channel difference among those mismatches — straight-alpha RGB can differ
+   *  hugely at a near-zero-alpha pixel without the composited result differing at all, so a
+   *  premultiplied comparison is what distinguishes harmless cross-paint AA rounding from an
+   *  actual seam or missing geometry. */
+  seamMismatchCount: number;
+  seamMaxPremultipliedDelta: number;
   ms: number;
   longTaskMaxMs: number;
 }
@@ -265,19 +277,37 @@ function replicateNearestNeighbor(source: Uint32Array, side: number, scale: numb
  *    meaningful number of output pixels must differ from this, proving real anti-aliased edges
  *    were drawn at scale rather than solid blocks copied from a single document pixel.
  *
- * At the thinnest bands (high scale over a small document, e.g. 128² at 16×, where a band is only
- * 8 document rows), the reference can still differ from the real export by well under 1% of
- * pixels, confined to anti-aliased shape-edge pixels. This was isolated, not assumed: an identical
- * shape painted into a canvas the exact size of the whole output and read back with one whole-
- * canvas `getImageData` matches the real export's per-band output byte-for-byte, but the same
- * paint read back through several smaller per-band `getImageData` calls (unavoidable — that's the
- * entire point of bounding memory to `OVERLAY_BAND_OUTPUT_ROWS` instead of the full output) does
- * not, even at identical canvas sizes and with no `ctx.translate` involved. That points to Chrome's
- * `getImageData` readback itself rounding a partial-height region very slightly differently than a
- * full-canvas read, not to a logic bug in banding, padding, or color-space handling — and it can't
- * be designed around without reading the entire multi-gigabyte output into memory at once, which
- * is the allocation this banding exists to avoid. `reportScaledCorrectness` in `run.ts` allows a
- * small, measured tolerance for exactly this reason instead of requiring byte-identical output.
+ * Both the reference above and `createScaledShapeOverlay` band the same way, so neither one alone
+ * can catch a bug in banding itself — a dropped shape or an off-by-one band boundary would shift
+ * both sides identically and still compare byte-identical. So this also builds a third, truly
+ * monolithic reference: the same shapes painted once on one canvas sized to the entire output,
+ * with no banding or padding at all. The real export is compared against *that* too, in
+ * `seamMismatchCount`/`seamMaxPremultipliedDelta` below, which is what actually exercises banding
+ * as a variable between the two paints.
+ *
+ * Banded and monolithic paints were originally expected to match exactly, since the canvas size,
+ * `ctx.translate` use, and color space are otherwise identical between them — but the real
+ * `OffscreenCanvas` export was measurably different from a per-band DOM `<canvas>` reference at
+ * the thinnest bands (128² at 16×, an 8-document-row band): up to 26,863/4,194,304 pixels
+ * (0.641%), confined to anti-aliased shape-edge pixels. That was isolated to Chrome moving an
+ * accelerated canvas to its software rasterizer after enough `getImageData` calls on it — so a
+ * canvas's *first* few bands, painted before that fallback, read back very slightly different
+ * anti-aliased values than its later bands, even with identical geometry, canvas size, and color
+ * space on every band. `willReadFrequently: true` (here and in `createScaledShapeOverlay`) forces
+ * every band's canvas onto the software rasterizer from its first paint, so every band reads back
+ * consistently — confirmed empirically: with it, this reference and the real export are
+ * byte-identical even at 128² × 16×, and the 1024² × 16× `timeScaledExport` diagnostic got
+ * *faster*, not slower, since Chrome no longer pays for the GPU-to-software transition mid-export.
+ *
+ * A banded paint and a truly monolithic paint of the same shapes can still differ very slightly —
+ * a stroke rasterized inside a band smaller than the whole output doesn't necessarily hit the
+ * exact same anti-aliasing rounding as the identical stroke rasterized inside one giant canvas,
+ * even on the same (software) rasterizer. Measured at up to 0.10% of pixels with a premultiplied
+ * channel delta of up to 23/255, spread evenly across rows rather than clustered at band
+ * boundaries — i.e. ordinary cross-paint AA rounding, not a seam. `MAX_SEAM_PREMULTIPLIED_DELTA`
+ * in `run.ts` bounds that, loose enough to absorb this rounding but tight enough to fail hard on
+ * an actual seam or a dropped shape, which would show up as a much larger delta (up to 255) on
+ * every pixel the discontinuity touches.
  */
 async function renderScaled(
   side: number,
@@ -305,7 +335,10 @@ async function renderScaled(
     const paddedOutRows = (paddedEndY - paddedStartY) * scale;
     bandCanvas.width = outSide;
     bandCanvas.height = paddedOutRows;
-    const bandCtx = bandCanvas.getContext('2d', { colorSpace }) as CanvasRenderingContext2D;
+    const bandCtx = bandCanvas.getContext('2d', {
+      colorSpace,
+      willReadFrequently: true,
+    }) as CanvasRenderingContext2D;
     paintAnnotationsAtScale(bandCtx, shapes, colorSpace, scale, paddedStartY);
     const bandOffsetRows = (y - paddedStartY) * scale;
     const layer = bandCtx.getImageData(0, bandOffsetRows, outSide, bandOutRows, {
@@ -328,6 +361,23 @@ async function renderScaled(
   );
   const blocky = replicateNearestNeighbor(flattened, side, scale);
 
+  // A truly monolithic reference — the same shapes, painted once at `scale` directly onto one
+  // canvas sized to the entire output, with no banding or padding at all. Unlike `reference`
+  // above, this doesn't band the same way `createScaledShapeOverlay` does, so comparing the real
+  // export against it actually exercises banding as a variable (see the doc comment above).
+  const monolithicCanvas = window.document.createElement('canvas');
+  monolithicCanvas.width = outSide;
+  monolithicCanvas.height = outSide;
+  const monolithicCtx = monolithicCanvas.getContext('2d', {
+    colorSpace,
+    willReadFrequently: true,
+  }) as CanvasRenderingContext2D;
+  paintAnnotationsAtScale(monolithicCtx, shapes, colorSpace, scale);
+  const monolithicLayer = monolithicCtx.getImageData(0, 0, outSide, outSide, { colorSpace }).data;
+  const monolithicReference = replicateNearestNeighbor(baseline, side, scale);
+  const monolithicReferenceBytes = new Uint8ClampedArray(monolithicReference.buffer);
+  compositeAnnotationLayerInto(monolithicReferenceBytes, monolithicLayer);
+
   const longTasks: number[] = [];
   const observer = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) longTasks.push(entry.duration);
@@ -343,7 +393,10 @@ async function renderScaled(
   let differsFromBlockyCount = 0;
   let mismatchCount = 0;
   let maxChannelDelta = 0;
+  let seamMismatchCount = 0;
+  let seamMaxPremultipliedDelta = 0;
   const referenceChannels = new Uint8ClampedArray(reference.buffer);
+  const monolithicChannels = new Uint8ClampedArray(monolithicReference.buffer);
   const decodedChannels = new Uint8ClampedArray(decoded.pixels.buffer);
   for (let i = 0; i < reference.length; i++) {
     if (reference[i] !== decoded.pixels[i]) {
@@ -355,6 +408,23 @@ async function renderScaled(
       }
     }
     if (blocky[i] !== decoded.pixels[i]) differsFromBlockyCount++;
+    if (monolithicReference[i] !== decoded.pixels[i]) {
+      seamMismatchCount++;
+      // Straight-alpha RGB can differ hugely between two paints at a near-zero-alpha pixel
+      // without the composited result looking any different at all — compare premultiplied
+      // values instead, so a seam (real geometry missing or shifted) still shows a large delta
+      // while harmless straight-alpha noise under near-invisible pixels doesn't.
+      const decodedAlpha = decodedChannels[i * 4 + 3]!;
+      const monolithicAlpha = monolithicChannels[i * 4 + 3]!;
+      for (let c = 0; c < 3; c++) {
+        const decodedPremultiplied = (decodedChannels[i * 4 + c]! * decodedAlpha) / 255;
+        const monolithicPremultiplied = (monolithicChannels[i * 4 + c]! * monolithicAlpha) / 255;
+        const delta = Math.abs(decodedPremultiplied - monolithicPremultiplied);
+        if (delta > seamMaxPremultipliedDelta) seamMaxPremultipliedDelta = delta;
+      }
+      const alphaDelta = Math.abs(decodedAlpha - monolithicAlpha);
+      if (alphaDelta > seamMaxPremultipliedDelta) seamMaxPremultipliedDelta = alphaDelta;
+    }
   }
 
   return {
@@ -368,6 +438,8 @@ async function renderScaled(
     mismatchCount,
     maxChannelDelta,
     differsFromBlockyCount,
+    seamMismatchCount,
+    seamMaxPremultipliedDelta,
     ms,
     longTaskMaxMs: longTasks.length ? Math.max(...longTasks) : 0,
   };
