@@ -19,11 +19,12 @@ export {
   translateAnnotation,
 } from './core/commands';
 export type { AnnotationEdit } from './core/commands';
-export { compositeAnnotationLayer } from './core/composite';
+export { compositeAnnotationLayer, compositeAnnotationLayerInto } from './core/composite';
 export {
   flattenAnnotations,
   paintAnnotation,
   paintAnnotationSelection,
+  paintAnnotationsAtScale,
   paintVisibleAnnotations,
 } from './browser/paint';
 export { hitAnnotationSet } from './core/hit';
@@ -38,4 +39,5 @@ export {
   square,
   strokeOffset,
   targetsOf,
+  verticalExtentOf,
 } from './core/geometry';

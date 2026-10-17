@@ -1,6 +1,11 @@
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
-import type { GoldenApi, GoldenColorSpace, GoldenResult } from './goldenFixture';
+import type {
+  GoldenApi,
+  GoldenColorSpace,
+  GoldenResult,
+  GoldenScaledResult,
+} from './goldenFixture';
 
 /**
  * Byte-identical golden proof for shape export: a document with a partial-alpha rectangle and
@@ -27,6 +32,26 @@ const output = resolve(import.meta.dirname, '../../../../dist-golden-export');
  *  low-alpha anti-aliased edge pixels that can round-trip back to the same byte by coincidence,
  *  while still failing hard on an accidental identity return. */
 const MIN_CHANGED_FRACTION = 0.5;
+
+/** A scaled export that regressed back to flattening shapes at document resolution and
+ *  nearest-neighbor replicating the result would differ from the "blocky" baseline in exactly 0
+ *  pixels. Real anti-aliased stroke edges, rasterized natively at the output scale, differ from a
+ *  block-replicated 1x composite in a comfortably large number of pixels — 0.1% of the image is
+ *  already generous headroom below what two thin shape outlines actually produce at scale ≥ 4. */
+const MIN_DIFFERS_FROM_BLOCKY_FRACTION = 0.001;
+
+/** At most scales the real export matches a scale-native reference byte-for-byte. At the
+ *  thinnest bands (128² at 16×, an 8-document-row band), isolated testing in
+ *  `goldenFixture.ts`'s doc comment on `renderScaled` found Chrome's `getImageData` itself reads
+ *  a partial-height region of a canvas very slightly differently than reading the whole canvas —
+ *  reproduced with identical shape geometry, identical canvas size, and no `ctx.translate`, so
+ *  it isn't a banding, padding, or color-space bug. The measured worst case was 26,863/4,194,304
+ *  pixels (0.641%), confined to anti-aliased shape-edge pixels. This budget stays at 1.5× that
+ *  measurement, the same margin this project's performance budgets use over an observed
+ *  maximum — tight enough to fail hard on a real regression (e.g. shapes rendering at the wrong
+ *  position, or a much larger area going wrong), loose enough to absorb this specific, bounded
+ *  browser readback characteristic. */
+const MAX_MISMATCH_FRACTION = 0.01;
 
 declare global {
   interface Window {
@@ -73,6 +98,39 @@ function reportCorrectness(colorSpace: GoldenColorSpace, result: GoldenResult): 
   }
   console.log(
     `PASS PNG export golden ${label}: ${result.pixelCount} pixels byte-identical, ${result.changedCount}/${result.footprintCount} footprint pixels changed (${(changedFraction * 100).toFixed(1)}%), none outside it`,
+  );
+  return true;
+}
+
+/** Checks a scaled export's shapes are rasterized natively at the output scale: matches a shape
+ *  painted directly at that scale (not document resolution) within `MAX_MISMATCH_FRACTION`, and
+ *  meaningfully different from the old document-resolution-then-nearest-neighbor-replicate bug.
+ *  No time budget here — callers that care about timing print `result.ms` themselves. */
+function reportScaledCorrectness(
+  colorSpace: GoldenColorSpace,
+  result: GoldenScaledResult,
+): boolean {
+  const label = `${colorSpace} ${result.width}×${result.height} (${result.scale}×)`;
+  const pixelCount = result.width * result.height;
+  const mismatchFraction = result.mismatchCount / pixelCount;
+  if (mismatchFraction > MAX_MISMATCH_FRACTION) {
+    console.log(
+      `FAIL PNG scaled export golden ${label}: first mismatch at pixel ${result.firstMismatchIndex} (reference 0x${result.referencePixel.toString(16)}, decoded 0x${result.decodedPixel.toString(16)}), ${result.mismatchCount}/${pixelCount} pixels differ (${(mismatchFraction * 100).toFixed(3)}%, limit ${(MAX_MISMATCH_FRACTION * 100).toFixed(1)}%), max channel delta ${result.maxChannelDelta}`,
+    );
+    return false;
+  }
+  const differsFraction = result.differsFromBlockyCount / pixelCount;
+  if (differsFraction < MIN_DIFFERS_FROM_BLOCKY_FRACTION) {
+    console.log(
+      `FAIL PNG scaled export golden ${label}: only ${result.differsFromBlockyCount}/${pixelCount} pixels (${(differsFraction * 100).toFixed(3)}%) differ from the old blocky-upscale bug — shapes may not be rasterizing at the output scale`,
+    );
+    return false;
+  }
+  const matchLabel = result.matches
+    ? 'byte-identical'
+    : `${pixelCount - result.mismatchCount}/${pixelCount} pixels match (${(mismatchFraction * 100).toFixed(3)}%, within the ${(MAX_MISMATCH_FRACTION * 100).toFixed(1)}% readback tolerance)`;
+  console.log(
+    `PASS PNG scaled export golden ${label}: ${matchLabel} to a scale-native reference, ${result.differsFromBlockyCount}/${pixelCount} pixels (${(differsFraction * 100).toFixed(3)}%) differ from the old blocky-upscale bug`,
   );
   return true;
 }
@@ -135,6 +193,49 @@ try {
     if (!correct || !longTaskOk) failed = true;
     console.log(
       `${longTaskOk ? 'PASS' : 'FAIL'} PNG export golden 4096×4096 diagnostic: ${result.ms.toFixed(3)} ms (no time budget), longest main-thread task ${result.longTaskMaxMs.toFixed(3)} ms (target ≤ 50 ms)`,
+    );
+  }
+
+  // Scaled export with shapes: proves shapes rasterize crisp at the output scale instead of
+  // being flattened at document resolution and blurrily upscaled. Small, fast sizes at a few
+  // representative scales, in both color spaces.
+  const scaledCases: Array<{ side: number; colorSpace: GoldenColorSpace; scale: number }> = [
+    { side: 32, colorSpace: 'srgb', scale: 8 },
+    { side: 64, colorSpace: 'srgb', scale: 4 },
+    { side: 64, colorSpace: 'display-p3', scale: 4 },
+    { side: 128, colorSpace: 'srgb', scale: 16 },
+  ];
+  for (const { side, colorSpace, scale } of scaledCases) {
+    const result = await page.evaluate(
+      ({ side, colorSpace, scale }) => window.__pixelsGolden!.renderScaled(side, colorSpace, scale),
+      { side, colorSpace, scale },
+    );
+    if (errors.length) throw errors[0];
+    if (!reportScaledCorrectness(colorSpace, result)) failed = true;
+  }
+
+  // The worst case the dialog's Scale control allows: a 1024² sheet exported at 16×, giving a
+  // 16384×16384 output — larger than `decodePng`'s `MAX_DOCUMENT_SIDE` guard, so it can't round
+  // trip through the full `renderScaled` correctness check. Pixel correctness at scale 16 is
+  // already proven above (128² at 16× decodes fine at 2048×2048) since the banding algorithm
+  // doesn't change with total output size, only the number of bands. This stays a timing-only
+  // diagnostic with the same long-task budget as the plain 4096² diagnostic — the shape-
+  // rasterization work happens entirely inside the PNG Worker, never the main thread, so main-
+  // thread time here is dominated by deflating raw RGBA, not by shape rendering.
+  {
+    const side = 1024;
+    const colorSpace: GoldenColorSpace = 'srgb';
+    const scale = 16;
+    const result = await page.evaluate(
+      ({ side, colorSpace, scale }) =>
+        window.__pixelsGolden!.timeScaledExport(side, colorSpace, scale),
+      { side, colorSpace, scale },
+    );
+    if (errors.length) throw errors[0];
+    const longTaskOk = result.longTaskMaxMs <= 50;
+    if (!longTaskOk) failed = true;
+    console.log(
+      `${longTaskOk ? 'PASS' : 'FAIL'} PNG scaled export golden 1024×1024 at 16× diagnostic: ${result.width}×${result.height} output, ${(result.byteLength / 1e6).toFixed(1)} MB, ${result.ms.toFixed(3)} ms (no time budget, baseline 5.4 s pre-fix), longest main-thread task ${result.longTaskMaxMs.toFixed(3)} ms (target ≤ 50 ms)`,
     );
   }
 

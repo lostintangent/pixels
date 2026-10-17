@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import type { Annotation } from '../../annotations';
 import type { DocumentColorSpace } from '../../document';
-import { flattenShapesForExport } from '../browser/flattenForExport';
+import { createScaledShapeOverlay, flattenShapesForExport } from '../browser/flattenForExport';
 import { convertUnknownIccPngToDisplayP3 } from '../browser/pngColorManagement';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
 import { decodePng, encodePng } from '../core/png';
@@ -93,22 +93,33 @@ self.addEventListener(
     const request = event.data;
     if (request.kind === 'encode') {
       const { id, width, height, scale, colorSpace, pixels, shapes = [] } = request;
-      let flattened: Uint32Array;
+      // At 1×, document resolution *is* output resolution, so shapes are flattened onto the
+      // pixels up front exactly as before — the unchanged path a 1× export always took. A scaled
+      // export instead keeps the raw pixels and gives `encodePng` an overlay that paints shapes
+      // directly at the output scale, in bounded row bands, so their anti-aliased edges stay
+      // crisp instead of blurring under a later nearest-neighbor upscale.
+      let source: Uint32Array;
+      let overlay: ReturnType<typeof createScaledShapeOverlay> | undefined;
       try {
         // Synchronous: a missing canvas API (only possible under `bun test`, never in a real
         // browser worker) throws here, before any promise chain exists to catch it.
-        flattened = flattenShapesForExport(
-          new Uint32Array(pixels),
-          width,
-          height,
-          colorSpace,
-          shapes,
-        );
+        if (scale === 1) {
+          source = flattenShapesForExport(
+            new Uint32Array(pixels),
+            width,
+            height,
+            colorSpace,
+            shapes,
+          );
+        } else {
+          source = new Uint32Array(pixels);
+          if (shapes.length) overlay = createScaledShapeOverlay(shapes, colorSpace, scale);
+        }
       } catch (error) {
         (self as unknown as Worker).postMessage(failureOf('encode', id, error));
         return;
       }
-      void encodePng(width, height, flattened, scale, colorSpace).then(
+      void encodePng(width, height, source, scale, colorSpace, overlay).then(
         (bytes) => {
           // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
           // of whether `bytes` happens to be a view over a larger backing buffer.

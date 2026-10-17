@@ -42,7 +42,9 @@ function defaultScale(document: BitmapDocument): number {
 interface PreviewFit {
   width: number;
   height: number;
-  /** Device pixels the worker renders. Upscaled previews stay at document size. */
+  /** Device pixels the worker renders. For a smooth (shrinking) fit this stays at or below the
+   *  document; for a pixelated (upscaling) fit it's the full zoomed-and-DPR device resolution, so
+   *  shapes rasterize directly at that resolution instead of being upscaled afterward. */
   target: { width: number; height: number };
   pixelated: boolean;
 }
@@ -64,7 +66,10 @@ function fitPreview(
     return {
       width: width * zoom,
       height: height * zoom,
-      target: { width, height },
+      target: {
+        width: Math.max(1, Math.round(width * zoom * dpr)),
+        height: Math.max(1, Math.round(height * zoom * dpr)),
+      },
       pixelated: true,
     };
   }
@@ -91,6 +96,7 @@ let lastRequest = 0;
 function renderPreview(
   document: BitmapDocument,
   target: PreviewFit['target'],
+  pixelated: boolean,
   onImage: (image: ImageBitmap) => void,
 ): () => void {
   worker ??= new Worker(new URL('./previewWorker.ts', import.meta.url), { type: 'module' });
@@ -104,6 +110,7 @@ function renderPreview(
     rgba,
     shapes: findAnnotationsFor(document)?.snapshot() ?? [],
     target,
+    pixelated,
   };
   const receive = ({ data }: MessageEvent<PreviewResponse>) => {
     if (data.id !== id) return;
@@ -152,17 +159,23 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
     layoutFit && fitPreview(bitmap, layoutFit.room, scale, globalThis.devicePixelRatio || 1);
   const targetWidth = shown?.target.width;
   const targetHeight = shown?.target.height;
+  const pixelated = shown?.pixelated ?? false;
 
   useEffect(() => {
     const canvas = preview.current;
     if (!isOpen || !canvas || !targetWidth || !targetHeight) return;
-    return renderPreview(bitmap, { width: targetWidth, height: targetHeight }, (image) => {
-      canvas.width = image.width;
-      canvas.height = image.height;
-      canvas.getContext('2d', { colorSpace: bitmap.colorSpace })?.drawImage(image, 0, 0);
-      image.close();
-    });
-  }, [isOpen, bitmap, targetWidth, targetHeight]);
+    return renderPreview(
+      bitmap,
+      { width: targetWidth, height: targetHeight },
+      pixelated,
+      (image) => {
+        canvas.width = image.width;
+        canvas.height = image.height;
+        canvas.getContext('2d', { colorSpace: bitmap.colorSpace })?.drawImage(image, 0, 0);
+        image.close();
+      },
+    );
+  }, [isOpen, bitmap, targetWidth, targetHeight, pixelated]);
 
   const fileName = exportFileName(name);
   const close = () => session.setPanel(null);

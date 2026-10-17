@@ -1,9 +1,15 @@
-/** Source-over an annotation-only RGBA layer without touching pixels where its alpha is zero. */
-export function compositeAnnotationLayer(base: Uint32Array, layer: Uint8ClampedArray): Uint32Array {
-  if (layer.byteLength !== base.byteLength)
+/**
+ * Source-over an annotation-only RGBA layer onto `destination` in place, without touching pixels
+ * where the layer's alpha is zero. Shared by `compositeAnnotationLayer` below (which clones first)
+ * and the banded, scale-aware export path, which blends straight into an already
+ * nearest-neighbor-upscaled band buffer instead of allocating a fresh destination per band.
+ */
+export function compositeAnnotationLayerInto(
+  destination: Uint8ClampedArray,
+  layer: Uint8ClampedArray,
+): void {
+  if (layer.byteLength !== destination.byteLength)
     throw new RangeError('Shape layer size must match pixels');
-  const output = base.slice();
-  const destination = new Uint8ClampedArray(output.buffer);
   for (let index = 0; index < layer.length; index += 4) {
     const sourceAlpha = layer[index + 3]!;
     if (sourceAlpha === 0) continue;
@@ -26,5 +32,13 @@ export function compositeAnnotationLayer(base: Uint32Array, layer: Uint8ClampedA
       (layer[index + 2]! * sourceAlpha + destination[index + 2]! * destinationWeight) / outputAlpha;
     destination[index + 3] = outputAlpha;
   }
+}
+
+/** Source-over an annotation-only RGBA layer without touching pixels where its alpha is zero. */
+export function compositeAnnotationLayer(base: Uint32Array, layer: Uint8ClampedArray): Uint32Array {
+  if (layer.byteLength !== base.byteLength)
+    throw new RangeError('Shape layer size must match pixels');
+  const output = base.slice();
+  compositeAnnotationLayerInto(new Uint8ClampedArray(output.buffer), layer);
   return output;
 }

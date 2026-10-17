@@ -35,9 +35,37 @@ export interface DecodedPng {
 // ---------------------------------------------------------------------------
 
 /**
+ * Supplies extra content for a scaled export, composited straight-alpha source-over onto the
+ * nearest-neighbor-upscaled base, one bounded row band at a time — never a full-size overlay.
+ * Deliberately knows nothing about shapes or annotations; `browser/flattenForExport.ts` is the
+ * one place that builds a shape-aware implementation of this.
+ */
+export interface ScaledRowOverlay {
+  /** Whether anything needs compositing for output document rows [startY, endY). Lets the codec
+   *  skip the overlay (and its band buffer) entirely for a band with nothing to add — the common
+   *  case away from any shape. */
+  hasContent(startY: number, endY: number): boolean;
+  /** Composites in place onto `band`: already the nearest-neighbor-upscaled, straight-alpha RGBA
+   *  bytes for document rows [startY, endY) at the full output scale and `outWidth`. */
+  compositeInto(band: Uint8ClampedArray, startY: number, endY: number, outWidth: number): void;
+}
+
+/** Output rows per overlay band. Bounds a band's transient buffer to roughly this many scanlines
+ *  regardless of export width or scale — at the 65536px side limit that's 128 × 65536 × 4 bytes,
+ *  about 32 MiB, instead of a full-size shape layer that could run into the gigabytes. */
+/** Exported so the golden fixture's scaled-export reference can paint shapes through the same
+ *  per-band canvas granularity the real encoder uses, rather than one canvas spanning the whole
+ *  output — Canvas 2D's anti-aliasing of a stroke can round sub-pixel coverage very slightly
+ *  differently depending on how many separate draw calls a shape is split across, so a fair
+ *  byte-exact comparison needs both sides to band the same way. */
+export const OVERLAY_BAND_OUTPUT_ROWS = 128;
+
+/**
  * Encodes packed document pixels as an 8-bit RGBA PNG. Scale is an integer upscale using
  * nearest-neighbor replication. Rows are generated and streamed into the compressor one at a
- * time, so an 8x export of a 1024x1024 document never allocates a 256 MB buffer.
+ * time, so an 8x export of a 1024x1024 document never allocates a 256 MB buffer. An optional
+ * `overlay` can paint extra content (e.g. shapes) directly at the output scale, in bounded row
+ * bands, instead of it having been flattened onto `pixels` at document resolution beforehand.
  */
 export async function encodePng(
   width: number,
@@ -45,6 +73,7 @@ export async function encodePng(
   pixels: Uint32Array,
   scale = 1,
   colorSpace: DocumentColorSpace = 'srgb',
+  overlay?: ScaledRowOverlay,
 ): Promise<Uint8Array> {
   if (!Number.isInteger(scale) || scale < 1) {
     throw new RangeError(`Export scale must be a positive integer, got ${scale}`);
@@ -58,21 +87,26 @@ export async function encodePng(
   }
   const sourceBytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
   const rowBytes = outWidth * 4;
-  const idat = await deflateZlib(generateFilteredRows(sourceBytes, width, height, scale, rowBytes));
+  const idat = await deflateZlib(
+    generateFilteredRows(sourceBytes, width, height, scale, rowBytes, overlay),
+  );
   return assemblePng(outWidth, outHeight, idat, colorSpace);
 }
 
-/** Yields one filter-tagged, already-upscaled scanline at a time (source row reused across scale copies). */
-function* generateFilteredRows(
+/** Yields one filter-tagged, already-upscaled scanline at a time (source row reused across scale
+ *  copies) for document rows [y0, y1) — the plain nearest-neighbor path, unchanged from before
+ *  banding existed, and still the only path taken when there's no overlay at all. */
+function* generatePlainRows(
   sourceBytes: Uint8Array,
   width: number,
-  height: number,
   scale: number,
   rowBytes: number,
+  y0: number,
+  y1: number,
 ): Generator<Uint8Array> {
   const row = new Uint8Array(rowBytes + 1); // leading filter-type byte, always 0 (None)
   const pixelRow = row.subarray(1);
-  for (let y = 0; y < height; y++) {
+  for (let y = y0; y < y1; y++) {
     const sourceOffset = y * width * 4;
     for (let x = 0; x < width; x++) {
       const pixelOffset = sourceOffset + x * 4;
@@ -86,6 +120,76 @@ function* generateFilteredRows(
       }
     }
     for (let sy = 0; sy < scale; sy++) yield row;
+  }
+}
+
+/** Builds one band's nearest-neighbor-upscaled base (document rows [y0, y1)), lets `overlay`
+ *  composite onto it in place, then yields each resulting filter-tagged row. Only ever called for
+ *  a band `overlay.hasContent` claimed, so this is never on the hot path for shape-free export. */
+function* generateOverlaidBandRows(
+  sourceBytes: Uint8Array,
+  width: number,
+  scale: number,
+  rowBytes: number,
+  y0: number,
+  y1: number,
+  overlay: ScaledRowOverlay,
+): Generator<Uint8Array> {
+  const outWidth = rowBytes / 4;
+  const bandDocRows = y1 - y0;
+  const bandOutRows = bandDocRows * scale;
+  const band = new Uint8ClampedArray(outWidth * bandOutRows * 4);
+  for (let dy = 0; dy < bandDocRows; dy++) {
+    const sourceOffset = (y0 + dy) * width * 4;
+    const firstOutRow = dy * scale * outWidth * 4;
+    for (let x = 0; x < width; x++) {
+      const pixelOffset = sourceOffset + x * 4;
+      const outBase = firstOutRow + x * scale * 4;
+      for (let sx = 0; sx < scale; sx++) {
+        const offset = outBase + sx * 4;
+        band[offset] = sourceBytes[pixelOffset]!;
+        band[offset + 1] = sourceBytes[pixelOffset + 1]!;
+        band[offset + 2] = sourceBytes[pixelOffset + 2]!;
+        band[offset + 3] = sourceBytes[pixelOffset + 3]!;
+      }
+    }
+    for (let sy = 1; sy < scale; sy++) {
+      band.copyWithin(firstOutRow + sy * outWidth * 4, firstOutRow, firstOutRow + outWidth * 4);
+    }
+  }
+  overlay.compositeInto(band, y0, y1, outWidth);
+  for (let row = 0; row < bandOutRows; row++) {
+    const tagged = new Uint8Array(rowBytes + 1);
+    tagged.set(band.subarray(row * outWidth * 4, (row + 1) * outWidth * 4), 1);
+    yield tagged;
+  }
+}
+
+/** Dispatches document rows to the plain nearest-neighbor path or, when `overlay` claims content
+ *  in a band, the overlaid banded path — never both for the same rows, and never a band larger
+ *  than `OVERLAY_BAND_OUTPUT_ROWS` output scanlines. */
+function* generateFilteredRows(
+  sourceBytes: Uint8Array,
+  width: number,
+  height: number,
+  scale: number,
+  rowBytes: number,
+  overlay?: ScaledRowOverlay,
+): Generator<Uint8Array> {
+  if (!overlay) {
+    yield* generatePlainRows(sourceBytes, width, scale, rowBytes, 0, height);
+    return;
+  }
+  const docRowsPerBand = Math.max(1, Math.floor(OVERLAY_BAND_OUTPUT_ROWS / scale));
+  let y = 0;
+  while (y < height) {
+    const bandEnd = Math.min(height, y + docRowsPerBand);
+    if (overlay.hasContent(y, bandEnd)) {
+      yield* generateOverlaidBandRows(sourceBytes, width, scale, rowBytes, y, bandEnd, overlay);
+    } else {
+      yield* generatePlainRows(sourceBytes, width, scale, rowBytes, y, bandEnd);
+    }
+    y = bandEnd;
   }
 }
 

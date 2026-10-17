@@ -10,6 +10,7 @@ import {
   snapToShapeGrid,
   square,
   targetsOf,
+  verticalExtentOf,
 } from './geometry';
 import { annotationsFor, createAnnotationSet, isValidAnnotation } from './set';
 import { hitAnnotationSet } from './hit';
@@ -56,6 +57,25 @@ test('arrow head scales with width, and shaft and head both hit', () => {
   expect(hitShape(thick, { x: 80, y: 9 }, 0)).toBe(true);
   expect(hitShape(thick, { x: 90, y: 9 }, 0)).toBe(false);
   expect(hitShape(thin, { x: 25, y: 5 }, 0)).toBe(false);
+});
+
+test('verticalExtentOf bounds a rectangle by its stroke half-width and an arrow head beyond its endpoints', () => {
+  // Rectangle y 10 to 30, width 2: half the stroke (1) plus 2px of AA margin either side.
+  expect(verticalExtentOf(rectangle)).toEqual({ minY: 7, maxY: 33 });
+  // A horizontal width-1 arrow's head swings its triangle corners above and below the shaft.
+  const arrow: Annotation = {
+    ...rectangle,
+    id: 'arrow',
+    kind: 'arrow',
+    start: { x: 0, y: 0 },
+    end: { x: 100, y: 0 },
+    width: 1,
+  };
+  const extent = verticalExtentOf(arrow);
+  expect(extent.minY).toBeCloseTo(-4.774);
+  expect(extent.maxY).toBeCloseTo(4.774);
+  // A band entirely above or below that extent could never see this shape's ink.
+  expect(extent.minY < 0 && extent.maxY > 0).toBe(true);
 });
 
 test('odd strokes hit and grab where they are drawn, half a pixel inside storage', () => {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { packRgba } from '../../document';
 import { ImportError } from './contracts';
 import { decodePng, encodePng } from './png';
+import type { ScaledRowOverlay } from './png';
 
 /** `.rejects` isn't typed as a thenable in bun-types, so assert rejections by awaiting directly. */
 async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
@@ -167,6 +168,110 @@ describe('PNG round-trip', () => {
     const pixels = new Uint32Array([packRgba(1, 2, 3)]);
     expect(await rejectionOf(encodePng(1, 1, pixels, 0))).toBeInstanceOf(RangeError);
     expect(await rejectionOf(encodePng(1, 1, pixels, 1.5))).toBeInstanceOf(RangeError);
+  });
+
+  test('an overlay reporting no content anywhere leaves output identical to no overlay at all', async () => {
+    const pixels = new Uint32Array([packRgba(200, 20, 20), packRgba(20, 200, 20)]);
+    const noOverlay: ScaledRowOverlay = {
+      hasContent: () => false,
+      compositeInto: () => {
+        throw new Error('must never be called when hasContent is always false');
+      },
+    };
+    const plain = await encodePng(2, 1, pixels, 3);
+    const withEmptyOverlay = await encodePng(2, 1, pixels, 3, 'srgb', noOverlay);
+    expect([...withEmptyOverlay]).toEqual([...plain]);
+  });
+
+  test('an overlay composites only into the bands it claims, leaving the rest exact nearest-neighbor', async () => {
+    // Two document rows at scale 4: band covers both document rows in one 8-row-high band, since
+    // 128 / 4 = 32 document rows per band comfortably covers this tiny fixture in a single band.
+    const pixels = new Uint32Array([
+      packRgba(200, 20, 20),
+      packRgba(20, 200, 20),
+      packRgba(20, 20, 200),
+      packRgba(100, 100, 100),
+    ]);
+    const stamp = packRgba(1, 2, 3, 255);
+    // Claims content only for document row 1 (the second row), and stamps every output pixel in
+    // that band solid, so a decode can tell exactly which rows the overlay touched.
+    const overlay: ScaledRowOverlay = {
+      hasContent: (startY, endY) => startY < 2 && endY > 1,
+      compositeInto(band, startY, endY, outWidth) {
+        expect(startY).toBe(0);
+        expect(endY).toBe(2);
+        expect(outWidth).toBe(8);
+        const r = (stamp >>> 0) & 0xff;
+        const g = (stamp >>> 8) & 0xff;
+        const b = (stamp >>> 16) & 0xff;
+        const a = (stamp >>> 24) & 0xff;
+        // Stamp only the second document row's output band (rows 4..7 of this 8-row band).
+        for (let y = 4; y < 8; y++) {
+          for (let x = 0; x < outWidth; x++) {
+            const i = (y * outWidth + x) * 4;
+            band[i] = r;
+            band[i + 1] = g;
+            band[i + 2] = b;
+            band[i + 3] = a;
+          }
+        }
+      },
+    };
+    const bytes = await encodePng(2, 2, pixels, 4, 'srgb', overlay);
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(8);
+    expect(decoded.height).toBe(8);
+    // First document row (output rows 0-3): untouched, exact nearest-neighbor replication.
+    for (let y = 0; y < 4; y++) {
+      const row = decoded.pixels.slice(y * 8, y * 8 + 8);
+      expect([...row]).toEqual([
+        packRgba(200, 20, 20),
+        packRgba(200, 20, 20),
+        packRgba(200, 20, 20),
+        packRgba(200, 20, 20),
+        packRgba(20, 200, 20),
+        packRgba(20, 200, 20),
+        packRgba(20, 200, 20),
+        packRgba(20, 200, 20),
+      ]);
+    }
+    // Second document row (output rows 4-7): entirely replaced by the overlay's stamp.
+    for (let y = 4; y < 8; y++) {
+      const row = decoded.pixels.slice(y * 8, y * 8 + 8);
+      expect([...row]).toEqual(Array.from({ length: 8 }, () => stamp));
+    }
+  });
+
+  test('a band boundary dispatches plain rows and overlaid rows independently', async () => {
+    // Scale 1 means 128 document rows per band. 130 rows forces two bands: [0,128) and [128,130).
+    // The overlay claims content only in the second band, proving the dispatcher asks per-band
+    // and never builds an overlay buffer for a band with nothing to add.
+    const width = 1;
+    const height = 130;
+    const pixels = new Uint32Array(width * height);
+    for (let y = 0; y < height; y++) pixels[y] = packRgba(y % 256, 0, 0);
+    const stamp = packRgba(9, 9, 9, 255);
+    let compositedBands = 0;
+    const overlay: ScaledRowOverlay = {
+      hasContent: (_startY, endY) => endY > 128,
+      compositeInto(band, startY, endY, outWidth) {
+        compositedBands++;
+        expect(startY).toBe(128);
+        expect(endY).toBe(130);
+        expect(outWidth).toBe(1);
+        for (let i = 0; i < band.length; i += 4) {
+          band[i] = (stamp >>> 0) & 0xff;
+          band[i + 1] = (stamp >>> 8) & 0xff;
+          band[i + 2] = (stamp >>> 16) & 0xff;
+          band[i + 3] = (stamp >>> 24) & 0xff;
+        }
+      },
+    };
+    const bytes = await encodePng(width, height, pixels, 1, 'srgb', overlay);
+    const decoded = await decodePng(bytes);
+    expect(compositedBands).toBe(1);
+    for (let y = 0; y < 128; y++) expect(decoded.pixels[y]).toBe(pixels[y]);
+    for (let y = 128; y < 130; y++) expect(decoded.pixels[y]).toBe(stamp);
   });
 });
 

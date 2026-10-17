@@ -54,6 +54,29 @@ export function paintAnnotation(
   ctx.stroke();
 }
 
+/**
+ * Paints shapes directly into a scaled coordinate space — `scale` output pixels per document
+ * pixel, with document row `docRowOffset` landing at canvas row 0 — instead of painting at
+ * document resolution and resampling afterward. A later nearest-neighbor or smoothing resample
+ * would blur or stair-step a shape's anti-aliased stroke edges; rasterizing straight at the final
+ * device resolution keeps them crisp, matching what the live canvas already does by scaling its
+ * own context before calling `paintVisibleAnnotations`. Used by scaled PNG export (in row bands)
+ * and the export preview's pixelated zoom.
+ */
+export function paintAnnotationsAtScale(
+  ctx: ShapeContext,
+  shapes: readonly Annotation[],
+  colorSpace: DocumentColorSpace,
+  scale: number,
+  docRowOffset = 0,
+): void {
+  ctx.save();
+  ctx.scale(scale, scale);
+  if (docRowOffset) ctx.translate(0, -docRowOffset);
+  for (const shape of shapes) paintAnnotation(ctx, shape, colorSpace);
+  ctx.restore();
+}
+
 /** The preview replaces its committed counterpart at the same z-index. */
 export function paintVisibleAnnotations(
   ctx: ShapeContext,

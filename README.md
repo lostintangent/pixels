@@ -1,4 +1,4 @@
-# Pixels
+# Pixels!
 
 A pixel-first bitmap editor. See `AGENTS.md` for architecture and toolchain decisions.
 

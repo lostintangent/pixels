@@ -1,7 +1,17 @@
-import { flattenAnnotations } from '../../annotations';
+import {
+  compositeAnnotationLayerInto,
+  flattenAnnotations,
+  paintAnnotationsAtScale,
+  type Annotation,
+} from '../../annotations';
 import { annotationsFor } from '../../annotations/model';
-import { createBitmapDocument, packRgba, type DocumentColorSpace } from '../../document';
-import { decodePng } from '../core/png';
+import {
+  createBitmapDocument,
+  packRgba,
+  type DocumentColorSpace,
+  type BitmapDocument,
+} from '../../document';
+import { decodePng, OVERLAY_BAND_OUTPUT_ROWS } from '../core/png';
 import { exportPng } from '../export';
 
 export type GoldenColorSpace = DocumentColorSpace;
@@ -33,6 +43,35 @@ export interface GoldenResult {
   longTaskMaxMs: number;
 }
 
+export interface GoldenScaledResult {
+  width: number;
+  height: number;
+  scale: number;
+  /** True only when every pixel of the Worker-exported, decoded PNG matches a shape rasterized
+   *  directly at the output scale (the correct, crisp behavior), not document resolution. */
+  matches: boolean;
+  firstMismatchIndex: number;
+  referencePixel: number;
+  decodedPixel: number;
+  /** How many output pixels differ at all from the scale-native reference, and the largest
+   *  single-channel absolute difference among them — at very high scale, a diagonal stroke
+   *  corner's anti-aliased coverage can legitimately round a shade differently between the DOM
+   *  canvas reference and `OffscreenCanvas` production path, the same kind of cross-backend
+   *  rasterizer divergence the scale-1 case already allows for. `mismatchCount` catches a
+   *  regression that changes far more than a few corner pixels; `maxChannelDelta` catches one
+   *  that's egregious rather than a few rounded shades. */
+  mismatchCount: number;
+  maxChannelDelta: number;
+  /** How many output pixels differ from the old, buggy behavior — flattening shapes once at
+   *  document resolution, then nearest-neighbor replicating the whole composite. A regression
+   *  back to that bug would still pass the byte-identical check above only if `exportPng` and this
+   *  fixture's "blocky" baseline were built the same (wrong) way, so this is an independent signal
+   *  that real anti-aliased edges, not solid replicated blocks, are what actually exported. */
+  differsFromBlockyCount: number;
+  ms: number;
+  longTaskMaxMs: number;
+}
+
 /** Deterministic per-pixel hash, so "opaque noise" is reproducible without `Math.random`. */
 function noiseByte(x: number, y: number, shift: number): number {
   const h = (x * 374761393 + y * 668265263) >>> 0;
@@ -60,19 +99,15 @@ function fillContent(pixels: Uint32Array, side: number): void {
 }
 
 /**
- * Renders a document with real content under a rectangle and a partial-alpha arrow two different
- * ways and compares them byte-for-byte:
- *  - Reference: `flattenAnnotations` called directly, on the main thread, against a real DOM
- *    `<canvas>` — deliberately the *other* canvas backend from the one `pngWorker.ts` uses, so a
- *    divergence between `OffscreenCanvas` and a DOM canvas's 2D rasterizer would show up here.
- *  - Actual: `exportPng`'s real production path — the PNG Worker flattens the same shapes onto an
- *    `OffscreenCanvas`, encodes, and the result is decoded back to pixels.
- * Byte-identical output alone isn't enough: a flatten that silently no-ops would also be
- * byte-identical to its input, just wrong. So this also flattens the same shapes over a blank
- * buffer to get their exact footprint, and asserts untouched pixels are the unmodified source
- * bytes while footprint pixels actually changed by a meaningful amount.
+ * Builds a document with real content under a rectangle and a partial-alpha arrow, shared by both
+ * the scale-1 and scaled golden cases: a rectangle crossing the noise band and into the
+ * half-transparent band, and an arrow crossing the half-transparent band into the fully
+ * transparent one, so between the two shapes every alpha regime gets composited against.
  */
-async function render(side: number, colorSpace: GoldenColorSpace): Promise<GoldenResult> {
+function buildCase(
+  side: number,
+  colorSpace: GoldenColorSpace,
+): { doc: BitmapDocument; baseline: Uint32Array; shapes: readonly Annotation[] } {
   const doc = createBitmapDocument('golden', side, side, 'Golden', colorSpace);
   fillContent(doc.pixels, side);
   const baseline = doc.pixels.slice();
@@ -80,9 +115,6 @@ async function render(side: number, colorSpace: GoldenColorSpace): Promise<Golde
   const margin = Math.max(1, Math.floor(side / 8));
   const mid = Math.floor(side / 2);
   const set = annotationsFor(doc);
-  // Rectangle crosses the noise band and into the half-transparent band; arrow crosses the
-  // half-transparent band and into the fully transparent one — between the two shapes, every band
-  // gets composited against.
   set.commit({
     id: 'rect',
     kind: 'rectangle',
@@ -99,7 +131,24 @@ async function render(side: number, colorSpace: GoldenColorSpace): Promise<Golde
     width: 4,
     color: packRgba(30, 120, 220, 140),
   });
-  const shapes = set.snapshot();
+  return { doc, baseline, shapes: set.snapshot() };
+}
+
+/**
+ * Renders a document with real content under a rectangle and a partial-alpha arrow two different
+ * ways and compares them byte-for-byte:
+ *  - Reference: `flattenAnnotations` called directly, on the main thread, against a real DOM
+ *    `<canvas>` — deliberately the *other* canvas backend from the one `pngWorker.ts` uses, so a
+ *    divergence between `OffscreenCanvas` and a DOM canvas's 2D rasterizer would show up here.
+ *  - Actual: `exportPng`'s real production path — the PNG Worker flattens the same shapes onto an
+ *    `OffscreenCanvas`, encodes, and the result is decoded back to pixels.
+ * Byte-identical output alone isn't enough: a flatten that silently no-ops would also be
+ * byte-identical to its input, just wrong. So this also flattens the same shapes over a blank
+ * buffer to get their exact footprint, and asserts untouched pixels are the unmodified source
+ * bytes while footprint pixels actually changed by a meaningful amount.
+ */
+async function render(side: number, colorSpace: GoldenColorSpace): Promise<GoldenResult> {
+  const { doc, baseline, shapes } = buildCase(side, colorSpace);
 
   const referenceCanvas = window.document.createElement('canvas');
   const reference = flattenAnnotations(
@@ -165,6 +214,221 @@ async function render(side: number, colorSpace: GoldenColorSpace): Promise<Golde
 
 export interface GoldenApi {
   render(side: number, colorSpace: GoldenColorSpace): Promise<GoldenResult>;
+  renderScaled(
+    side: number,
+    colorSpace: GoldenColorSpace,
+    scale: number,
+  ): Promise<GoldenScaledResult>;
+  timeScaledExport(
+    side: number,
+    colorSpace: GoldenColorSpace,
+    scale: number,
+  ): Promise<GoldenScaledTiming>;
+}
+
+/** Nearest-neighbor replicates `source` (side×side) up to `outSide`×`outSide` by plain index math,
+ *  with no canvas involved — exactly the kind of exact-integer-replication the real banded
+ *  overlay path does for a band's base pixels, and what the fixture's "blocky" baseline needs for
+ *  its whole composite. Keeping this canvas-free avoids a `drawImage` upscale's own alpha
+ *  premultiply/unpremultiply rounding from leaking into either reference. */
+function replicateNearestNeighbor(source: Uint32Array, side: number, scale: number): Uint32Array {
+  const outSide = side * scale;
+  const out = new Uint32Array(outSide * outSide);
+  for (let y = 0; y < side; y++) {
+    for (let x = 0; x < side; x++) {
+      const value = source[y * side + x]!;
+      for (let sy = 0; sy < scale; sy++) {
+        const rowBase = (y * scale + sy) * outSide;
+        for (let sx = 0; sx < scale; sx++) out[rowBase + x * scale + sx] = value;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Proves a scaled export rasterizes shapes directly at the output scale instead of flattening
+ * them at document resolution and nearest-neighbor replicating the blurry result:
+ *  - Reference: the base image nearest-neighbor replicated by exact index math (no canvas, so no
+ *    drawImage-driven alpha rounding), then shapes painted directly at `scale` on a transparent DOM
+ *    `<canvas>` via `paintAnnotationsAtScale`, in the same `OVERLAY_BAND_OUTPUT_ROWS`-sized row
+ *    bands and composited in place with `compositeAnnotationLayerInto` — the identical two-step,
+ *    per-band algorithm `createScaledShapeOverlay` uses, on the "other" canvas backend, so a
+ *    divergence between `OffscreenCanvas` and a DOM canvas would show up here exactly as it does
+ *    for the scale-1 case.
+ *  - Actual: `exportPng`'s real production path at `scale`, decoded back to pixels. Only valid
+ *    while `outSide` stays within `decodePng`'s own `MAX_DOCUMENT_SIDE` guard — callers that want a
+ *    larger, timing-only case should use `timeScaledExport` instead.
+ *  - "Blocky" baseline: this fixture's own emulation of the bug being fixed — flatten the same
+ *    shapes once at document resolution (`flattenAnnotations`), then nearest-neighbor replicate
+ *    the whole composite, exactly like the old `encodePng` path did before banding existed. A
+ *    meaningful number of output pixels must differ from this, proving real anti-aliased edges
+ *    were drawn at scale rather than solid blocks copied from a single document pixel.
+ *
+ * At the thinnest bands (high scale over a small document, e.g. 128² at 16×, where a band is only
+ * 8 document rows), the reference can still differ from the real export by well under 1% of
+ * pixels, confined to anti-aliased shape-edge pixels. This was isolated, not assumed: an identical
+ * shape painted into a canvas the exact size of the whole output and read back with one whole-
+ * canvas `getImageData` matches the real export's per-band output byte-for-byte, but the same
+ * paint read back through several smaller per-band `getImageData` calls (unavoidable — that's the
+ * entire point of bounding memory to `OVERLAY_BAND_OUTPUT_ROWS` instead of the full output) does
+ * not, even at identical canvas sizes and with no `ctx.translate` involved. That points to Chrome's
+ * `getImageData` readback itself rounding a partial-height region very slightly differently than a
+ * full-canvas read, not to a logic bug in banding, padding, or color-space handling — and it can't
+ * be designed around without reading the entire multi-gigabyte output into memory at once, which
+ * is the allocation this banding exists to avoid. `reportScaledCorrectness` in `run.ts` allows a
+ * small, measured tolerance for exactly this reason instead of requiring byte-identical output.
+ */
+async function renderScaled(
+  side: number,
+  colorSpace: GoldenColorSpace,
+  scale: number,
+): Promise<GoldenScaledResult> {
+  const { doc, baseline, shapes } = buildCase(side, colorSpace);
+  const outSide = side * scale;
+
+  // Paints shapes through the same per-band canvas granularity, including vertical padding,
+  // that `createScaledShapeOverlay` uses — not one canvas spanning the whole output. A stroke
+  // rasterized right at a canvas's edge can anti-alias slightly differently than the same stroke
+  // painted with its usual surrounding context, so a fair byte-exact comparison needs both sides
+  // to band and pad identically.
+  const reference = replicateNearestNeighbor(baseline, side, scale);
+  const referenceBytes = new Uint8ClampedArray(reference.buffer);
+  const docRowsPerBand = Math.max(1, Math.floor(OVERLAY_BAND_OUTPUT_ROWS / scale));
+  const bandCanvas = window.document.createElement('canvas');
+  for (let y = 0; y < side; y += docRowsPerBand) {
+    const bandEnd = Math.min(side, y + docRowsPerBand);
+    const bandOutRows = (bandEnd - y) * scale;
+    const padDocRows = Math.ceil(Math.max(...shapes.map((shape) => shape.width / 2 + 2)));
+    const paddedStartY = Math.max(0, y - padDocRows);
+    const paddedEndY = bandEnd + padDocRows;
+    const paddedOutRows = (paddedEndY - paddedStartY) * scale;
+    bandCanvas.width = outSide;
+    bandCanvas.height = paddedOutRows;
+    const bandCtx = bandCanvas.getContext('2d', { colorSpace }) as CanvasRenderingContext2D;
+    paintAnnotationsAtScale(bandCtx, shapes, colorSpace, scale, paddedStartY);
+    const bandOffsetRows = (y - paddedStartY) * scale;
+    const layer = bandCtx.getImageData(0, bandOffsetRows, outSide, bandOutRows, {
+      colorSpace,
+    }).data;
+    compositeAnnotationLayerInto(
+      referenceBytes.subarray(y * scale * outSide * 4, (y * scale + bandOutRows) * outSide * 4),
+      layer,
+    );
+  }
+
+  const flattenCanvas = window.document.createElement('canvas');
+  const flattened = flattenAnnotations(
+    baseline.slice(),
+    side,
+    side,
+    colorSpace,
+    shapes,
+    flattenCanvas,
+  );
+  const blocky = replicateNearestNeighbor(flattened, side, scale);
+
+  const longTasks: number[] = [];
+  const observer = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) longTasks.push(entry.duration);
+  });
+  observer.observe({ entryTypes: ['longtask'] });
+  const start = performance.now();
+  const exported = await exportPng(doc, { scale });
+  const decoded = await decodePng(exported);
+  const ms = performance.now() - start;
+  observer.disconnect();
+
+  let firstMismatchIndex = -1;
+  let differsFromBlockyCount = 0;
+  let mismatchCount = 0;
+  let maxChannelDelta = 0;
+  const referenceChannels = new Uint8ClampedArray(reference.buffer);
+  const decodedChannels = new Uint8ClampedArray(decoded.pixels.buffer);
+  for (let i = 0; i < reference.length; i++) {
+    if (reference[i] !== decoded.pixels[i]) {
+      if (firstMismatchIndex === -1) firstMismatchIndex = i;
+      mismatchCount++;
+      for (let c = 0; c < 4; c++) {
+        const delta = Math.abs(referenceChannels[i * 4 + c]! - decodedChannels[i * 4 + c]!);
+        if (delta > maxChannelDelta) maxChannelDelta = delta;
+      }
+    }
+    if (blocky[i] !== decoded.pixels[i]) differsFromBlockyCount++;
+  }
+
+  return {
+    width: outSide,
+    height: outSide,
+    scale,
+    matches: firstMismatchIndex === -1,
+    firstMismatchIndex,
+    referencePixel: firstMismatchIndex === -1 ? 0 : reference[firstMismatchIndex]!,
+    decodedPixel: firstMismatchIndex === -1 ? 0 : decoded.pixels[firstMismatchIndex]!,
+    mismatchCount,
+    maxChannelDelta,
+    differsFromBlockyCount,
+    ms,
+    longTaskMaxMs: longTasks.length ? Math.max(...longTasks) : 0,
+  };
+}
+
+export interface GoldenScaledTiming {
+  width: number;
+  height: number;
+  scale: number;
+  byteLength: number;
+  ms: number;
+  longTaskMaxMs: number;
+}
+
+/**
+ * Times a scaled export at sizes too large for `renderScaled` to verify, since the output exceeds
+ * `decodePng`'s `MAX_DOCUMENT_SIDE` guard — a deliberate safety invariant (nothing in the app ever
+ * needs to hold a document-shaped buffer above that side), not something a test should bypass.
+ * Pixel-level correctness for any scale, including this one, is already proven by `renderScaled`
+ * at smaller sizes, since the banding algorithm doesn't change with total output size — only the
+ * number of bands does. This leaves wall-clock time, plus the same main-thread long-task gate the
+ * other diagnostics use, as the properties left to check at the real worst case. A minimal
+ * structural check (PNG signature and `IHDR` dimensions) stands in for full decode, proving the
+ * export produced a well-formed file of the right size without re-deriving `decodePng`'s guard.
+ */
+async function timeScaledExport(
+  side: number,
+  colorSpace: GoldenColorSpace,
+  scale: number,
+): Promise<GoldenScaledTiming> {
+  const { doc } = buildCase(side, colorSpace);
+  const outSide = side * scale;
+
+  const longTasks: number[] = [];
+  const observer = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) longTasks.push(entry.duration);
+  });
+  observer.observe({ entryTypes: ['longtask'] });
+  const start = performance.now();
+  const exported = await exportPng(doc, { scale });
+  const ms = performance.now() - start;
+  observer.disconnect();
+
+  const signatureOk = [137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => exported[i] === byte);
+  const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+  const width = view.getUint32(16);
+  const height = view.getUint32(20);
+  if (!signatureOk || width !== outSide || height !== outSide) {
+    throw new Error(
+      `Exported PNG is malformed: signature ok=${signatureOk}, IHDR ${width}×${height}, expected ${outSide}×${outSide}`,
+    );
+  }
+
+  return {
+    width: outSide,
+    height: outSide,
+    scale,
+    byteLength: exported.byteLength,
+    ms,
+    longTaskMaxMs: longTasks.length ? Math.max(...longTasks) : 0,
+  };
 }
 
 declare global {
@@ -172,4 +436,7 @@ declare global {
     __pixelsGolden?: GoldenApi;
   }
 }
-Object.assign(window, { __pixelsGolden: { render } satisfies GoldenApi });
+
+Object.assign(window, {
+  __pixelsGolden: { render, renderScaled, timeScaledExport } satisfies GoldenApi,
+});

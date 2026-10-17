@@ -59,6 +59,24 @@ export function arrowGeom(shape: Annotation) {
   };
 }
 
+/**
+ * The shape's drawn vertical extent in document pixels: stroke half-width plus a couple of pixels
+ * of anti-aliasing margin. Not pixel-tight, only ever a safe overestimate — used to decide which
+ * row band of a banded, scale-aware export render a shape could possibly paint into, so erring
+ * wide costs a little extra work on a band that turns out empty, while erring narrow would
+ * silently clip real ink.
+ */
+export function verticalExtentOf(shape: Annotation): { minY: number; maxY: number } {
+  const pad = shape.width / 2 + 2;
+  if (shape.kind === 'rectangle') {
+    const rect = rectOf(shape);
+    return { minY: rect.y - pad, maxY: rect.y + rect.height + pad };
+  }
+  const head = arrowGeom(shape);
+  const ys = [shape.start.y, shape.end.y, head.left.y, head.right.y];
+  return { minY: Math.min(...ys) - pad, maxY: Math.max(...ys) + pad };
+}
+
 function distanceToSegment(
   px: number,
   py: number,
