@@ -5,8 +5,10 @@ import { colorVars, shadowVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useSelector } from '@tanstack/react-store';
 import { Download } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { findAnnotationsFor } from '../../../annotations/model';
 import type { BitmapDocument } from '../../../document';
+import { exportFileName } from '../../core/exportName';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
 import type { PreviewRequest, PreviewResponse } from './previewWorker';
@@ -129,7 +131,7 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
   const [fit, setFit] = useState<{ document: BitmapDocument; room: PreviewFit['target'] }>();
 
   useEffect(() => {
-    if (isOpen) setName(documentName.toLowerCase().replace(/\s+/g, '-'));
+    if (isOpen) setName(documentName);
   }, [isOpen, documentName]);
 
   useEffect(() => {
@@ -162,8 +164,15 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
     });
   }, [isOpen, bitmap, targetWidth, targetHeight]);
 
-  const trimmed = name.trim();
+  const fileName = exportFileName(name);
   const close = () => session.setPanel(null);
+  // Return closes the dialog and hands focus back to its opener, which may be the Document menu
+  // button. Without preventDefault, the same keypress would then click that button open.
+  const exportOnReturn = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing || !fileName) return;
+    event.preventDefault();
+    onExport(fileName, scale);
+  };
 
   return (
     <Surface
@@ -210,8 +219,8 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
           label="File name"
           value={name}
           onChange={setName}
-          onEnter={() => trimmed && onExport(`${trimmed}.png`, scale)}
-          status={trimmed ? undefined : { type: 'error', message: 'Name the file' }}
+          onKeyDown={exportOnReturn}
+          status={fileName ? undefined : { type: 'error', message: 'Name the file' }}
           statusVariant="detached"
         />
       </Form>
@@ -220,8 +229,8 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
         note={`${bitmap.width * scale} × ${bitmap.height * scale} px`}
         action="Export"
         actionIcon={<Download size={16} />}
-        isDisabled={!trimmed}
-        onAction={() => onExport(`${trimmed}.png`, scale)}
+        isDisabled={!fileName}
+        onAction={() => fileName && onExport(fileName, scale)}
         onCancel={close}
       />
     </Surface>
