@@ -132,14 +132,18 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
     bitmap,
     choice?.document === bitmap ? choice.scale : defaultScale(bitmap),
   );
-  const [name, setName] = useState('');
+  // The field opens on the document's current name. Setting it here, during the render that
+  // opens the dialog, rather than in an effect, means no commit ever shows an empty field, which
+  // would push "Name the file" into the assertive live region on every open.
+  const [name, setName] = useState(documentName);
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) setName(documentName);
+  }
   const room = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLCanvasElement>(null);
   const [fit, setFit] = useState<{ document: BitmapDocument; room: PreviewFit['target'] }>();
-
-  useEffect(() => {
-    if (isOpen) setName(documentName);
-  }, [isOpen, documentName]);
 
   useEffect(() => {
     const host = room.current;
