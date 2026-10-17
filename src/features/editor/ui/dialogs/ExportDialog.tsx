@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { findAnnotationsFor } from '../../../annotations/model';
 import type { BitmapDocument } from '../../../document';
-import { exportFileName } from '../../core/exportName';
+import { exportFileName, exportSizeLabel } from '../../core/exportName';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
 import type { PreviewRequest, PreviewResponse } from './previewWorker';
@@ -239,7 +239,7 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
       </Form>
       <Footer
         layout={layout}
-        note={`${bitmap.width * scale} × ${bitmap.height * scale} px`}
+        note={exportSizeLabel(bitmap.width, bitmap.height, scale)}
         action="Export"
         actionIcon={<Download size={16} />}
         isDisabled={!fileName}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { exportFileName } from './exportName';
+import { exportFileName, exportSizeLabel } from './exportName';
 
 describe('exportFileName', () => {
   test('keeps the document name as shown', () => {
@@ -26,5 +26,12 @@ describe('exportFileName', () => {
     expect(exportFileName('   ')).toBeNull();
     expect(exportFileName('.png')).toBeNull();
     expect(exportFileName(' .PNG ')).toBeNull();
+  });
+});
+
+describe('exportSizeLabel', () => {
+  test('names the output size', () => {
+    expect(exportSizeLabel(1024, 1024, 16)).toBe('16384 × 16384 px');
+    expect(exportSizeLabel(64, 32, 1)).toBe('64 × 32 px');
   });
 });

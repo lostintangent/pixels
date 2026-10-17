@@ -9,3 +9,8 @@ export function exportFileName(typed: string): string | null {
     .trim();
   return stem ? `${stem}.png` : null;
 }
+
+/** The exported image's size, as Export's footer and its progress toast both show it. */
+export function exportSizeLabel(width: number, height: number, scale: number): string {
+  return `${width * scale} × ${height * scale} px`;
+}

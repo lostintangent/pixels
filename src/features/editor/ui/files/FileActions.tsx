@@ -19,8 +19,12 @@ import {
 } from '../../../files';
 import type { DocumentId, DocumentStore } from '../../../files';
 import { TRANSPARENT } from '../../../palette';
+import { exportSizeLabel } from '../../core/exportName';
 import type { EditorSession, Layout } from '../../session/session';
 import { useToast } from '../toasts';
+import { whenSlow } from './whenSlow';
+
+const SLOW_EXPORT_MS = 500;
 
 /** Everything the chrome can do with files. Failures surface as toasts, never as throws. */
 export interface FileActions {
@@ -148,7 +152,16 @@ export function FileActionsProvider({
       openRecent: show,
       exportPng(fileName, scale) {
         session.commitFloatingSelection();
-        exportPng(session.bitmap.state, { scale })
+        const document = session.bitmap.state;
+        const size = exportSizeLabel(document.width, document.height, scale);
+        // Most exports finish well under half a second and show nothing. A large one says what
+        // it's making until the bytes arrive, then gets out of the way of the download or share
+        // sheet. The encoder can't be cancelled yet, so the notice offers no Cancel.
+        whenSlow(
+          exportPng(document, { scale }),
+          () => showToast({ body: `Exporting ${size}…`, isAutoHide: false }),
+          SLOW_EXPORT_MS,
+        )
           .then((bytes) => deliver(new File([bytes as BlobPart], fileName, { type: 'image/png' })))
           .catch((error: unknown) => fail(error, 'The PNG couldn’t be exported.'));
       },
