@@ -129,13 +129,13 @@ function reportScaledCorrectness(
   if (result.seamMaxPremultipliedDelta > MAX_SEAM_PREMULTIPLIED_DELTA) {
     const seamFraction = result.seamMismatchCount / pixelCount;
     console.log(
-      `FAIL PNG scaled export golden ${label}: ${result.seamMismatchCount}/${pixelCount} pixels (${(seamFraction * 100).toFixed(3)}%) differ from a monolithic unbanded paint, max premultiplied delta ${result.seamMaxPremultipliedDelta} (limit ${MAX_SEAM_PREMULTIPLIED_DELTA}) — looks like a banding seam, not AA rounding`,
+      `FAIL PNG scaled export golden ${label}: ${result.seamMismatchCount}/${pixelCount} pixels (${(seamFraction * 100).toFixed(3)}%) differ from a monolithic unbanded paint, max premultiplied delta ${result.seamMaxPremultipliedDelta.toFixed(1)} (limit ${MAX_SEAM_PREMULTIPLIED_DELTA}) — looks like a banding seam, not AA rounding`,
     );
     return false;
   }
   const seamFraction = result.seamMismatchCount / pixelCount;
   console.log(
-    `PASS PNG scaled export golden ${label}: byte-identical to a scale-native reference, ${result.differsFromBlockyCount}/${pixelCount} pixels (${(differsFraction * 100).toFixed(3)}%) differ from the old blocky-upscale bug, ${result.seamMismatchCount}/${pixelCount} pixels (${(seamFraction * 100).toFixed(3)}%) differ from a monolithic unbanded paint (max premultiplied delta ${result.seamMaxPremultipliedDelta})`,
+    `PASS PNG scaled export golden ${label}: byte-identical to a scale-native reference, ${result.differsFromBlockyCount}/${pixelCount} pixels (${(differsFraction * 100).toFixed(3)}%) differ from the old blocky-upscale bug, ${result.seamMismatchCount}/${pixelCount} pixels (${(seamFraction * 100).toFixed(3)}%) differ from a monolithic unbanded paint (max premultiplied delta ${result.seamMaxPremultipliedDelta.toFixed(1)})`,
   );
   return true;
 }
