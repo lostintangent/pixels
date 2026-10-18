@@ -213,3 +213,70 @@ describe('convertUnknownIccPngToDisplayP3OffMainThread', () => {
     expect([...encodeResult]).toEqual([...bytes]);
   });
 });
+
+describe('recovering from a worker that fails to load', () => {
+  // A real failed worker script (a flaky network dropping the request, or a server restart that
+  // changed chunk hashes under an open tab) never delivers a `message` for anything already
+  // posted to it, and never will for anything posted after, either. This stub reproduces exactly
+  // that shape rather than a convenient stand-in: the first instance created fires a single
+  // `error` event and then goes silent forever, matching a worker whose script never finished
+  // loading. Every instance after that wraps a real `pngWorker.ts` worker, so recovery is proven
+  // by real decode/encode output, not just by a promise settling.
+  class FlakyWorker extends EventTarget {
+    static instancesCreated = 0;
+    private readonly real?: Worker;
+    constructor(url: string | URL, options?: WorkerOptions) {
+      super();
+      FlakyWorker.instancesCreated++;
+      if (FlakyWorker.instancesCreated === 1) {
+        queueMicrotask(() => this.dispatchEvent(new ErrorEvent('error', { message: 'boom' })));
+        return;
+      }
+      this.real = new RealWorker(url, options);
+      this.real.addEventListener('message', (event) => {
+        this.dispatchEvent(new MessageEvent('message', { data: (event as MessageEvent).data }));
+      });
+      this.real.addEventListener('error', (event) => {
+        this.dispatchEvent(new ErrorEvent('error', { message: (event as ErrorEvent).message }));
+      });
+    }
+    postMessage(data: unknown, transfer?: Transferable[]): void {
+      this.real?.postMessage(data, transfer ?? []);
+    }
+    terminate(): void {
+      this.real?.terminate();
+    }
+  }
+
+  const RealWorker = globalThis.Worker;
+
+  test('a load failure rejects what was in flight, and the next call gets a working worker', async () => {
+    terminatePngWorkerClient(); // start from no cached client, regardless of test order
+    FlakyWorker.instancesCreated = 0;
+    globalThis.Worker = FlakyWorker as unknown as typeof Worker;
+    try {
+      const pixels = new Uint32Array([packRgba(1, 2, 3, 255)]);
+      let firstCallError: unknown;
+      try {
+        await encodePngOffMainThread(1, 1, pixels.slice());
+      } catch (error) {
+        firstCallError = error;
+      }
+      expect(firstCallError).toBeInstanceOf(Error);
+
+      // The dead worker must not still be cached: a second call has to create a fresh one.
+      const bytes = await encodePngOffMainThread(1, 1, pixels.slice());
+      expect(FlakyWorker.instancesCreated).toBe(2);
+      const decoded = await decodePng(bytes);
+      expect(decoded.pixels[0]).toBe(packRgba(1, 2, 3, 255));
+
+      // The recovered (real) worker keeps working for further calls too.
+      const bytes2 = await encodePngOffMainThread(1, 1, pixels.slice());
+      expect([...bytes2]).toEqual([...bytes]);
+      expect(FlakyWorker.instancesCreated).toBe(2);
+    } finally {
+      globalThis.Worker = RealWorker;
+      terminatePngWorkerClient();
+    }
+  });
+});

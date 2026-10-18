@@ -58,7 +58,7 @@ function reviveError(error: { name: string; message: string; reason?: ImportErro
 /** Real worker-backed client: every call copies its input into a fresh, transferable buffer
  *  first, so it never risks detaching the caller's live document buffer or the original file
  *  bytes (e.g. a `Blob`'s backing buffer, which some code paths may still reference). */
-function createWorkerBackedClient(): PngWorkerClient {
+function createWorkerBackedClient(onFatalError: () => void): PngWorkerClient {
   const worker = new Worker(new URL('./pngWorker.ts', import.meta.url), { type: 'module' });
   let nextRequestId = 1;
   const pending = new Map<number, Pending>();
@@ -87,12 +87,18 @@ function createWorkerBackedClient(): PngWorkerClient {
     },
   );
   worker.addEventListener('error', (event: ErrorEvent) => {
-    // A worker-level failure (e.g. a load error) can't be correlated to one request; fail every
-    // request still in flight rather than hanging them forever.
+    // A worker-level failure (e.g. a load error, most often a chunk 404 after a deploy, or a
+    // flaky network dropping the script request) can't be correlated to one request; fail every
+    // request still in flight rather than hanging them forever. The worker that failed to load
+    // can never deliver another message either, so it's terminated and dropped from the shared
+    // cache here too — otherwise every later call would keep reusing this dead worker, postMessage
+    // into it forever, and never settle, which is exactly what left Open stuck on "Opening…".
     for (const [id, request] of pending) {
       request.reject(new Error(event.message || 'PNG worker failed'));
       pending.delete(id);
     }
+    worker.terminate();
+    onFatalError();
   });
 
   return {
@@ -185,9 +191,20 @@ let client: PngWorkerClient | undefined;
 
 /** Lazily creates one shared worker for the page's lifetime; encoding and decoding are both
  *  infrequent enough (autosave, export, opening a file) that pooling multiple workers would add
- *  complexity for no real benefit. */
+ *  complexity for no real benefit. A worker that fails to load (or throws during setup) can never
+ *  come back to life, so its `onFatalError` callback drops it from the cache the instant that
+ *  happens — comparing against `created` rather than blindly clearing `client`, so a fatal error
+ *  from an already-replaced worker (e.g. a test's own `terminatePngWorkerClient()` racing with a
+ *  pending `error` event) can't stomp on a newer, healthy one. */
 function getClient(): PngWorkerClient {
-  client ??= typeof Worker === 'undefined' ? createInlineClient() : createWorkerBackedClient();
+  if (client) return client;
+  const created: PngWorkerClient =
+    typeof Worker === 'undefined'
+      ? createInlineClient()
+      : createWorkerBackedClient(() => {
+          if (client === created) client = undefined;
+        });
+  client = created;
   return client;
 }
 

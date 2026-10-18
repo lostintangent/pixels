@@ -1,5 +1,10 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Browser, CDPSession, Page } from 'playwright';
 import { chromium } from 'playwright';
+import { packRgba } from '../../document';
+import { encodePng } from '../core/png';
 import { withProductionPreview } from '../../../shared/preview';
 
 /**
@@ -523,6 +528,120 @@ const storageFullKeepFailsCleanlyThenRecovers: Case = {
   },
 };
 
+/** Reads a document record's own stored thumbnail byte length straight from IndexedDB, the only
+ *  one of this case's three checks with no visible UI of its own. */
+async function thumbnailByteLength(page: Page, docId: string): Promise<number> {
+  return page.evaluate((id) => {
+    return new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('pixels-files');
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction('documents', 'readonly');
+        const getRequest = tx.objectStore('documents').get(id);
+        getRequest.onsuccess = () => resolve(getRequest.result?.thumbnail?.byteLength ?? 0);
+        getRequest.onerror = () => reject(getRequest.error as unknown);
+      };
+      request.onerror = () => reject(request.error as unknown);
+    });
+  }, docId);
+}
+
+/** A brand-new document's first save carries a placeholder (empty) thumbnail; real bytes only
+ *  land once the PNG worker round trip for its thumbnail encode actually replies. */
+async function waitForRealThumbnail(
+  page: Page,
+  docId: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if ((await thumbnailByteLength(page, docId)) > 0) return true;
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(100);
+  }
+}
+
+const FIXTURE_SIDE = 32;
+
+/**
+ * Lead's t85 repro: abort only the PNG worker's first script request, so its load fails exactly
+ * once, the same as a flaky network or a server restart between code-split chunks. Before the
+ * fix, `pngWorkerClient.ts`'s cached client stayed dead forever once that happened: a stroke's
+ * thumbnail encode never got a reply, and every later call through that same client (Open,
+ * Export, paste) hung the same way, with no error toast since the promise never settled either
+ * way. The fix terminates the dead worker and drops the cached client on its `error` event, so
+ * the next call gets a fresh one. This proves recovery across all three real consumers of that
+ * one client in a single page: Open, through a real file-chooser drop; Export, through a real
+ * download; and the next autosave thumbnail, the one consumer with no visible UI of its own, read
+ * directly out of IndexedDB.
+ */
+const pngWorkerRecoversFromAFailedLoad: Case = {
+  name: 'a PNG worker that fails to load recovers for Open, Export, and the next thumbnail',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+      acceptDownloads: true,
+    });
+    const directory = await mkdtemp(join(tmpdir(), 'pixels-worker-recovery-'));
+    try {
+      const fixture = join(directory, 'fixture.png');
+      const fixturePixels = new Uint32Array(FIXTURE_SIDE * FIXTURE_SIDE);
+      for (let i = 0; i < fixturePixels.length; i++) {
+        fixturePixels[i] = packRgba(i & 255, (i * 3) & 255, (i * 7) & 255, 255);
+      }
+      await Bun.write(fixture, await encodePng(FIXTURE_SIDE, FIXTURE_SIDE, fixturePixels));
+
+      // Abort only the first script request for the worker's own chunk — later requests, the
+      // retry this case triggers and anything else, go through untouched.
+      let matched = 0;
+      await context.route('**/pngWorker-*', async (route) => {
+        matched += 1;
+        if (matched === 1) await route.abort('internetdisconnected');
+        else await route.continue();
+      });
+
+      const id = crypto.randomUUID();
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/d/${id}`, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+
+      // The first stroke's autosave creates the PNG worker for its thumbnail encode. The route
+      // above fails its first script load, so that one encode genuinely rejects (both before and
+      // after the fix, since that part of error handling already worked) and the placeholder
+      // thumbnail this document started with is left in place.
+      await paintAt(page, 0.5, 0.5);
+      await Bun.sleep(debounceMs + 500);
+
+      // A second stroke's autosave makes a second thumbnail-encode call through the very same
+      // cached client. Before the fix, that client was left dead by the first failure, so this
+      // call would hang forever and the thumbnail would never update. After the fix, the failed
+      // worker was dropped, so this call gets a fresh one and actually succeeds.
+      await paintNear(page, 20, 20);
+      if (!(await waitForRealThumbnail(page, id, 10_000))) return false;
+
+      // Open: a real PNG, through the real file-chooser path, after that one worker failure.
+      const previousUrl = page.url();
+      const chooser = page.waitForEvent('filechooser');
+      await page.keyboard.press('Meta+o');
+      await (await chooser).setFiles(fixture);
+      await page.waitForURL((url) => url.href !== previousUrl, { timeout: 10_000 });
+      await waitForCanvasReady(page);
+
+      // Export: the same cached client's final encode-to-bytes step, proven by a real download.
+      const downloaded = page.waitForEvent('download', { timeout: 10_000 });
+      await page.keyboard.press('Meta+Shift+e');
+      await page.getByRole('button', { name: 'Export' }).click();
+      const download = await downloaded;
+      const downloadedPath = await download.path();
+      return !!downloadedPath && (await Bun.file(downloadedPath).exists());
+    } finally {
+      await context.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+};
+
 const allCases: Case[] = [
   reloadDuringDebounce,
   closeAndReopen,
@@ -531,6 +650,7 @@ const allCases: Case[] = [
   drawShapeThenReload,
   nudgeShapeThenReload,
   storageFullKeepFailsCleanlyThenRecovers,
+  pngWorkerRecoversFromAFailedLoad,
 ];
 const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
 const cases = onlyArg ? [allCases[Number(onlyArg.slice('--only='.length))]!] : allCases;

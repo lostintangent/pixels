@@ -92,6 +92,21 @@ export interface ExportDialogProps {
 let worker: Worker | undefined;
 let lastRequest = 0;
 
+function createPreviewWorker(): Worker {
+  const created = new Worker(new URL('./previewWorker.ts', import.meta.url), { type: 'module' });
+  created.addEventListener('error', () => {
+    // A script-load failure (a flaky network, or a server restart that changed chunk hashes
+    // under an open tab) can never recover on this worker: it won't deliver a message for the
+    // in-flight request, or any future one, so the preview would stay blank for the rest of the
+    // session if this cache weren't cleared. Terminating it and dropping the cache here means the
+    // next `renderPreview` call creates a fresh worker instead of reusing a dead one — the same
+    // fix as `pngWorkerClient.ts`'s own cached client.
+    created.terminate();
+    if (worker === created) worker = undefined;
+  });
+  return created;
+}
+
 /** Renders the preview off the main thread, so a 4096² document opens the dialog without jank. */
 function renderPreview(
   document: BitmapDocument,
@@ -99,7 +114,11 @@ function renderPreview(
   pixelated: boolean,
   onImage: (image: ImageBitmap) => void,
 ): () => void {
-  worker ??= new Worker(new URL('./previewWorker.ts', import.meta.url), { type: 'module' });
+  worker ??= createPreviewWorker();
+  // Captured once per call rather than read through the mutable module-level `worker` binding
+  // below, so a fatal error that rotates in a fresh worker before this request's own message (or
+  // the returned cleanup) runs can never add or remove a listener on the wrong instance.
+  const activeWorker = worker;
   const id = ++lastRequest;
   const rgba = document.rgbaBytes.slice().buffer;
   const request: PreviewRequest = {
@@ -114,12 +133,12 @@ function renderPreview(
   };
   const receive = ({ data }: MessageEvent<PreviewResponse>) => {
     if (data.id !== id) return;
-    worker?.removeEventListener('message', receive);
+    activeWorker.removeEventListener('message', receive);
     onImage(data.image);
   };
-  worker.addEventListener('message', receive);
-  worker.postMessage(request, [rgba]);
-  return () => worker?.removeEventListener('message', receive);
+  activeWorker.addEventListener('message', receive);
+  activeWorker.postMessage(request, [rgba]);
+  return () => activeWorker.removeEventListener('message', receive);
 }
 
 export function ExportDialog({ layout, onExport }: ExportDialogProps) {
