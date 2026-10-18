@@ -122,7 +122,8 @@ test('shape actions delete, duplicate, and deselect, each as its own step', asyn
   expect(set().shapes).toHaveLength(2);
   const copy = session.state.state.selectedShape!.id;
   expect(copy).not.toBe('box');
-  expect(set().get(copy)?.start).toEqual({ x: 20, y: 20 });
+  // 12 screen px at 8× rounds to 2 image px.
+  expect(set().get(copy)?.start).toEqual({ x: 12, y: 12 });
 
   session.run({ type: 'shape', action: 'delete' });
   expect(set().get(copy)).toBeNull();
@@ -135,6 +136,39 @@ test('shape actions delete, duplicate, and deselect, each as its own step', asyn
   session.run({ type: 'undo' });
   expect(set().shapes).toHaveLength(2);
   session.run({ type: 'undo' });
+  expect(set().shapes).toHaveLength(1);
+});
+
+test('repeated duplicates step on from the newest copy, each its own undo step', async () => {
+  // Only 1 px of this arrow's shaft is on the 64 px image, so the first copy steps left.
+  const edge: Annotation = {
+    id: 'edge',
+    kind: 'arrow',
+    start: { x: 63, y: 30 },
+    end: { x: 80, y: 30 },
+    color: RED,
+    width: 2,
+  };
+  const { session, set } = await open([edge]);
+  session.run({ type: 'tool', tool: 'select' });
+  drag(session, [63.5, 30], [63.5, 30]);
+  expect(session.state.state.selectedShape?.id).toBe('edge');
+
+  const starts = [];
+  for (let step = 0; step < 3; step++) {
+    session.run({ type: 'shape', action: 'duplicate' });
+    starts.push(set().get(session.state.state.selectedShape!.id)?.start);
+  }
+  // Down and right still fits from a copy, yet the run keeps going the way it started.
+  expect(starts).toEqual([
+    { x: 61, y: 32 },
+    { x: 59, y: 34 },
+    { x: 57, y: 36 },
+  ]);
+  for (let step = 3; step > 0; step--) {
+    expect(set().shapes).toHaveLength(step + 1);
+    session.run({ type: 'undo' });
+  }
   expect(set().shapes).toHaveLength(1);
 });
 

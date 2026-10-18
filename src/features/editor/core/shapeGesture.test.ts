@@ -4,6 +4,7 @@ import type { Annotation } from '../../annotations/model';
 import { packRgba } from '../../document';
 import {
   beginShapeDrag,
+  duplicateOffset,
   heldRun,
   isDegenerateShape,
   keepsOnImage,
@@ -466,5 +467,38 @@ describe('keeping shapes on the image', () => {
     expect(heldRun(at(100), { ...image, zoom: 4 })).toBe(2);
     // Only a shape none of whose centerline touches the image is free.
     expect(heldRun(at(-100), zoomedOut)).toBeNull();
+  });
+});
+
+describe('duplicating', () => {
+  const sprite = { width: 32, height: 32, zoom: 24 };
+
+  test('a copy steps 12 screen px in whole image pixels, at least one', () => {
+    const screenshot = { width: 3456, height: 2234, zoom: 0.31 };
+    expect(duplicateOffset(box, screenshot)).toEqual({ x: 39, y: 39 });
+    expect(duplicateOffset(box, { ...screenshot, zoom: 1 })).toEqual({ x: 12, y: 12 });
+    expect(duplicateOffset(box, { ...screenshot, zoom: 8 })).toEqual({ x: 2, y: 2 });
+    const small = { ...box, start: { x: 4, y: 4 }, end: { x: 12, y: 10 } };
+    expect(duplicateOffset(small, sprite)).toEqual({ x: 1, y: 1 });
+    expect(duplicateOffset(small, { ...sprite, zoom: 128 })).toEqual({ x: 1, y: 1 });
+    // A preferred direction holds while it keeps the copy on the image.
+    expect(duplicateOffset(small, sprite, { x: -1, y: -1 })).toEqual({ x: -1, y: -1 });
+  });
+
+  test('a step that would leave the copy too little on the image flips an axis, then both', () => {
+    const image = { width: 300, height: 200, zoom: 1 };
+    // 5 px of shaft on the image: down and right would take it all off, so it steps left.
+    const right = { ...arrow, start: { x: 295, y: 50 }, end: { x: 400, y: 50 } };
+    expect(duplicateOffset(right, image)).toEqual({ x: -12, y: 12 });
+    const below = { ...arrow, start: { x: 50, y: 195 }, end: { x: 50, y: 300 } };
+    expect(duplicateOffset(below, image)).toEqual({ x: 12, y: -12 });
+    const corner = { ...arrow, start: { x: 295, y: 195 }, end: { x: 400, y: 300 } };
+    expect(duplicateOffset(corner, image)).toEqual({ x: -12, y: -12 });
+    // On a sprite at 24×, one image pixel at its edge is 24 screen px of stroke to keep.
+    const edge = { ...arrow, start: { x: 31, y: 5 }, end: { x: 40, y: 5 } };
+    expect(duplicateOffset(edge, sprite)).toEqual({ x: -1, y: 1 });
+    // A source already off the image steps freely, so it can't be stranded further.
+    const lost = { ...arrow, start: { x: 400, y: 50 }, end: { x: 500, y: 50 } };
+    expect(duplicateOffset(lost, image)).toEqual({ x: 12, y: 12 });
   });
 });

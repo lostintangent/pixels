@@ -99,12 +99,15 @@ export function deleteAnnotation(
   return transaction.commit();
 }
 
-/** Command-D duplicates in place with a visible offset. Option-drag uses an edit gesture instead. */
+/**
+ * Command-D duplicates by `offset`, which the editor sizes for the zoom so the copy reads as a
+ * copy. Option-drag uses an edit gesture instead.
+ */
 export function duplicateAnnotation(
   document: BitmapDocument,
   history: DocumentHistory,
   id: string,
-  offset: PixelPoint = { x: 10, y: 10 },
+  offset: PixelPoint,
 ): string | null {
   const set = annotationsFor(document);
   const source = set.get(id);

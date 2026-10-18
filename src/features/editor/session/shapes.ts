@@ -13,6 +13,7 @@ import { chooseColor, recordPaintedColor } from '../core/state';
 import type { EditorState } from '../core/state';
 import {
   beginShapeDrag,
+  duplicateOffset,
   isDegenerateShape,
   heldRun,
   keepsOnImage,
@@ -20,7 +21,13 @@ import {
   liveShape,
   shapeTargetAt,
 } from '../core/shapeGesture';
-import type { ShapeBounds, ShapeDrag, ShapeDragModifiers, ShapeStyle } from '../core/shapeGesture';
+import type {
+  ShapeBounds,
+  ShapeDrag,
+  ShapeDragModifiers,
+  ShapeStyle,
+  StepDirection,
+} from '../core/shapeGesture';
 import type { ShapeAction } from '../core/shortcuts';
 import type { ShapeKind } from '../core/tools';
 
@@ -115,6 +122,8 @@ function dragLabel(drag: ShapeDrag): string {
 export function createShapeController(host: ShapeHost): ShapeController {
   let drag: Drag | null = null;
   let amend: Amend | null = null;
+  /** The newest Command-D copy and the way it stepped, so the next copy steps on from it. */
+  let lastCopy: { id: string; direction: StepDirection } | null = null;
   const set = () => annotationsFor(host.document());
   const selectedId = () => host.state().selectedShape?.id ?? null;
   const bounds = (): ShapeBounds => {
@@ -165,6 +174,18 @@ export function createShapeController(host: ShapeHost): ShapeController {
       amend.timer = setTimeout(flush, AMEND_MS);
     }
     amend.edit.preview(shape);
+  }
+
+  function duplicate(id: string): string | null {
+    const source = set().get(id);
+    if (!source) return null;
+    const prefer = lastCopy?.id === id ? lastCopy.direction : undefined;
+    const offset = duplicateOffset(source, bounds(), prefer);
+    const copy = duplicateAnnotation(host.document(), host.history, id, offset);
+    lastCopy = copy
+      ? { id: copy, direction: { x: offset.x < 0 ? -1 : 1, y: offset.y < 0 ? -1 : 1 } }
+      : null;
+    return copy;
   }
 
   function targetAt(point: PixelPoint, touch: boolean) {
@@ -243,7 +264,7 @@ export function createShapeController(host: ShapeHost): ShapeController {
       if (!id) return;
       flush();
       if (action === 'delete') deleteAnnotation(host.document(), host.history, id);
-      const copy = action === 'duplicate' && duplicateAnnotation(host.document(), host.history, id);
+      const copy = action === 'duplicate' && duplicate(id);
       select(copy ? (set().get(copy) ?? null) : null);
       host.committed();
     },

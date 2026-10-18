@@ -30,6 +30,11 @@ const MIN_SIZE = 2;
  * Enough to see and grab again, like a handle's reach. A shorter side only has to stay whole.
  */
 const KEEP_ON_IMAGE = 8;
+/**
+ * How far Command-D sets a copy from its source, in screen pixels: clear of a thick stroke at fit,
+ * yet close enough to read as a copy of it.
+ */
+const DUPLICATE_STEP = 12;
 
 export interface ShapeTarget {
   shape: Annotation;
@@ -270,11 +275,57 @@ export function keepsOnImage(
  * come back.
  */
 export function heldRun(shape: Annotation, bounds: ShapeBounds): number | null {
-  let held = -1;
-  for (const [ax, ay, bx, by] of centerlines(shape)) {
-    held = Math.max(held, runOnImage(ax, ay, bx, by, bounds));
-  }
+  const held = longestRun(shape, bounds);
   return held < 0 ? null : Math.min(KEEP_ON_IMAGE / bounds.zoom, held);
+}
+
+/** A direction along each axis, +1 for right or down. */
+export interface StepDirection {
+  x: 1 | -1;
+  y: 1 | -1;
+}
+
+/**
+ * Where Command-D puts a copy: `DUPLICATE_STEP` screen pixels away in whole image pixels, at least
+ * one, along `prefer` (down and right by default). A copy that would keep less of itself on the
+ * image than its source holds, under the same rule as a move, flips across one axis and then both.
+ * A source already off the image steps freely.
+ */
+export function duplicateOffset(
+  shape: Annotation,
+  bounds: ShapeBounds,
+  prefer: StepDirection = { x: 1, y: 1 },
+): PixelPoint {
+  const step = Math.max(1, Math.round(DUPLICATE_STEP / bounds.zoom));
+  const offsets = [
+    { x: prefer.x, y: prefer.y },
+    { x: -prefer.x, y: prefer.y },
+    { x: prefer.x, y: -prefer.y },
+    { x: -prefer.x, y: -prefer.y },
+  ].map(({ x, y }) => ({ x: x * step, y: y * step }));
+  const need = heldRun(shape, bounds);
+  if (need === null) return offsets[0]!;
+  // When no step keeps enough, the one that keeps the most still beats a copy left invisible.
+  let best = offsets[0]!;
+  let most = -Infinity;
+  for (const offset of offsets) {
+    const copy = translateAnnotation(shape, offset);
+    if (keepsOnImage(copy, bounds, need)) return offset;
+    const run = longestRun(copy, bounds);
+    if (run > most) {
+      most = run;
+      best = offset;
+    }
+  }
+  return best;
+}
+
+function longestRun(shape: Annotation, bounds: ShapeBounds): number {
+  let longest = -1;
+  for (const [ax, ay, bx, by] of centerlines(shape)) {
+    longest = Math.max(longest, runOnImage(ax, ay, bx, by, bounds));
+  }
+  return longest;
 }
 
 type Segment = [number, number, number, number];
