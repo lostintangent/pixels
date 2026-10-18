@@ -414,6 +414,115 @@ const nudgeShapeThenReload: Case = {
   },
 };
 
+/** Mirrors `documentStore.ts`'s own private store names — there's no public API for this (and
+ *  shouldn't be, for ordinary app code), so a durability check reading IndexedDB directly from
+ *  outside the app is the one place that duplication is worth it. */
+const DOCUMENTS_STORE = 'documents';
+const TILES_STORE = 'tiles';
+
+/** Counts every record in one of the app's own object stores, straight from the page's real
+ *  IndexedDB — not through any app API, since the whole point is to catch a failed write leaving
+ *  something behind (or missing) that the app's own happy-path reads would never surface. */
+async function countRecords(page: Page, storeName: typeof DOCUMENTS_STORE | typeof TILES_STORE) {
+  return page.evaluate((store) => {
+    return new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('pixels-files');
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction(store, 'readonly');
+        const countRequest = tx.objectStore(store).count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }, storeName);
+}
+
+async function setCanvasSize(page: Page, size: number): Promise<void> {
+  const width = page.getByRole('spinbutton', { name: 'Width' });
+  await width.click();
+  await width.press('Meta+A');
+  await width.press('Backspace');
+  await width.type(String(size));
+  await width.press('Tab');
+  const height = page.getByRole('spinbutton', { name: 'Height' });
+  await height.click();
+  await height.press('Meta+A');
+  await height.press('Backspace');
+  await height.type(String(size));
+  await height.press('Tab');
+}
+
+/**
+ * Lead's t82 repro: override the origin's own storage quota down to something a single full
+ * resave can't fit in, force an explicit "keep" (New canvas) through it, and confirm the failure
+ * is clean — no new document record, no orphaned tiles, and the toast blames the lack of room,
+ * not the file — then lift the override and confirm a later keep just works. `fake-indexeddb`
+ * (every `bun test`) has no notion of a quota at all, so this is the only place any of this is
+ * actually exercised against a real IndexedDB. Chrome's CDP override enforces the limit for real,
+ * though `navigator.storage.estimate()` keeps reporting the un-overridden quota regardless — this
+ * case never reads that, only IndexedDB's own actual behavior and the app's own UI.
+ */
+const QUOTA_BYTES = 150 * 1024;
+const TOO_BIG_SIDE = 256; // 16 tiles at 16 KiB each: well past QUOTA_BYTES on its own.
+const RECOVERY_SIDE = 64; // 1 tile: trivially fits once the override is lifted.
+
+const storageFullKeepFailsCleanlyThenRecovers: Case = {
+  name: 'a New canvas that runs out of storage leaves nothing behind, and a later one succeeds',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    try {
+      const page = await context.newPage();
+      await page.goto(baseUrl, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+      const pathBeforeAttempts = new URL(page.url()).pathname;
+
+      const client = await context.newCDPSession(page);
+      const origin = new URL(baseUrl).origin;
+      await client.send('Storage.overrideQuotaForOrigin', { origin, quotaSize: QUOTA_BYTES });
+
+      const documentsBefore = await countRecords(page, DOCUMENTS_STORE);
+      const tilesBefore = await countRecords(page, TILES_STORE);
+
+      await page.keyboard.press('Meta+Alt+n');
+      await setCanvasSize(page, TOO_BIG_SIDE);
+      await page.getByRole('button', { name: 'Create' }).click();
+      await page
+        .getByText(/no room to keep this/i)
+        .first()
+        .waitFor({ timeout: 5_000 });
+
+      if (new URL(page.url()).pathname !== pathBeforeAttempts) return false; // a failed keep must not navigate
+      if ((await countRecords(page, DOCUMENTS_STORE)) !== documentsBefore) return false;
+      if ((await countRecords(page, TILES_STORE)) !== tilesBefore) return false;
+
+      // Free up space the same way real disk pressure would resolve — there's no delete UI yet
+      // (a separate, still-undecided follow-up), so this lifts the override instead.
+      await client.send('Storage.overrideQuotaForOrigin', {
+        origin,
+        quotaSize: 1024 * 1024 * 1024,
+      });
+
+      await page.keyboard.press('Meta+Alt+n');
+      await setCanvasSize(page, RECOVERY_SIDE);
+      await page.getByRole('button', { name: 'Create' }).click();
+      await page.waitForURL((url) => url.pathname !== pathBeforeAttempts, { timeout: 5_000 });
+      await waitForCanvasReady(page);
+
+      return (
+        (await countRecords(page, DOCUMENTS_STORE)) === documentsBefore + 1 &&
+        (await countRecords(page, TILES_STORE)) === tilesBefore + 1
+      );
+    } finally {
+      await context.close();
+    }
+  },
+};
+
 const allCases: Case[] = [
   reloadDuringDebounce,
   closeAndReopen,
@@ -421,6 +530,7 @@ const allCases: Case[] = [
   reloadDuringInFlightSave,
   drawShapeThenReload,
   nudgeShapeThenReload,
+  storageFullKeepFailsCleanlyThenRecovers,
 ];
 const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
 const cases = onlyArg ? [allCases[Number(onlyArg.slice('--only='.length))]!] : allCases;

@@ -10,10 +10,11 @@ export type {
   DocumentSummary,
   ImportErrorReason,
   LoadedDocument,
+  SaveErrorReason,
   TileCoord,
   TileSnapshot,
 } from './core/contracts';
-export { ImportError, TILE_SIZE } from './core/contracts';
+export { ImportError, SaveError, TILE_SIZE } from './core/contracts';
 export { createDocumentId } from './core/documentId';
 export { DOCUMENT_NAME_MAX_LENGTH, normalizeDocumentName } from './core/documentName';
 

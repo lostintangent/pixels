@@ -15,6 +15,7 @@ import {
   importPng,
   normalizeDocumentName,
   renameDocument,
+  SaveError,
   saveDocument,
 } from '../../../files';
 import type { DocumentId, DocumentStore } from '../../../files';
@@ -67,12 +68,17 @@ export function FileActionsProvider({
     let slow: ReturnType<typeof setTimeout> | undefined;
     const opening = (on: boolean) => session.state.setState((state) => ({ ...state, opening: on }));
     const show = (id: DocumentId) => void navigate({ to: '/d/$docId', params: { docId: id } });
-    // A bad file is a small, recoverable mistake, so it gets a calm toast. Red is saved for "Not saved".
+    // A bad file, or a keep that ran out of room, is a small, recoverable mistake, so it gets a
+    // calm toast. Red is saved for "Not saved". `ImportError` and `SaveError` both carry their
+    // own plain-sentence message — the only two reasons this ever has something more specific to
+    // say than the generic, action-named fallback below.
     const fail = (error: unknown, fallback: string) => {
       clearTimeout(slow);
       opening(false);
+      const message =
+        error instanceof ImportError || error instanceof SaveError ? error.message : fallback;
       showToast({
-        body: <Problem>{error instanceof ImportError ? error.message : fallback}</Problem>,
+        body: <Problem>{message}</Problem>,
         autoHideDuration: 8000,
         uniqueID: 'file-error',
       });

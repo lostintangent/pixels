@@ -1,12 +1,13 @@
 import { isValidAnnotation, type Annotation } from '../../annotations/model';
 import type { DocumentColorSpace } from '../../document';
-import type {
-  DocumentId,
-  DocumentSnapshot,
-  DocumentStore,
-  DocumentSummary,
-  LoadedDocument,
-  TileSnapshot,
+import {
+  SaveError,
+  type DocumentId,
+  type DocumentSnapshot,
+  type DocumentStore,
+  type DocumentSummary,
+  type LoadedDocument,
+  type TileSnapshot,
 } from '../core/contracts';
 import {
   buildThumbnail,
@@ -96,6 +97,42 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
   });
+}
+
+// Verified directly against real Chromium (not just the spec): a write that can't fit never
+// fails the individual `put()` request — that still reports `onsuccess` — it's the surrounding
+// transaction that later aborts with this name once the engine actually tries to commit it,
+// which is exactly what `transactionDone` above rejects with. Also covers Chrome's `UnknownError`,
+// which it reports when the underlying disk itself is full rather than just this origin's quota;
+// there's no narrower signal to tell that apart from any other internal `UnknownError`, but a
+// write transaction failing this way means the same thing to the person using the app. Anything
+// else (corruption, a closed connection, a blocked version change) is a real bug, not a full
+// disk, and is left as its original error for an unfiltered toast/log rather than being mislabeled.
+const STORAGE_FULL_ERROR_NAMES = new Set(['QuotaExceededError', 'UnknownError']);
+
+/** The pure half of the classification, kept separate from `classifyingStorageErrors` below so a
+ *  test can hand it a constructed `DOMException` directly instead of forcing a real IndexedDB
+ *  transaction to abort (something `fake-indexeddb` has no way to simulate — it doesn't model
+ *  quotas at all). Returns the original error unchanged whenever it isn't one of these two names. */
+export function classifySaveError(error: unknown): unknown {
+  if (error instanceof DOMException && STORAGE_FULL_ERROR_NAMES.has(error.name)) {
+    return new SaveError(
+      'storage-full',
+      'There’s no room to keep this. The image is fine — free up some space and try again.',
+    );
+  }
+  return error;
+}
+
+/** Wraps a write so a caller only ever sees `SaveError` for a storage-full failure, never the
+ *  raw `DOMException` IndexedDB produces for it — the whole point being that the UI can finally
+ *  tell this apart from an actually broken file or a real storage bug. */
+async function classifyingStorageErrors<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    throw classifySaveError(error);
+  }
 }
 
 /** Deletes every stored tile for a document id, used before a full resave replaces the whole grid.
@@ -404,7 +441,9 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       // rejection; `saveNow` still awaits the same promise for its actual value (or failure)
       // once its turn comes, so a real failure still propagates to this call's caller normally.
       Promise.resolve(thumbnail).catch(() => {});
-      return writes.run(snapshot.id, () => saveNow(snapshot, thumbnail));
+      return writes.run(snapshot.id, () =>
+        classifyingStorageErrors(() => saveNow(snapshot, thumbnail)),
+      );
     },
 
     stashForRecovery(snapshot: DocumentSnapshot): void {
@@ -412,7 +451,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
     },
 
     rename(id: DocumentId, name: string): Promise<void> {
-      return writes.run(id, () => renameNow(id, name));
+      return writes.run(id, () => classifyingStorageErrors(() => renameNow(id, name)));
     },
 
     async load(id: DocumentId): Promise<LoadedDocument | null> {

@@ -16,6 +16,26 @@ export class ImportError extends Error {
   }
 }
 
+/** Only one reason today: IndexedDB couldn't make room for the write. Kept as a union (not a
+ *  bare boolean) so a later distinction — say, a document too big for any quota versus one that
+ *  would fit if something else were deleted first — can be added without changing callers that
+ *  already narrow on `instanceof SaveError`. */
+export type SaveErrorReason = 'storage-full';
+
+/** Thrown by `DocumentStore.save`/`rename` in place of the raw `DOMException` IndexedDB produces
+ *  when a write can't fit. The image or rename itself was never the problem, so, like
+ *  `ImportError`, `message` is a plain sentence the UI shows as-is — one that doesn't blame the
+ *  file. See `classifyStorageError` in `storage/documentStore.ts` for which underlying error
+ *  names this covers and why. */
+export class SaveError extends Error {
+  readonly reason: SaveErrorReason;
+  constructor(reason: SaveErrorReason, message: string) {
+    super(message);
+    this.name = 'SaveError';
+    this.reason = reason;
+  }
+}
+
 /** 64x64 keeps a full-document 4096x4096 write under 4,096 small puts, and a single-pixel edit at 16 KB. */
 export const TILE_SIZE = 64;
 

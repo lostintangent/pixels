@@ -2,10 +2,10 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Annotation } from '../../annotations/model';
 import { createBitmapDocument, packRgba } from '../../document';
-import type { DocumentSnapshot, TileSnapshot } from '../core/contracts';
+import { SaveError, type DocumentSnapshot, type TileSnapshot } from '../core/contracts';
 import { extractTile } from '../core/tiles';
 import { snapshotDocument } from '../core/snapshot';
-import { createDocumentStore } from './documentStore';
+import { classifySaveError, createDocumentStore } from './documentStore';
 
 /** A minimal in-memory `Storage`, since `bun test` has no `localStorage` global of its own — the
  *  crash-recovery journal is otherwise only ever exercised by the live-browser durability suite. */
@@ -608,5 +608,35 @@ describe('crash-recovery journal', () => {
     const summary = recents.find((r) => r.id === 'doc-recover-persist');
     expect(summary).not.toBeUndefined();
     expect(summary!.thumbnail.size).toBeGreaterThan(0); // a real PNG, not the blank placeholder
+  });
+});
+
+describe('classifySaveError', () => {
+  // `fake-indexeddb` has no notion of a quota, so these hand it the exact `DOMException` shapes
+  // a real transaction abort carries (see `documentStore.ts`'s own comment, verified against
+  // real Chromium) rather than trying to force an actual IndexedDB write to fail.
+  test('maps a QuotaExceededError (the ordinary "this origin is full" case) to SaveError', () => {
+    const error = classifySaveError(new DOMException('', 'QuotaExceededError'));
+    expect(error).toBeInstanceOf(SaveError);
+    expect((error as SaveError).reason).toBe('storage-full');
+    expect((error as SaveError).message).not.toMatch(/file|image couldn.t|canvas couldn.t/i);
+  });
+
+  test('maps an UnknownError (Chrome\'s "the actual disk is full" case) to SaveError too', () => {
+    const error = classifySaveError(
+      new DOMException('Internal error opening backing store', 'UnknownError'),
+    );
+    expect(error).toBeInstanceOf(SaveError);
+    expect((error as SaveError).reason).toBe('storage-full');
+  });
+
+  test('leaves an unrelated DOMException (a real bug, not a full disk) alone', () => {
+    const original = new DOMException('closed', 'InvalidStateError');
+    expect(classifySaveError(original)).toBe(original);
+  });
+
+  test('leaves a non-DOMException error (e.g. a plain thrown Error) alone', () => {
+    const original = new Error('boom');
+    expect(classifySaveError(original)).toBe(original);
   });
 });
