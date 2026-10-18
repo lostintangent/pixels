@@ -619,7 +619,6 @@ describe('classifySaveError', () => {
     const error = classifySaveError(new DOMException('', 'QuotaExceededError'));
     expect(error).toBeInstanceOf(SaveError);
     expect((error as SaveError).reason).toBe('storage-full');
-    expect((error as SaveError).message).not.toMatch(/file|image couldn.t|canvas couldn.t/i);
   });
 
   test('maps an UnknownError (Chrome\'s "the actual disk is full" case) to SaveError too', () => {

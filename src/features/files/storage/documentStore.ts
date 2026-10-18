@@ -116,10 +116,7 @@ const STORAGE_FULL_ERROR_NAMES = new Set(['QuotaExceededError', 'UnknownError'])
  *  quotas at all). Returns the original error unchanged whenever it isn't one of these two names. */
 export function classifySaveError(error: unknown): unknown {
   if (error instanceof DOMException && STORAGE_FULL_ERROR_NAMES.has(error.name)) {
-    return new SaveError(
-      'storage-full',
-      'There’s no room to keep this. The image is fine — free up some space and try again.',
-    );
+    return new SaveError('storage-full');
   }
   return error;
 }

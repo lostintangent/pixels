@@ -69,14 +69,19 @@ export function FileActionsProvider({
     const opening = (on: boolean) => session.state.setState((state) => ({ ...state, opening: on }));
     const show = (id: DocumentId) => void navigate({ to: '/d/$docId', params: { docId: id } });
     // A bad file, or a keep that ran out of room, is a small, recoverable mistake, so it gets a
-    // calm toast. Red is saved for "Not saved". `ImportError` and `SaveError` both carry their
-    // own plain-sentence message — the only two reasons this ever has something more specific to
-    // say than the generic, action-named fallback below.
-    const fail = (error: unknown, fallback: string) => {
+    // calm toast. Red is saved for "Not saved". `ImportError` carries its own plain-sentence
+    // message. `SaveError` carries only a reason — "no room" reads differently from each action
+    // (New has no image to reassure anyone about; Rename has no "it" to keep), so every call site
+    // below supplies its own sentence for it instead of one trying to fit every action.
+    const fail = (error: unknown, fallback: string, storageFull?: string) => {
       clearTimeout(slow);
       opening(false);
       const message =
-        error instanceof ImportError || error instanceof SaveError ? error.message : fallback;
+        error instanceof SaveError && storageFull
+          ? storageFull
+          : error instanceof ImportError
+            ? error.message
+            : fallback;
       showToast({
         body: <Problem>{message}</Problem>,
         autoHideDuration: 8000,
@@ -102,12 +107,18 @@ export function FileActionsProvider({
     const decode = (file: Blob, name?: string) =>
       importPng(file, createDocumentId(), name ?? nameOf(file));
 
+    /** Open and paste share this exact sentence: both are keeping an image that was never
+     *  itself the problem. New and rename each need their own below, since neither has an "it"
+     *  this phrasing would refer to. */
+    const noRoomForImage =
+      'This image is fine, but there’s no room to keep it. Free up some space and try again.';
+
     /** A big image takes a moment. An open under 150 ms lands before the title would change. */
     const openFile = (file: Blob, name?: string) => {
       slow = setTimeout(opening, 150, true);
       decode(file, name)
         .then(keep)
-        .catch((error: unknown) => fail(error, 'This file couldn’t be opened.'));
+        .catch((error: unknown) => fail(error, 'This file couldn’t be opened.', noRoomForImage));
     };
 
     /** On a phone, the share sheet is how an image reaches Photos. Elsewhere it downloads. */
@@ -133,7 +144,13 @@ export function FileActionsProvider({
       newCanvas(width, height, background) {
         const document = createBitmapDocument(createDocumentId(), width, height);
         if (background !== TRANSPARENT) document.pixels.fill(background);
-        keep(document).catch((error: unknown) => fail(error, 'The new canvas couldn’t be saved.'));
+        keep(document).catch((error: unknown) =>
+          fail(
+            error,
+            'The new canvas couldn’t be saved.',
+            'There’s no room for a new canvas. Free up some space and try again.',
+          ),
+        );
       },
       pickFile() {
         const input = globalThis.document.createElement('input');
@@ -153,7 +170,7 @@ export function FileActionsProvider({
             await keep(image);
             showToast({ body: `Opened as a new ${image.width} × ${image.height} canvas.` });
           })
-          .catch((error: unknown) => fail(error, 'This image couldn’t be pasted.'));
+          .catch((error: unknown) => fail(error, 'This image couldn’t be pasted.', noRoomForImage));
       },
       openRecent: show,
       exportPng(fileName, scale) {
@@ -185,7 +202,11 @@ export function FileActionsProvider({
           },
           (error: unknown) => {
             if (!isStored) session.setSaveStatus('error');
-            fail(error, 'The new name couldn’t be saved.');
+            fail(
+              error,
+              'The new name couldn’t be saved.',
+              'There’s no room to save the new name. Free up some space and try again.',
+            );
           },
         );
       },

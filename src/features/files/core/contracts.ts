@@ -23,14 +23,16 @@ export class ImportError extends Error {
 export type SaveErrorReason = 'storage-full';
 
 /** Thrown by `DocumentStore.save`/`rename` in place of the raw `DOMException` IndexedDB produces
- *  when a write can't fit. The image or rename itself was never the problem, so, like
- *  `ImportError`, `message` is a plain sentence the UI shows as-is — one that doesn't blame the
- *  file. See `classifyStorageError` in `storage/documentStore.ts` for which underlying error
- *  names this covers and why. */
+ *  when a write can't fit. Unlike `ImportError`, it carries no message of its own: the same
+ *  storage-full failure reads differently from New, Open, Paste, and Rename (a new canvas has no
+ *  image to reassure the person about, a rename has no "it" to keep), so each call site in
+ *  `FileActions.tsx` picks its own plain sentence for this `reason` instead of one sentence
+ *  trying to fit every action. See `classifySaveError` in `storage/documentStore.ts` for which
+ *  underlying error names this covers and why. */
 export class SaveError extends Error {
   readonly reason: SaveErrorReason;
-  constructor(reason: SaveErrorReason, message: string) {
-    super(message);
+  constructor(reason: SaveErrorReason) {
+    super(reason);
     this.name = 'SaveError';
     this.reason = reason;
   }

@@ -492,7 +492,7 @@ const storageFullKeepFailsCleanlyThenRecovers: Case = {
       await setCanvasSize(page, TOO_BIG_SIDE);
       await page.getByRole('button', { name: 'Create' }).click();
       await page
-        .getByText(/no room to keep this/i)
+        .getByText(/no room for a new canvas/i)
         .first()
         .waitFor({ timeout: 5_000 });
 
