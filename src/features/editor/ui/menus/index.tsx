@@ -2,7 +2,6 @@ import * as stylex from '@stylexjs/stylex';
 import { Button } from '@astryxdesign/core/Button';
 import type { DropdownMenuButtonProps } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
-import { useSelector } from '@tanstack/react-store';
 import {
   useEffect,
   useEffectEvent,
@@ -86,11 +85,7 @@ export function DocMenu({ layout }: { layout: Layout }) {
 /** The zoom level, behind which sit fit, actual size, and the grid. */
 export function ZoomMenu({ layout }: { layout: Layout }) {
   const session = useEditor();
-  // Whole-number fits keep their exact label. Mid-pinch labels still change only at ladder steps.
-  const zoom = useSelector(session.viewport, (view) =>
-    displayZoom(view, session.viewBounds()?.minZoom),
-  );
-  const level = formatZoom(zoom);
+  const level = formatZoom(displayZoom(session.viewport.state, session.viewBounds()?.minZoom));
   return (
     <DeferredMenu
       surface="ZoomMenu"
@@ -100,19 +95,41 @@ export function ZoomMenu({ layout }: { layout: Layout }) {
         variant: 'ghost',
         xstyle: styles.zoom,
         // The widest levels share the cell invisibly, so a new level never resizes its island.
-        children: (
-          <span {...stylex.props(styles.level)}>
-            <span {...stylex.props(styles.stack)}>{level}</span>
-            {WIDEST_LEVELS.map((widest) => (
-              <span key={widest} aria-hidden {...stylex.props(styles.stack, styles.ghost)}>
-                {widest}
-              </span>
-            ))}
-          </span>
-        ),
+        children: <ZoomLevel initialLevel={level} />,
       }}
       hasChevron={false}
     />
+  );
+}
+
+/** A pinch can cross several labels. Keep the small trigger current without rendering its menu. */
+function ZoomLevel({ initialLevel }: { initialLevel: string }) {
+  const session = useEditor();
+  const label = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const update = () => {
+      const node = label.current;
+      if (!node) return;
+      const level = formatZoom(displayZoom(session.viewport.state, session.viewBounds()?.minZoom));
+      if (node.textContent === level) return;
+      node.textContent = level;
+      node.closest('button')?.setAttribute('aria-label', `Zoom ${level}`);
+    };
+    update();
+    const { unsubscribe } = session.viewport.subscribe(update);
+    return unsubscribe;
+  });
+  return (
+    <span {...stylex.props(styles.level)}>
+      <span ref={label} {...stylex.props(styles.stack)}>
+        {initialLevel}
+      </span>
+      {WIDEST_LEVELS.map((widest) => (
+        <span key={widest} aria-hidden {...stylex.props(styles.stack, styles.ghost)}>
+          {widest}
+        </span>
+      ))}
+    </span>
   );
 }
 
