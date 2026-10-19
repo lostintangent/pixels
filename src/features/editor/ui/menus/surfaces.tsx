@@ -25,7 +25,7 @@ import {
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { DOCUMENT_NAME_MAX_LENGTH } from '../../../files';
-import { GRID_MIN_ZOOM } from '../../core/zoom';
+import { displayZoom, formatZoom, GRID_MIN_ZOOM } from '../../core/zoom';
 import { setAppearance, useAppearance } from '../../session/appearance';
 import type { Appearance } from '../../session/appearance';
 import { preloadDialogs } from '../dialogs';
@@ -157,7 +157,18 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
 /** Zoom level as the trigger, with fit, actual size, and the grid behind it. */
 export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   const session = useEditor();
-  const gridTooSmall = useSelector(session.viewport, (view) => view.zoom < GRID_MIN_ZOOM);
+  const gridTooSmall = useSelector(
+    session.viewport,
+    (view) => isMenuOpen && view.zoom < GRID_MIN_ZOOM,
+  );
+  // The closed trigger updates its own text. Read zoom here only while the sheet is open, so its
+  // title and dialog name stay current without rerendering the menu on every canvas pinch.
+  const openZoom = useSelector(session.viewport, (view) =>
+    isMenuOpen ? displayZoom(view, session.viewBounds()?.minZoom) : null,
+  );
+  const level = formatZoom(
+    openZoom ?? displayZoom(session.viewport.state, session.viewBounds()?.minZoom),
+  );
   const grid = useEditorState((state) => state.gridEnabled);
   const phone = layout === 'phone';
   const keys = (shortcut: string) => (phone ? undefined : <Shortcut keys={shortcut} />);
@@ -208,6 +219,7 @@ export function ZoomMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
   return (
     <DropdownMenu
       {...trigger}
+      button={{ ...trigger.button, label: `Zoom ${level}` }}
       isMenuOpen={isMenuOpen}
       items={items}
       menuWidth={220}

@@ -107,16 +107,18 @@ function ZoomLevel({ initialLevel }: { initialLevel: string }) {
   const session = useEditor();
   const label = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
-    const update = () => {
+    const update = (forceName = false) => {
       const node = label.current;
       if (!node) return;
       const level = formatZoom(displayZoom(session.viewport.state, session.viewBounds()?.minZoom));
-      if (node.textContent === level) return;
-      node.textContent = level;
-      node.closest('button')?.setAttribute('aria-label', `Zoom ${level}`);
+      if (node.textContent !== level) {
+        node.textContent = level;
+        forceName = true;
+      }
+      if (forceName) node.closest('button')?.setAttribute('aria-label', `Zoom ${level}`);
     };
-    update();
-    const { unsubscribe } = session.viewport.subscribe(update);
+    update(true);
+    const { unsubscribe } = session.viewport.subscribe(() => update());
     return unsubscribe;
   });
   return (
