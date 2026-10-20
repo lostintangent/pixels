@@ -146,6 +146,15 @@ export function isNavigating(state: GestureState): boolean {
   return state.mode.kind === 'pan' || state.mode.kind === 'pinch';
 }
 
+/** The session can finish a held draw when a dialog opens, while the pointer machine still owns it. */
+export function wasDrawFinishedExternally(
+  state: GestureState,
+  beganInSession: boolean,
+  sessionActive: boolean,
+): boolean {
+  return state.mode.kind === 'draw' && beganInSession && !sessionActive;
+}
+
 function pointerDown(
   state: GestureState,
   event: Extract<GestureEvent, { type: 'down' }>,

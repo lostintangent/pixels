@@ -10,6 +10,7 @@ import {
   initialGestureState,
   isNavigating,
   stepGesture,
+  wasDrawFinishedExternally,
 } from './gestures';
 import { screenToDocument } from './viewport';
 
@@ -100,6 +101,24 @@ describe('drawing', () => {
     expect(g.move(1, 'mouse', { x: 40, y: 10 }, 16)).toEqual([]);
     expect(g.up(1, 'mouse', { x: 40, y: 10 }, 32)).toEqual([]);
     expect(g.down(1, 'mouse', { x: 10, y: 10 }, 48)).toEqual(['begin']);
+  });
+
+  test('Fill pressed on workspace gray stays eligible for a pinch after the first finger moves', () => {
+    const g = gestures();
+    // The pointer machine begins a draw, but Fill's session rejects the off-image point.
+    expect(g.down(1, 'touch', { x: 10, y: 10 }, 0)).toEqual(['begin']);
+    const beganInSession = false;
+    if (wasDrawFinishedExternally(g.state, beganInSession, false)) g.escape();
+    expect(g.state.mode.kind).toBe('draw');
+    expect(g.move(1, 'touch', { x: 11, y: 10 }, 16)).toEqual(['extend']);
+    expect(g.down(2, 'touch', { x: 30, y: 10 }, 50)).toEqual(['cancel']);
+    expect(g.state.mode.kind).toBe('pinch');
+    expect(g.move(2, 'touch', { x: 35, y: 10 }, 66)).toEqual(['view']);
+
+    const owned = gestures();
+    owned.down(1, 'touch', { x: 10, y: 10 }, 0);
+    // A dialog later finished a draw that really existed in the session.
+    expect(wasDrawFinishedExternally(owned.state, true, false)).toBe(true);
   });
 
   test('only the primary button draws', () => {

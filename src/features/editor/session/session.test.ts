@@ -487,6 +487,18 @@ test('a direct panel open and Resize finish an active stroke before changing the
   expect(Array.from(document.pixels)).toEqual([firstPixel!, 0, 0]);
 });
 
+test('Fill pressed outside the document leaves no active session gesture', () => {
+  const session = createEditorSession({
+    document: createBitmapDocument('outside-fill', 16, 16),
+    save: null,
+  });
+  session.run({ type: 'tool', tool: 'fill' });
+  session.beginGesture(input(-1, -1), 'touch');
+  expect(session.gesturing).toBe(false);
+  session.extendGesture([input(0, 0)]);
+  expect(session.bitmap.state.pixels.every((pixel) => pixel === 0)).toBe(true);
+});
+
 test('painting adds its color to recents but erasing adds nothing', () => {
   const document = createBitmapDocument('recent', 2, 1);
   const preferences = { ...DEFAULT_TOOL_PREFERENCES, primary: A, recent: [] };

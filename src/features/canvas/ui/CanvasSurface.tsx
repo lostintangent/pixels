@@ -11,6 +11,7 @@ import {
   initialGestureState,
   isNavigating,
   stepGesture,
+  wasDrawFinishedExternally,
 } from '../core/gestures';
 import { type ViewBounds, boundView, settleView, startFit } from '../core/bounds';
 import { MIN_ZOOM, clampZoom, screenToDocument, stepZoom, zoomAt } from '../core/viewport';
@@ -141,6 +142,9 @@ export function CanvasSurface({
     window.visualViewport?.addEventListener('resize', refreshActiveOrigin);
 
     let gesture = initialGestureState;
+    // A draw can exist only in the pointer machine, for example Fill pressed off the image.
+    // Only a draw that once owned a session gesture can later be abandoned by a dialog.
+    let drawingInSession = false;
     let wheel = initialWheelState;
     let spaceHeld = false;
     let altHeld = false;
@@ -309,7 +313,10 @@ export function CanvasSurface({
       for (const command of step.commands) {
         switch (command.type) {
           case 'begin':
-            if (source) input.begin(sample(source), pointerKind(source));
+            if (source) {
+              input.begin(sample(source), pointerKind(source));
+              drawingInSession = input.active();
+            }
             break;
           case 'extend':
             if (source) {
@@ -319,9 +326,11 @@ export function CanvasSurface({
             break;
           case 'end':
             input.end();
+            drawingInSession = false;
             break;
           case 'cancel':
             input.cancel();
+            drawingInSession = false;
             break;
           case 'view':
             stopSettle();
@@ -362,7 +371,7 @@ export function CanvasSurface({
 
     function onPointerMove(event: PointerEvent): void {
       if (event.pointerType !== 'touch') altHeld = event.altKey;
-      if (gesture.mode.kind === 'draw' && !latest.current.input.active())
+      if (wasDrawFinishedExternally(gesture, drawingInSession, latest.current.input.active()))
         run({ type: 'escape' }, null);
       if (event.pointerType === 'mouse' && event.buttons === 0 && down.has(event.pointerId)) {
         down.delete(event.pointerId);
@@ -477,7 +486,7 @@ export function CanvasSurface({
     function onEscape(event: KeyboardEvent): void {
       if (event.key !== 'Escape' || gesture.mode.kind !== 'draw') return;
       // A dialog already ended the document gesture. Leave Escape for the dialog to close.
-      if (!latest.current.input.active()) {
+      if (wasDrawFinishedExternally(gesture, drawingInSession, latest.current.input.active())) {
         run({ type: 'escape' }, null);
         return;
       }
