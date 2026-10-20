@@ -387,6 +387,106 @@ test('opening export commits a floating move before the preview snapshots pixels
   expect(Array.from(document.pixels)).toEqual([A, 0, 0]);
 });
 
+test('canceling an unlifted selection move restores its marquee and exact pixels', () => {
+  const document = createBitmapDocument('cancel-move', 4, 1);
+  document.pixels.set([A, 0, B, 0]);
+  const original = document.rgbaBytes.slice();
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'select' });
+  session.run({ type: 'selection', action: 'all' });
+  const before = session.state.state.selection;
+
+  session.beginGesture(input(0, 0), 'touch');
+  session.extendGesture([input(1, 0)]);
+  expect(session.overlay.state.sourceClear).not.toBeNull();
+  session.cancelGesture();
+
+  expect(session.state.state.selection).toEqual(before);
+  expect(session.overlay.state.sourceClear).toBeNull();
+  expect(session.overlay.state.preview).toBeNull();
+  expect(document.rgbaBytes).toEqual(original);
+  expect(session.state.state.canUndo).toBe(false);
+  session.beginGesture(input(0, 0));
+  session.extendGesture([input(1, 0)]);
+  session.endGesture();
+  expect(session.commitFloatingSelection()).toBe(true);
+  expect(Array.from(document.pixels)).toEqual([0, A, 0, B]);
+});
+
+test('canceling a move of an existing float restores its original bounds and pixels', () => {
+  const document = createBitmapDocument('cancel-float-move', 4, 1);
+  document.pixels[0] = A;
+  const clipboard = createPixelClipboard();
+  clipboard.write(copySelection(document, { x: 0, y: 0, width: 1, height: 1 })!);
+  const session = createEditorSession({ document, save: null, clipboard });
+  session.run({ type: 'selection', action: 'paste' });
+  const before = session.state.state.selection;
+  session.beginGesture(input(before!.x, 0));
+  session.extendGesture([input(before!.x + 1, 0)]);
+  session.cancelGesture();
+
+  expect(session.state.state.selection).toEqual(before);
+  expect(session.overlay.state.preview?.bounds).toEqual(before!);
+  expect(session.overlay.state.sourceClear).toBeNull();
+  expect(session.state.state.canUndo).toBe(false);
+  expect(session.commitFloatingSelection()).toBe(true);
+  expect(document.pixels[before!.x]).toBe(A);
+});
+
+test('canceling an Option-drag discards its displaced copy', () => {
+  const document = createBitmapDocument('cancel-copy', 4, 1);
+  document.pixels[0] = A;
+  const session = createEditorSession({ document, save: null });
+  session.run({ type: 'tool', tool: 'select' });
+  session.run({ type: 'selection', action: 'all' });
+  session.beginGesture({ ...input(0, 0), alt: true });
+  session.extendGesture([input(1, 0)]);
+  session.cancelGesture();
+
+  expect(session.state.state.selection).toEqual({ x: 0, y: 0, width: 4, height: 1 });
+  expect(session.overlay.state.preview).toBeNull();
+  expect(Array.from(document.pixels)).toEqual([A, 0, 0, 0]);
+  expect(session.state.state.canUndo).toBe(false);
+});
+
+test('opening each dialog over a held stroke keeps the partial stroke as one undo step', () => {
+  for (const panel of ['new', 'resize', 'export', 'shortcuts'] as const) {
+    const document = createBitmapDocument(`held-${panel}`, 4, 1);
+    const session = createEditorSession({ document, save: null });
+    session.beginGesture(input(0, 0));
+    session.extendGesture([input(1, 0)]);
+    session.run({ type: 'open', panel });
+    expect(session.gesturing).toBe(false);
+    expect(session.state.state.panel).toBe(panel);
+    expect(document.pixels[0]).not.toBe(0);
+    expect(document.pixels[1]).not.toBe(0);
+    session.extendGesture([input(2, 0)]);
+    expect(document.pixels[2]).toBe(0);
+    session.run({ type: 'undo' });
+    expect(Array.from(document.pixels)).toEqual([0, 0, 0, 0]);
+  }
+});
+
+test('a direct panel open and Resize finish an active stroke before changing the document', async () => {
+  const document = createBitmapDocument('held-resize', 3, 1);
+  const session = createEditorSession({ document, save: null });
+  session.beginGesture(input(0, 0));
+  session.setPanel('colors');
+  expect(session.gesturing).toBe(false);
+  expect(session.state.state.canUndo).toBe(true);
+  const firstPixel = document.pixels[0];
+  session.setPanel(null);
+  session.beginGesture(input(1, 0));
+  await session.resizeDocument(4, 1, 'top-left');
+  expect(session.gesturing).toBe(false);
+  expect(session.bitmap.state.pixels[0]).not.toBe(0);
+  expect(session.bitmap.state.pixels[1]).not.toBe(0);
+  session.run({ type: 'undo' });
+  expect(session.bitmap.state).toBe(document);
+  session.run({ type: 'undo' });
+  expect(Array.from(document.pixels)).toEqual([firstPixel!, 0, 0]);
+});
+
 test('painting adds its color to recents but erasing adds nothing', () => {
   const document = createBitmapDocument('recent', 2, 1);
   const preferences = { ...DEFAULT_TOOL_PREFERENCES, primary: A, recent: [] };

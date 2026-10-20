@@ -102,7 +102,12 @@ type Gesture =
   | { kind: 'stroke'; session: StrokeSession; last: PixelPoint; recent: PackedColor | null }
   | { kind: 'line'; preview: LinePreview; color: PackedColor }
   | { kind: 'marquee'; anchor: PixelPoint }
-  | { kind: 'move'; grab: PixelPoint }
+  | {
+      kind: 'move';
+      grab: PixelPoint;
+      before: { selection: PixelRect; floatingBounds: PixelRect | null };
+      duplicated: boolean;
+    }
   | { kind: 'pick'; pointer: PointerKind; before: PackedColor }
   // A fill lands on press, so the rest of the gesture only waits for the lift.
   | { kind: 'fill' }
@@ -729,6 +734,7 @@ export function createEditorSession({
           update((current) => ({ ...current, chromeHidden: !current.chromeHidden }));
           return;
         case 'open':
+          if (gesture) session.endGesture();
           if (command.panel === 'export') commitFloating();
           update((current) => openPanel(current, command.panel));
           return;
@@ -751,6 +757,8 @@ export function createEditorSession({
     },
 
     setPanel(panel) {
+      if (panel && gesture) session.endGesture();
+      if (panel === 'export') commitFloating();
       update((current) => openPanel(current, panel));
     },
 
@@ -872,7 +880,9 @@ export function createEditorSession({
     },
 
     async resizeDocument(width, height, anchor) {
+      if (gesture) session.endGesture();
       const { resizeAnnotatedDocument } = await import('../../annotations');
+      if (gesture) session.endGesture();
       commitFloating();
       installDocument(resizeAnnotatedDocument(document(), history, width, height, anchor));
     },
@@ -948,6 +958,10 @@ export function createEditorSession({
       if (tool === 'select') {
         const rect = state.state.selection;
         if (rect && contains(selection.floating?.bounds ?? rect, cell)) {
+          const before = {
+            selection: { ...rect },
+            floatingBounds: selection.floating ? { ...selection.floating.bounds } : null,
+          };
           // Option drags out a copy: the same float and undo steps as Duplicate, then a move.
           if (alt) runSelection('duplicate');
           const lifted = selection.floating ?? selection.lift(rect);
@@ -955,6 +969,8 @@ export function createEditorSession({
           gesture = {
             kind: 'move',
             grab: { x: cell.x - lifted.bounds.x, y: cell.y - lifted.bounds.y },
+            before,
+            duplicated: alt,
           };
           setSelection({ ...lifted.bounds });
           return;
@@ -1125,6 +1141,10 @@ export function createEditorSession({
           queuedPaint = null;
           break;
         case 'move':
+          if (current.duplicated || !current.before.floatingBounds) selection.cancel();
+          else selection.move(current.before.floatingBounds);
+          setSelection({ ...current.before.selection });
+          break;
         case 'fill':
           break;
       }

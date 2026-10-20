@@ -243,6 +243,7 @@ function Panels({ layout }: { layout: Layout }) {
 function Canvas({ session }: { session: EditorSession }) {
   const input = useMemo<CanvasInput>(
     () => ({
+      active: () => session.gesturing,
       hover: (sample) => session.hover(sample && sample.point, sample?.alt),
       begin: (sample, pointer) => session.beginGesture(sample, pointer),
       extend: (samples) => session.extendGesture(samples),

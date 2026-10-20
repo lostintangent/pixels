@@ -54,8 +54,8 @@ function gestures() {
       send({ type: 'down', pointer: at(id, kind, point, time), button, space: false }),
     spaceDown: (id: number, point: ScreenPoint, time: number) =>
       send({ type: 'down', pointer: at(id, 'mouse', point, time), button: 0, space: true }),
-    move: (id: number, kind: PointerKind, point: ScreenPoint, time: number) =>
-      send({ type: 'move', pointer: at(id, kind, point, time) }),
+    move: (id: number, kind: PointerKind, point: ScreenPoint, time: number, buttons?: number) =>
+      send({ type: 'move', pointer: at(id, kind, point, time), buttons }),
     up: (id: number, kind: PointerKind, point: ScreenPoint, time: number, cancelled = false) =>
       send({ type: 'up', pointer: at(id, kind, point, time), cancelled }),
     escape: () => send({ type: 'escape' }),
@@ -77,6 +77,20 @@ describe('drawing', () => {
     const g = gestures();
     g.down(1, 'mouse', { x: 10, y: 10 }, 0);
     expect(g.up(1, 'mouse', { x: 10, y: 10 }, 16, true)).toEqual(['cancel']);
+  });
+
+  test('a mouse move after a lost button release ends ink without drawing the hover path', () => {
+    const g = gestures();
+    g.down(1, 'mouse', { x: 10, y: 10 }, 0);
+    g.move(1, 'mouse', { x: 20, y: 10 }, 16, 1);
+    expect(g.move(1, 'mouse', { x: 90, y: 10 }, 32, 0)).toEqual(['end']);
+    expect(g.state.mode.kind).toBe('idle');
+    expect(g.move(1, 'mouse', { x: 120, y: 10 }, 48, 0)).toEqual([]);
+    expect(g.log).toEqual(['begin', 'extend', 'end']);
+
+    const pen = gestures();
+    pen.down(2, 'pen', { x: 10, y: 10 }, 0);
+    expect(pen.move(2, 'pen', { x: 20, y: 10 }, 16, 0)).toEqual(['extend']);
   });
 
   test('Escape abandons a stroke and the rest of that drag stays inert', () => {

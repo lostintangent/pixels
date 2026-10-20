@@ -22,7 +22,7 @@ export interface GesturePointer {
 
 export type GestureEvent =
   | { type: 'down'; pointer: GesturePointer; button: number; space: boolean }
-  | { type: 'move'; pointer: GesturePointer }
+  | { type: 'move'; pointer: GesturePointer; buttons?: number }
   | { type: 'up'; pointer: GesturePointer; cancelled: boolean }
   | { type: 'escape' };
 
@@ -130,6 +130,9 @@ export function stepGesture(state: GestureState, event: GestureEvent, view: View
     case 'down':
       return pointerDown(state, event, view);
     case 'move':
+      // A lost mouseup (for example while the window is blurred) must not turn hover into ink.
+      if (event.pointer.kind === 'mouse' && event.buttons === 0)
+        return pointerUp(state, event.pointer, false);
       return pointerMove(state, event.pointer, view);
     case 'up':
       return pointerUp(state, event.pointer, event.cancelled);

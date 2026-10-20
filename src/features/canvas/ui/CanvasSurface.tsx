@@ -27,6 +27,8 @@ export interface CanvasPointerSample {
 
 /** What the canvas asks of its owner. The surface knows gestures, never tools. */
 export interface CanvasInput {
+  /** A dialog may finish a press while its pointer is still captured by the canvas. */
+  active(): boolean;
   /** The point under a mouse or pen that isn't navigating, with Alt for a temporary eyedropper. */
   hover(sample: CanvasPointerSample | null): void;
   /** Which kind of pointer started it, since touch and pen can't hold modifier keys. */
@@ -360,7 +362,18 @@ export function CanvasSurface({
 
     function onPointerMove(event: PointerEvent): void {
       if (event.pointerType !== 'touch') altHeld = event.altKey;
-      if (down.has(event.pointerId)) run({ type: 'move', pointer: pointer(event) }, event);
+      if (gesture.mode.kind === 'draw' && !latest.current.input.active())
+        run({ type: 'escape' }, null);
+      if (event.pointerType === 'mouse' && event.buttons === 0 && down.has(event.pointerId)) {
+        down.delete(event.pointerId);
+        run({ type: 'move', pointer: pointer(event), buttons: 0 }, event);
+        if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+        hover(local(event));
+        if (down.size === 0) activeOrigin = null;
+        return;
+      }
+      if (down.has(event.pointerId))
+        run({ type: 'move', pointer: pointer(event), buttons: event.buttons }, event);
       if (event.pointerType !== 'touch' && !isNavigating(gesture)) hover(local(event));
     }
 
@@ -463,6 +476,11 @@ export function CanvasSurface({
     /** Escape abandons a drag in progress before any shortcut sees it. */
     function onEscape(event: KeyboardEvent): void {
       if (event.key !== 'Escape' || gesture.mode.kind !== 'draw') return;
+      // A dialog already ended the document gesture. Leave Escape for the dialog to close.
+      if (!latest.current.input.active()) {
+        run({ type: 'escape' }, null);
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       run({ type: 'escape' }, null);
