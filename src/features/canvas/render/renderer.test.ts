@@ -26,6 +26,7 @@ class TestContext {
   moveTo() {}
   lineTo() {}
   stroke() {}
+  fill() {}
   drawImage() {
     this.drawCount++;
   }
@@ -342,6 +343,85 @@ test('the document edge paints only outside its device-pixel footprint', () => {
     renderer.setViewport({ ...view, zoom: 8, panX: -4000, panY: -4000 });
     flush();
     expect(context.painted).toEqual([]);
+    renderer.dispose();
+  } finally {
+    Object.assign(globalThis, {
+      document: priorDocument,
+      ImageData: priorImageData,
+      requestAnimationFrame: priorRaf,
+    });
+  }
+});
+
+test('grid and bitmap share device-aligned boundaries at fractional DPR and pan', () => {
+  const priorDocument = globalThis.document;
+  const priorRaf = globalThis.requestAnimationFrame;
+  const priorImageData = globalThis.ImageData;
+  const frames: FrameRequestCallback[] = [];
+  class GridContext extends TestContext {
+    path: Box[] = [];
+    fills: Array<{ color: string; rects: Box[] }> = [];
+    images: number[][] = [];
+    override beginPath() {
+      this.path = [];
+    }
+    override rect(x: number, y: number, width: number, height: number) {
+      this.path.push({ x, y, width, height });
+    }
+    override fill() {
+      this.fills.push({ color: this.fillStyle, rects: [...this.path] });
+    }
+    override drawImage(...args: unknown[]) {
+      this.images.push(args.slice(1) as number[]);
+    }
+  }
+  Object.assign(globalThis, {
+    document: { createElement: () => new TestCanvas() },
+    ImageData: class {
+      constructor(public data: Uint8ClampedArray) {}
+    },
+    requestAnimationFrame: (callback: FrameRequestCallback) => frames.push(callback),
+  });
+  try {
+    const viewportCanvas = new TestCanvas();
+    const context = new GridContext();
+    viewportCanvas.context = context;
+    const renderer = createCanvasRenderer({
+      documentCanvas: new TestCanvas() as unknown as HTMLCanvasElement,
+      viewportCanvas: viewportCanvas as unknown as HTMLCanvasElement,
+      annotationCanvas: new TestCanvas() as unknown as HTMLCanvasElement,
+      overlayCanvas: new TestCanvas() as unknown as HTMLCanvasElement,
+    });
+    const view = {
+      zoom: 8.35,
+      panX: 31.37,
+      panY: 17.61,
+      cssWidth: 220,
+      cssHeight: 210,
+      devicePixelRatio: 2.625,
+    };
+    renderer.setDocument(createBitmapDocument('grid', 16, 16));
+    renderer.setViewport(view);
+    renderer.setOverlay({ grid: 'on', cursor: null, marquee: null, preview: null });
+    while (frames.length) frames.shift()!(0);
+    const originX = Math.round(view.panX * view.devicePixelRatio) - 0.125;
+    const originY = Math.round(view.panY * view.devicePixelRatio) - 0.125;
+    expect(context.images[0]?.slice(0, 2)).toEqual([
+      originX / view.devicePixelRatio,
+      originY / view.devicePixelRatio,
+    ]);
+    const minorDark = context.fills.find((fill) => fill.color === 'rgba(0,0,0,.12)')!;
+    const minorLight = context.fills.find((fill) => fill.color === 'rgba(255,255,255,.16)')!;
+    const boundary = Math.ceil(originX + view.zoom * view.devicePixelRatio - 0.5);
+    const dark = minorDark.rects.find((rect) => rect.x === boundary)!;
+    const light = minorLight.rects.find((rect) => rect.x === boundary + 3)!;
+    expect(dark.width).toBe(3);
+    expect(light.width).toBe(1);
+    expect(
+      minorDark.rects.some(
+        (rect) => rect.y === Math.ceil(originY + view.zoom * view.devicePixelRatio - 0.5),
+      ),
+    ).toBe(true);
     renderer.dispose();
   } finally {
     Object.assign(globalThis, {

@@ -221,7 +221,7 @@ export function checkColorConversion(): number {
 }
 
 /** Compare the composited live overlay with the same pixels after commit. */
-export async function checkPreviewGrid(): Promise<Record<string, number>> {
+export async function checkPreviewGrid(panX = 0, panY = 0): Promise<Record<string, number>> {
   const width = 24;
   const height = 16;
   const zoom = 10;
@@ -229,8 +229,10 @@ export async function checkPreviewGrid(): Promise<Record<string, number>> {
   const overlayCanvas = document.createElement('canvas');
   const composite = document.createElement('canvas');
   const scale = window.devicePixelRatio;
-  composite.width = width * zoom * scale;
-  composite.height = height * zoom * scale;
+  const cssWidth = width * zoom + Math.ceil(panX) + 2;
+  const cssHeight = height * zoom + Math.ceil(panY) + 2;
+  composite.width = Math.round(cssWidth * scale);
+  composite.height = Math.round(cssHeight * scale);
   const compositeCtx = composite.getContext('2d')!;
   const renderer = createCanvasRenderer({
     documentCanvas: document.createElement('canvas'),
@@ -256,10 +258,10 @@ export async function checkPreviewGrid(): Promise<Record<string, number>> {
   try {
     renderer.setViewport({
       zoom,
-      panX: 0,
-      panY: 0,
-      cssWidth: width * zoom,
-      cssHeight: height * zoom,
+      panX,
+      panY,
+      cssWidth,
+      cssHeight,
       devicePixelRatio: scale,
     });
     const line = createBitmapDocument('preview-line', width, height);
@@ -340,6 +342,143 @@ export async function checkPreviewGrid(): Promise<Record<string, number>> {
     renderer.setOverlay(emptyOverlay);
     errors['alpha float'] = difference(liveAlphaFloat, await capture());
     return errors;
+  } finally {
+    renderer.dispose();
+  }
+}
+
+/** Device-pixel grid profiles, normalized to each actual image-cell boundary. */
+export async function checkGridAlignment(
+  zoom: number,
+  panX: number,
+  panY: number,
+): Promise<
+  Record<
+    string,
+    { profiles: number; offsets: number[]; bitmapOffsets: number[]; example: number[] }
+  >
+> {
+  const side = 16;
+  const scale = window.devicePixelRatio;
+  const bitmap = createBitmapDocument('grid-alignment', side, side);
+  bitmap.pixels.fill(packRgba(128, 128, 128));
+  const viewportCanvas = document.createElement('canvas');
+  const renderer = createCanvasRenderer({
+    documentCanvas: document.createElement('canvas'),
+    viewportCanvas,
+    annotationCanvas: document.createElement('canvas'),
+    overlayCanvas: document.createElement('canvas'),
+  });
+  const view = {
+    zoom,
+    panX,
+    panY,
+    cssWidth: Math.ceil(panX + side * zoom + 8),
+    cssHeight: Math.ceil(panY + side * zoom + 8),
+    devicePixelRatio: scale,
+  };
+  const overlay = { grid: 'on' as const, cursor: null, marquee: null, preview: null };
+  try {
+    renderer.setDocument(bitmap);
+    renderer.setViewport(view);
+    renderer.setOverlay({ ...overlay, grid: 'off' });
+    await frames();
+    const ctx = viewportCanvas.getContext('2d')!;
+    const gray = ctx.getImageData(0, 0, viewportCanvas.width, viewportCanvas.height).data;
+    renderer.setOverlay(overlay);
+    await frames();
+    const grid = ctx.getImageData(0, 0, viewportCanvas.width, viewportCanvas.height).data;
+    for (let y = 0; y < side; y++)
+      for (let x = 0; x < side; x++)
+        bitmap.pixels[y * side + x] = (x + y) % 2 ? packRgba(0, 0, 255) : packRgba(255, 0, 0);
+    renderer.setOverlay({ ...overlay, grid: 'off' });
+    bitmap.events.invalidate({ x: 0, y: 0, width: side, height: side });
+    await frames();
+    const checker = ctx.getImageData(0, 0, viewportCanvas.width, viewportCanvas.height).data;
+    const darkWidth = Math.max(1, Math.round(scale));
+    const originX = Math.round(panX * scale);
+    const originY = Math.round(panY * scale);
+    const width = viewportCanvas.width;
+    const at = (bytes: Uint8ClampedArray, x: number, y: number) => bytes[(y * width + x) * 4]!;
+    const result: Record<
+      string,
+      { profiles: number; offsets: number[]; bitmapOffsets: number[]; example: number[] }
+    > = {};
+    for (const axis of ['x', 'y'] as const) {
+      for (const major of [false, true]) {
+        const profiles = new Set<string>();
+        const offsets = new Set<number>();
+        const bitmapOffsets = new Set<number>();
+        let example: number[] = [];
+        const cross = Math.round((axis === 'x' ? originY : originX) + 5.5 * zoom * scale);
+        for (let cell = 1; cell < side; cell++) {
+          if ((cell % 8 === 0) !== major) continue;
+          const predicted = Math.round((axis === 'x' ? originX : originY) + cell * zoom * scale);
+          const line = (position: number, bytes: Uint8ClampedArray) =>
+            axis === 'x' ? at(bytes, position, cross) : at(bytes, cross, position);
+          let boundary: number | null = null;
+          for (let position = predicted - 3; position <= predicted + 3; position++) {
+            if (line(position - 1, checker) !== line(position, checker)) {
+              boundary = position;
+              break;
+            }
+          }
+          if (boundary === null)
+            throw new Error(`No checker transition near ${axis} cell ${cell} at DPR ${scale}`);
+          bitmapOffsets.add(boundary - predicted);
+          const profile: number[] = [];
+          for (let delta = -2; delta <= darkWidth + 2; delta++)
+            profile.push(line(boundary + delta, grid));
+          profiles.add(profile.join(','));
+          if (!example.length) example = profile;
+          for (let delta = -2; delta <= darkWidth + 2; delta++) {
+            if (line(boundary + delta, grid) !== line(boundary + delta, gray)) {
+              offsets.add(delta);
+              break;
+            }
+          }
+        }
+        result[`${axis}-${major ? 'major' : 'minor'}`] = {
+          profiles: profiles.size,
+          offsets: [...offsets].sort((a, b) => a - b),
+          bitmapOffsets: [...bitmapOffsets].sort((a, b) => a - b),
+          example,
+        };
+      }
+    }
+    return result;
+  } finally {
+    renderer.dispose();
+  }
+}
+
+/** Check that the phase and document clip leave the first opaque device pixel intact. */
+export async function checkDocumentCorner(): Promise<number[]> {
+  const bitmap = createBitmapDocument('corner-quality', 4, 4);
+  bitmap.pixels.fill(packRgba(100, 50, 200));
+  const viewportCanvas = document.createElement('canvas');
+  const renderer = createCanvasRenderer({
+    documentCanvas: document.createElement('canvas'),
+    viewportCanvas,
+    annotationCanvas: document.createElement('canvas'),
+    overlayCanvas: document.createElement('canvas'),
+  });
+  try {
+    const scale = window.devicePixelRatio;
+    renderer.setDocument(bitmap);
+    renderer.setViewport({
+      zoom: 10,
+      panX: 19,
+      panY: 27,
+      cssWidth: 80,
+      cssHeight: 80,
+      devicePixelRatio: scale,
+    });
+    renderer.setOverlay({ grid: 'off', cursor: null, marquee: null, preview: null });
+    await frames();
+    const x = Math.round(19 * scale);
+    const y = Math.round(27 * scale);
+    return [...viewportCanvas.getContext('2d')!.getImageData(x, y, 1, 1).data];
   } finally {
     renderer.dispose();
   }

@@ -28,6 +28,34 @@ function smoothingForView(view: Viewport): 'off' | 'low' | 'high' {
   return Math.abs(deviceScale - Math.round(deviceScale)) < 0.000001 ? 'off' : 'low';
 }
 
+/** Share one origin across layers. A small negative phase avoids Metal's half-pixel ties. */
+function pixelAlignedPan(pan: number, devicePixelRatio: number): number {
+  const phase = Number.isInteger(devicePixelRatio) ? 0 : -0.125;
+  return (Math.round(pan * devicePixelRatio) + phase) / devicePixelRatio;
+}
+
+/** First device pixel sampled from this source cell, after the shared origin phase. */
+function deviceBoundary(origin: number, cell: number, zoom: number, scale: number): number {
+  return Math.ceil(origin + cell * zoom * scale - 0.5);
+}
+
+function clipDocumentPixels(
+  ctx: CanvasRenderingContext2D,
+  bitmap: BitmapDocument,
+  view: Viewport,
+  panX: number,
+  panY: number,
+): void {
+  const scale = view.devicePixelRatio;
+  const left = deviceBoundary(panX * scale, 0, view.zoom, scale);
+  const top = deviceBoundary(panY * scale, 0, view.zoom, scale);
+  const right = deviceBoundary(panX * scale, bitmap.width, view.zoom, scale);
+  const bottom = deviceBoundary(panY * scale, bitmap.height, view.zoom, scale);
+  ctx.beginPath();
+  ctx.rect(left / scale, top / scale, (right - left) / scale, (bottom - top) / scale);
+  ctx.clip();
+}
+
 function checkerPattern(ctx: CanvasRenderingContext2D, a: string, b: string): CanvasPattern {
   const tile = globalThis.document.createElement('canvas');
   tile.width = tile.height = 16;
@@ -56,14 +84,25 @@ function drawDocumentEdge(
   canvasHeight: number,
   bitmap: BitmapDocument,
   view: Viewport,
+  panX: number,
+  panY: number,
   edge: string | undefined,
   shadow: string | undefined,
 ): void {
   const scale = view.devicePixelRatio;
-  const left = Math.floor(view.panX * scale);
-  const top = Math.floor(view.panY * scale);
-  const right = Math.ceil((view.panX + bitmap.width * view.zoom) * scale);
-  const bottom = Math.ceil((view.panY + bitmap.height * view.zoom) * scale);
+  const nearest = smoothingForView(view) === 'off';
+  const left = nearest
+    ? deviceBoundary(panX * scale, 0, view.zoom, scale)
+    : Math.floor(panX * scale);
+  const top = nearest
+    ? deviceBoundary(panY * scale, 0, view.zoom, scale)
+    : Math.floor(panY * scale);
+  const right = nearest
+    ? deviceBoundary(panX * scale, bitmap.width, view.zoom, scale)
+    : Math.ceil((panX + bitmap.width * view.zoom) * scale);
+  const bottom = nearest
+    ? deviceBoundary(panY * scale, bitmap.height, view.zoom, scale)
+    : Math.ceil((panY + bitmap.height * view.zoom) * scale);
   const width = right - left;
   const height = bottom - top;
   const reach = Math.ceil((SHADOW_BLUR + SHADOW_DROP) * scale) + 1;
@@ -110,10 +149,12 @@ function drawTwoToneRect(
   ctx: CanvasRenderingContext2D,
   rect: PixelRect,
   viewport: Viewport,
+  panX: number,
+  panY: number,
   phase: number,
 ): void {
-  const x = viewport.panX + rect.x * viewport.zoom;
-  const y = viewport.panY + rect.y * viewport.zoom;
+  const x = panX + rect.x * viewport.zoom;
+  const y = panY + rect.y * viewport.zoom;
   const width = rect.width * viewport.zoom;
   const height = rect.height * viewport.zoom;
   if (width <= 0 || height <= 0) return;
@@ -143,6 +184,13 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   let checkerB = '#d6d6d6';
   const previewCanvas = globalThis.document.createElement('canvas');
   const previewCtx = context(previewCanvas, colorSpace);
+  const transferCanvas = globalThis.document.createElement('canvas');
+  const transferCtx = context(transferCanvas, colorSpace);
+  const opaquePixel = globalThis.document.createElement('canvas');
+  opaquePixel.width = opaquePixel.height = 1;
+  const opaquePixelCtx = context(opaquePixel, colorSpace);
+  opaquePixelCtx.fillStyle = '#fff';
+  opaquePixelCtx.fillRect(0, 0, 1, 1);
   let previewGridCanvas: HTMLCanvasElement | null = null;
   let previewGridCtx: CanvasRenderingContext2D | null = null;
   let document: BitmapDocument | null = null;
@@ -278,7 +326,13 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     return mipmaps[levels - 1]?.canvas ?? surface.documentCanvas;
   }
 
-  function drawPreview(view: Viewport, bitmap: BitmapDocument, preview: OverlayPreview): void {
+  function drawPreview(
+    view: Viewport,
+    bitmap: BitmapDocument,
+    preview: OverlayPreview,
+    panX: number,
+    panY: number,
+  ): void {
     const stride = preview.stride ?? preview.bounds.width;
     const rows = preview.stride ? preview.pixels.length / stride : preview.bounds.height;
     if (stride <= 0 || rows <= 0) return;
@@ -311,23 +365,42 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       }
     } else previewCtx.putImageData(previewImage, 0, 0);
     const smoothing = smoothingForView(view);
+    // Zoomed-out previews are filtered from mips, so exact source-cell sampling
+    // does not apply. Keep their backing store compact even at fractional DPR.
+    const useCompact = Number.isInteger(view.devicePixelRatio) || smoothing !== 'off';
+    if (useCompact && transferCanvas.width) {
+      transferCanvas.width = 0;
+      transferCanvas.height = 0;
+    }
+    if (!useCompact) {
+      if (transferCanvas.width !== bitmap.width) transferCanvas.width = bitmap.width;
+      if (transferCanvas.height !== bitmap.height) transferCanvas.height = bitmap.height;
+      transferCtx.imageSmoothingEnabled = false;
+      transferCtx.drawImage(
+        previewCanvas,
+        preview.bounds.x,
+        preview.bounds.y,
+        preview.bounds.width,
+        preview.bounds.height,
+      );
+    }
     const gridVisible = overlay.grid === 'on' || (overlay.grid === 'auto' && view.zoom >= 8);
     let destination = overlayCtx;
     let left = 0;
     let top = 0;
     let width = 0;
     let height = 0;
-    if (gridVisible) {
+    if (gridVisible && overlay.sourceClear) {
       const scale = view.devicePixelRatio;
-      left = Math.max(0, Math.floor((view.panX + preview.bounds.x * view.zoom) * scale));
-      top = Math.max(0, Math.floor((view.panY + preview.bounds.y * view.zoom) * scale));
+      left = Math.max(0, Math.floor((panX + preview.bounds.x * view.zoom) * scale));
+      top = Math.max(0, Math.floor((panY + preview.bounds.y * view.zoom) * scale));
       const right = Math.min(
         surface.overlayCanvas.width,
-        Math.ceil((view.panX + (preview.bounds.x + preview.bounds.width) * view.zoom) * scale),
+        Math.ceil((panX + (preview.bounds.x + preview.bounds.width) * view.zoom) * scale),
       );
       const bottom = Math.min(
         surface.overlayCanvas.height,
-        Math.ceil((view.panY + (preview.bounds.y + preview.bounds.height) * view.zoom) * scale),
+        Math.ceil((panY + (preview.bounds.y + preview.bounds.height) * view.zoom) * scale),
       );
       width = right - left;
       height = bottom - top;
@@ -345,99 +418,150 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     }
     destination.imageSmoothingEnabled = smoothing !== 'off';
     if (smoothing !== 'off') destination.imageSmoothingQuality = smoothing;
-    destination.drawImage(
-      previewCanvas,
-      view.panX + preview.bounds.x * view.zoom,
-      view.panY + preview.bounds.y * view.zoom,
-      preview.bounds.width * view.zoom,
-      preview.bounds.height * view.zoom,
-    );
-    if (gridVisible) {
-      destination.save();
-      destination.beginPath();
-      destination.rect(
-        view.panX + preview.bounds.x * view.zoom,
-        view.panY + preview.bounds.y * view.zoom,
+    if (useCompact)
+      destination.drawImage(
+        previewCanvas,
+        panX + preview.bounds.x * view.zoom,
+        panY + preview.bounds.y * view.zoom,
         preview.bounds.width * view.zoom,
         preview.bounds.height * view.zoom,
       );
-      destination.clip();
+    else {
+      destination.drawImage(
+        transferCanvas,
+        panX,
+        panY,
+        bitmap.width * view.zoom,
+        bitmap.height * view.zoom,
+      );
+      transferCtx.clearRect(
+        preview.bounds.x,
+        preview.bounds.y,
+        preview.bounds.width,
+        preview.bounds.height,
+      );
+    }
+    if (gridVisible) {
+      destination.save();
       // Mask the grid to preview alpha. Transparent line and selection pixels already
       // show the viewport grid, and the cleared source may have its own grid below.
       destination.globalCompositeOperation = 'source-atop';
-      drawGrid(destination, bitmap, view);
-      destination.restore();
-      const scale = view.devicePixelRatio;
-      overlayCtx.drawImage(
-        previewGridCanvas!,
-        0,
-        0,
-        width,
-        height,
-        left / scale,
-        top / scale,
-        width / scale,
-        height / scale,
+      drawGrid(
+        destination,
+        bitmap,
+        view,
+        panX,
+        panY,
+        destination === overlayCtx ? 0 : -left,
+        destination === overlayCtx ? 0 : -top,
       );
+      destination.restore();
+      if (destination !== overlayCtx) {
+        overlayCtx.save();
+        overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+        overlayCtx.imageSmoothingEnabled = false;
+        overlayCtx.drawImage(previewGridCanvas!, 0, 0, width, height, left, top, width, height);
+        overlayCtx.restore();
+      }
     }
   }
 
-  function drawGrid(ctx: CanvasRenderingContext2D, bitmap: BitmapDocument, view: Viewport): void {
+  function drawGrid(
+    ctx: CanvasRenderingContext2D,
+    bitmap: BitmapDocument,
+    view: Viewport,
+    panX: number,
+    panY: number,
+    deviceOffsetX = 0,
+    deviceOffsetY = 0,
+  ): void {
     if (overlay.grid === 'off' || (overlay.grid === 'auto' && view.zoom < 8)) return;
-    const left = Math.max(0, Math.floor(-view.panX / view.zoom));
-    const right = Math.min(bitmap.width, Math.ceil((view.cssWidth - view.panX) / view.zoom));
-    const top = Math.max(0, Math.floor(-view.panY / view.zoom));
-    const bottom = Math.min(bitmap.height, Math.ceil((view.cssHeight - view.panY) / view.zoom));
+    const left = Math.max(0, Math.floor(-panX / view.zoom));
+    const right = Math.min(bitmap.width, Math.ceil((view.cssWidth - panX) / view.zoom));
+    const top = Math.max(0, Math.floor(-panY / view.zoom));
+    const bottom = Math.min(bitmap.height, Math.ceil((view.cssHeight - panY) / view.zoom));
     if (left > right || top > bottom) return;
+    const scale = view.devicePixelRatio;
+    const originX = panX * scale;
+    const originY = panY * scale;
+    const boundaryX = (cell: number) => deviceBoundary(originX, cell, view.zoom, scale);
+    const boundaryY = (cell: number) => deviceBoundary(originY, cell, view.zoom, scale);
+    const darkWidth = Math.max(1, Math.round(scale));
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(view.panX, view.panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
-    ctx.clip();
-    // The dark line keeps the existing calm grid on white. One neighboring device
-    // pixel of white makes the same boundary readable over black and saturated art.
-    const lightOffset = 1 + 0.5 / view.devicePixelRatio;
+    clipDocumentPixels(ctx, bitmap, view, panX, panY);
+    ctx.setTransform(1, 0, 0, 1, deviceOffsetX, deviceOffsetY);
+    // Fill whole device pixels. CSS-width strokes land between device pixels at fractional
+    // DPR and can blur differently from one image-pixel boundary to the next.
     for (let major = 0; major < 2; major++) {
       for (let light = 0; light < 2; light++) {
         ctx.beginPath();
-        ctx.strokeStyle = major
+        ctx.fillStyle = major
           ? light
             ? (overlay.colors?.gridMajorLight ?? 'rgba(255,255,255,.25)')
             : (overlay.colors?.gridMajor ?? 'rgba(0,0,0,.32)')
           : light
             ? (overlay.colors?.gridMinorLight ?? 'rgba(255,255,255,.16)')
             : (overlay.colors?.gridMinor ?? 'rgba(0,0,0,.12)');
-        ctx.lineWidth = light ? 1 / view.devicePixelRatio : 1;
+        const lineWidth = light ? 1 : darkWidth;
         for (let x = left; x <= right; x++) {
           if ((x % 8 === 0) !== Boolean(major)) continue;
-          const screenX = Math.round(view.panX + x * view.zoom) + (light ? lightOffset : 0.5);
-          ctx.moveTo(screenX, view.panY + top * view.zoom);
-          ctx.lineTo(screenX, view.panY + bottom * view.zoom);
+          const deviceX = boundaryX(x) + (light ? darkWidth : 0);
+          const startY = boundaryY(top);
+          const endY = boundaryY(bottom);
+          ctx.rect(deviceX, startY, lineWidth, endY - startY);
         }
         for (let y = top; y <= bottom; y++) {
           if ((y % 8 === 0) !== Boolean(major)) continue;
-          const screenY = Math.round(view.panY + y * view.zoom) + (light ? lightOffset : 0.5);
-          ctx.moveTo(view.panX + left * view.zoom, screenY);
-          ctx.lineTo(view.panX + right * view.zoom, screenY);
+          const deviceY = boundaryY(y) + (light ? darkWidth : 0);
+          const startX = boundaryX(left);
+          const endX = boundaryX(right);
+          ctx.rect(startX, deviceY, endX - startX, lineWidth);
         }
-        ctx.stroke();
+        ctx.fill();
       }
     }
     ctx.restore();
   }
 
-  function drawClearedSource(view: Viewport, bitmap: BitmapDocument, source: PixelRect): void {
+  function drawClearedSource(
+    view: Viewport,
+    bitmap: BitmapDocument,
+    source: PixelRect,
+    panX: number,
+    panY: number,
+  ): void {
     overlayCtx.save();
-    overlayCtx.beginPath();
-    overlayCtx.rect(
-      view.panX + source.x * view.zoom,
-      view.panY + source.y * view.zoom,
-      source.width * view.zoom,
-      source.height * view.zoom,
-    );
-    overlayCtx.clip();
+    overlayCtx.imageSmoothingEnabled = Number.isInteger(view.devicePixelRatio);
     overlayCtx.fillStyle = overlayChecker;
     overlayCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
-    drawGrid(overlayCtx, bitmap, view);
+    overlayCtx.globalCompositeOperation = 'source-atop';
+    drawGrid(overlayCtx, bitmap, view, panX, panY);
+    // Mask the checker and grid with the source pixel footprint. A CSS-space
+    // clip would soften fractional edges that the bitmap covers fully.
+    overlayCtx.globalCompositeOperation = 'destination-in';
+    overlayCtx.imageSmoothingEnabled = false;
+    if (Number.isInteger(view.devicePixelRatio) || smoothingForView(view) !== 'off')
+      overlayCtx.drawImage(
+        opaquePixel,
+        panX + source.x * view.zoom,
+        panY + source.y * view.zoom,
+        source.width * view.zoom,
+        source.height * view.zoom,
+      );
+    else {
+      if (transferCanvas.width !== bitmap.width) transferCanvas.width = bitmap.width;
+      if (transferCanvas.height !== bitmap.height) transferCanvas.height = bitmap.height;
+      transferCtx.fillStyle = '#fff';
+      transferCtx.fillRect(source.x, source.y, source.width, source.height);
+      overlayCtx.drawImage(
+        transferCanvas,
+        panX,
+        panY,
+        bitmap.width * view.zoom,
+        bitmap.height * view.zoom,
+      );
+      transferCtx.clearRect(source.x, source.y, source.width, source.height);
+    }
     overlayCtx.restore();
   }
 
@@ -446,6 +570,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     if (!document || !viewport || disposed) return;
     const bitmap = document;
     const view = viewport;
+    const panX = pixelAlignedPan(view.panX, view.devicePixelRatio);
+    const panY = pixelAlignedPan(view.panY, view.devicePixelRatio);
     updateBackingStore(view);
     if (viewportDirty) {
       updateDocumentCanvas(bitmap);
@@ -455,18 +581,22 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       viewportCtx.clearRect(0, 0, pixelWidth, pixelHeight);
       viewportCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
       viewportCtx.save();
-      viewportCtx.beginPath();
-      viewportCtx.rect(view.panX, view.panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
-      viewportCtx.clip();
+      const smoothing = smoothingForView(view);
+      if (smoothing === 'off') clipDocumentPixels(viewportCtx, bitmap, view, panX, panY);
+      else {
+        viewportCtx.beginPath();
+        viewportCtx.rect(panX, panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
+        viewportCtx.clip();
+      }
+      viewportCtx.imageSmoothingEnabled = Number.isInteger(view.devicePixelRatio);
       viewportCtx.fillStyle = checker;
       viewportCtx.fillRect(0, 0, view.cssWidth, view.cssHeight);
-      const smoothing = smoothingForView(view);
       viewportCtx.imageSmoothingEnabled = smoothing !== 'off';
       if (smoothing !== 'off') viewportCtx.imageSmoothingQuality = smoothing;
       viewportCtx.drawImage(
         sourceForZoom(view),
-        view.panX,
-        view.panY,
+        panX,
+        panY,
         bitmap.width * view.zoom,
         bitmap.height * view.zoom,
       );
@@ -479,10 +609,15 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
           pixelHeight,
           bitmap,
           view,
+          panX,
+          panY,
           colors.edge,
           colors.shadow,
         );
-      drawGrid(viewportCtx, bitmap, view);
+      viewportCtx.save();
+      viewportCtx.globalCompositeOperation = 'source-atop';
+      drawGrid(viewportCtx, bitmap, view, panX, panY);
+      viewportCtx.restore();
       viewportDirty = false;
     }
     if (annotationDirty) {
@@ -499,14 +634,9 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
           annotationCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
           annotationCtx.save();
           annotationCtx.beginPath();
-          annotationCtx.rect(
-            view.panX,
-            view.panY,
-            bitmap.width * view.zoom,
-            bitmap.height * view.zoom,
-          );
+          annotationCtx.rect(panX, panY, bitmap.width * view.zoom, bitmap.height * view.zoom);
           annotationCtx.clip();
-          annotationCtx.translate(view.panX, view.panY);
+          annotationCtx.translate(panX, panY);
           annotationCtx.scale(view.zoom, view.zoom);
           painter.paintVisibleAnnotations(annotationCtx, annotations, colorSpace);
           annotationCtx.restore();
@@ -518,10 +648,10 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
     overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
     overlayCtx.clearRect(0, 0, surface.overlayCanvas.width, surface.overlayCanvas.height);
     overlayCtx.setTransform(view.devicePixelRatio, 0, 0, view.devicePixelRatio, 0, 0);
-    if (overlay.sourceClear) drawClearedSource(view, bitmap, overlay.sourceClear);
-    if (overlay.preview) drawPreview(view, bitmap, overlay.preview);
-    if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, phase);
-    if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, phase);
+    if (overlay.sourceClear) drawClearedSource(view, bitmap, overlay.sourceClear, panX, panY);
+    if (overlay.preview) drawPreview(view, bitmap, overlay.preview, panX, panY);
+    if (overlay.marquee) drawTwoToneRect(overlayCtx, overlay.marquee, view, panX, panY, phase);
+    if (overlay.cursor) drawTwoToneRect(overlayCtx, overlay.cursor, view, panX, panY, phase);
     if (overlay.selectedAnnotationId && annotations) {
       const selected =
         annotations.preview?.id === overlay.selectedAnnotationId
@@ -535,8 +665,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
             selected,
             colorSpace,
             view.zoom,
-            view.panX,
-            view.panY,
+            panX,
+            panY,
             bitmap.width,
             bitmap.height,
             Boolean(overlay.coarseAnnotationHandles),
@@ -618,6 +748,10 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       )
         viewportDirty = true;
       overlay = next;
+      if (!next.preview && !next.sourceClear && transferCanvas.width) {
+        transferCanvas.width = 0;
+        transferCanvas.height = 0;
+      }
       overlayDirty = true;
       if ((!next.marquee || next.reducedMotion || systemReducedMotion) && timer) {
         clearTimeout(timer);
@@ -636,6 +770,8 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
       annotationWatchUnsubscribe?.();
       if (frame) cancelAnimationFrame(frame);
       if (timer) clearTimeout(timer);
+      transferCanvas.width = 0;
+      transferCanvas.height = 0;
     },
   };
 }

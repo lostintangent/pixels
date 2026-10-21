@@ -7,6 +7,8 @@ import { beginStroke, FillWorkspace, floodFill } from '../../tools';
 import {
   checkAnnotationLayer,
   checkColorConversion,
+  checkDocumentCorner,
+  checkGridAlignment,
   checkP3Canvas,
   checkPreviewGrid,
   checkZoomOutQuality,
@@ -87,6 +89,7 @@ export interface BrowserPerfApi {
   runPanZoom(): Promise<void>;
   runMazeFill(): Promise<void>;
   runLargePan(): Promise<void>;
+  runLargePreview(zoom?: number): Promise<void>;
   prepareShapeDrag(): Promise<void>;
   runShapeHandleDrag(): Promise<void>;
   checkZoomOutQuality(): Promise<Record<string, number>>;
@@ -94,6 +97,8 @@ export interface BrowserPerfApi {
   checkColorConversion(): number;
   checkAnnotationLayer: typeof checkAnnotationLayer;
   checkPreviewGrid: typeof checkPreviewGrid;
+  checkGridAlignment: typeof checkGridAlignment;
+  checkDocumentCorner: typeof checkDocumentCorner;
 }
 
 const api: BrowserPerfApi = {
@@ -196,6 +201,45 @@ const api: BrowserPerfApi = {
       requestAnimationFrame(next);
     });
   },
+  runLargePreview(zoom = 0.0625) {
+    const largeZoom = zoom >= 1;
+    const width = largeZoom ? 64 : 256;
+    const height = largeZoom ? 1 : 16;
+    const pixels = new Uint32Array(width * height).fill(INK);
+    renderer.setViewport({
+      ...baseViewport,
+      zoom,
+      panX: largeZoom ? 100 - 512 * zoom : 20,
+      panY: largeZoom ? 100 - 512 * zoom : 20,
+    });
+    return new Promise((resolve) => {
+      let frame = 0;
+      const next = () => {
+        renderer.setOverlay({
+          grid: 'off',
+          cursor: null,
+          marquee: null,
+          preview: {
+            bounds: {
+              x: 512 + Math.round((largeZoom ? 8 : 128) * Math.sin((frame / 90) * Math.PI * 2)),
+              y: 512,
+              width,
+              height,
+            },
+            pixels,
+          },
+          colors,
+        });
+        frame++;
+        if (frame < 90) requestAnimationFrame(next);
+        else {
+          renderer.setOverlay({ grid: 'off', cursor: null, marquee: null, preview: null, colors });
+          void frames().then(resolve);
+        }
+      };
+      requestAnimationFrame(next);
+    });
+  },
   async prepareShapeDrag() {
     largeAnnotations.commit(handleShape);
     renderer.setOverlay({
@@ -231,6 +275,8 @@ const api: BrowserPerfApi = {
   checkColorConversion,
   checkAnnotationLayer,
   checkPreviewGrid,
+  checkGridAlignment,
+  checkDocumentCorner,
   async runMazeFill() {
     floodFill(bitmap, { at: { x: 0, y: 0 }, color: INK }, history, fillWorkspace);
     await frames();
