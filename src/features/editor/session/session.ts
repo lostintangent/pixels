@@ -257,6 +257,7 @@ export function createEditorSession({
   const boundsKey = {
     width: 0,
     height: 0,
+    devicePixelRatio: 0,
     frame: FRAMES[layout],
     islands,
     documentWidth: 0,
@@ -410,6 +411,7 @@ export function createEditorSession({
       bounds &&
       boundsKey.width === cssWidth &&
       boundsKey.height === cssHeight &&
+      boundsKey.devicePixelRatio === view.devicePixelRatio &&
       boundsKey.frame === frame() &&
       boundsKey.islands === islands &&
       boundsKey.documentWidth === width &&
@@ -418,6 +420,7 @@ export function createEditorSession({
       return bounds;
     boundsKey.width = cssWidth;
     boundsKey.height = cssHeight;
+    boundsKey.devicePixelRatio = view.devicePixelRatio;
     boundsKey.frame = frame();
     boundsKey.islands = islands;
     boundsKey.documentWidth = width;

@@ -16,8 +16,8 @@ export const GRID_MIN_ZOOM = 8;
  * only when that destination changes.
  */
 export function displayZoom(
-  view: Pick<Viewport, 'zoom' | 'fittedZoom'>,
+  view: Pick<Viewport, 'zoom' | 'fittedZoom'> & Partial<Pick<Viewport, 'devicePixelRatio'>>,
   minZoom = MIN_ZOOM,
 ): number {
-  return snapZoomWithin(view.zoom, minZoom, view.fittedZoom);
+  return snapZoomWithin(view.zoom, minZoom, view.fittedZoom, view.devicePixelRatio);
 }

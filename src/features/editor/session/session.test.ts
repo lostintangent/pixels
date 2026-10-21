@@ -37,6 +37,23 @@ test('a density-only canvas resize updates viewport DPR without moving the view'
   expect(session.viewport.state).toEqual(view);
 });
 
+test('a display-scale change refits untouched art but preserves a manual zoom until the next step', () => {
+  const session = createEditorSession({
+    document: createBitmapDocument('density-fit', 100, 100),
+    save: null,
+  });
+  session.setLayout('phone');
+  session.setViewportSize(390, 844, 2);
+  expect(session.viewport.state.zoom).toBe(3);
+  session.setViewportSize(390, 844, 1.75);
+  expect(session.viewport.state.zoom).toBe(6 / 1.75);
+  session.setViewport({ ...session.viewport.state, zoom: 2.4, fittedZoom: undefined });
+  session.setViewportSize(390, 844, 2.2);
+  expect(session.viewport.state.zoom).toBe(2.4);
+  session.run({ type: 'zoom', direction: 1 });
+  expect(session.viewport.state.zoom).toBe(7 / 2.2);
+});
+
 test('session paste floats through a drag and commits as one undo step', () => {
   const document = createBitmapDocument('paste', 4, 1);
   document.pixels[0] = A;

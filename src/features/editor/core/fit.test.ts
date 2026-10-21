@@ -78,6 +78,21 @@ describe('fitAroundIslands', () => {
 });
 
 describe('boundsFor', () => {
+  test('fractional DPR floor follows snapped 1×, and Fit stays on whole device pixels', () => {
+    for (const dpr of [1.25, 1.5, 1.75, 2.2, 2.625]) {
+      const scaled = { ...view(390, 844), devicePixelRatio: dpr };
+      const fit = fitAroundIslands(scaled, 100, 100, FRAME, []);
+      expect(fit.zoom * dpr).toBeCloseTo(Math.round(fit.zoom * dpr), 12);
+      expect(boundsFor(scaled, 100, 100, FRAME, []).minZoom).toBeCloseTo(
+        Math.min(Math.round(dpr) / dpr, fit.zoom),
+        12,
+      );
+      const constrained = fitAroundIslands(scaled, 100, 100, FRAME, [
+        { left: 300, top: 100, right: 390, bottom: 600 },
+      ]);
+      expect(constrained.zoom * dpr).toBeCloseTo(Math.round(constrained.zoom * dpr), 12);
+    }
+  });
   test('a sprite can always zoom out to true size', () => {
     const bounds = boundsFor(view(1440, 900), 32, 32, FRAME, [panel(1440, 244, 360)]);
     expect(bounds).toEqual({ minZoom: 1, frame: FRAME, documentWidth: 32, documentHeight: 32 });

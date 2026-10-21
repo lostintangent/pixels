@@ -58,6 +58,7 @@ interface BrowserPerfApi {
       { profiles: number; offsets: number[]; bitmapOffsets: number[]; example: number[] }
     >
   >;
+  checkSettledPixelRuns(): Promise<Record<string, { expected: number; x: number[]; y: number[] }>>;
 }
 declare global {
   interface Window {
@@ -119,7 +120,7 @@ async function traceScenario(
 
 async function checkGridMatrix(browser: Browser, url: string): Promise<boolean> {
   let passed = true;
-  for (const dpr of [1.25, 1.5, 1.75, 2, 2.2, 2.625, 3]) {
+  for (const dpr of [1, 1.25, 1.5, 1.75, 2, 2.2, 2.625, 3]) {
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },
       deviceScaleFactor: dpr,
@@ -143,6 +144,7 @@ async function checkGridMatrix(browser: Browser, url: string): Promise<boolean> 
           preview: await api.checkPreviewGrid(31.37, 17.61),
           wholePanPreview: await api.checkPreviewGrid(),
           corner: await api.checkDocumentCorner(),
+          settled: await api.checkSettledPixelRuns(),
         };
       });
       const checks = [result.fit, result.anchored, result.previewZoom];
@@ -163,9 +165,23 @@ async function checkGridMatrix(browser: Browser, url: string): Promise<boolean> 
           )
           .join(' ');
       const cornerPass = result.corner.join(',') === '100,50,200,255';
-      const profilePassed = gridPass && previewMax === 0 && cornerPass && errors.length === 0;
+      const settledPass = Object.values(result.settled).every(
+        ({ expected, x, y }) =>
+          x.length === 14 &&
+          y.length === 14 &&
+          x.every((length) => length === expected) &&
+          y.every((length) => length === expected),
+      );
+      const profilePassed =
+        gridPass && previewMax === 0 && cornerPass && settledPass && errors.length === 0;
+      const settledSummary = Object.entries(result.settled)
+        .map(
+          ([name, { expected, x, y }]) =>
+            `${name}:${expected}px x[${[...new Set(x)].join(',')}] y[${[...new Set(y)].join(',')}]`,
+        )
+        .join(' ');
       console.log(
-        `Grid DPR ${dpr}: fit ${lineSummary(result.fit)}; anchored ${lineSummary(result.anchored)}; 10× ${lineSummary(result.previewZoom)}; preview ${JSON.stringify(result.preview)}; whole-pan preview ${JSON.stringify(result.wholePanPreview)}; corner ${result.corner.join(',')}; ${profilePassed ? 'PASS' : 'FAIL'}`,
+        `Grid DPR ${dpr}: fit ${lineSummary(result.fit)}; anchored ${lineSummary(result.anchored)}; 10× ${lineSummary(result.previewZoom)}; preview ${JSON.stringify(result.preview)}; whole-pan preview ${JSON.stringify(result.wholePanPreview)}; corner ${result.corner.join(',')}; settled ${settledPass ? settledSummary : JSON.stringify(result.settled)}; ${profilePassed ? 'PASS' : 'FAIL'}`,
       );
       if (errors.length) console.error(`Grid page errors at DPR ${dpr}: ${errors.join('; ')}`);
       if (!profilePassed) passed = false;

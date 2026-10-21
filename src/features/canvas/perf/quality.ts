@@ -3,6 +3,7 @@ import { annotationsFor } from '../../annotations';
 import { createDocumentHistory } from '../../history';
 import { beginSelection } from '../../tools';
 import { createCanvasRenderer } from '../render/renderer';
+import { fitZoom, zoomStep } from '../core/viewport';
 
 const SIDE = 512;
 const OUTPUT = SIDE / 2;
@@ -445,6 +446,75 @@ export async function checkGridAlignment(
           example,
         };
       }
+    }
+    return result;
+  } finally {
+    renderer.dispose();
+  }
+}
+
+/** Actual red/blue checker cell widths in Chromium's canvas at every settled sub-8× zoom. */
+export async function checkSettledPixelRuns(): Promise<
+  Record<string, { expected: number; x: number[]; y: number[] }>
+> {
+  const side = 16;
+  const dpr = window.devicePixelRatio;
+  const bitmap = createBitmapDocument('settled-pixels', side, side);
+  for (let y = 0; y < side; y++)
+    for (let x = 0; x < side; x++)
+      bitmap.pixels[y * side + x] = (x + y) % 2 ? packRgba(0, 0, 255) : packRgba(255, 0, 0);
+  const viewportCanvas = document.createElement('canvas');
+  const renderer = createCanvasRenderer({
+    documentCanvas: document.createElement('canvas'),
+    viewportCanvas,
+    annotationCanvas: document.createElement('canvas'),
+    overlayCanvas: document.createElement('canvas'),
+  });
+  const result: Record<string, { expected: number; x: number[]; y: number[] }> = {};
+  const runs = (bytes: Uint8ClampedArray, width: number, axis: 'x' | 'y', zoom: number) => {
+    const origin = Math.round(8.37 * dpr);
+    const span = zoom * dpr;
+    const cross = Math.floor(origin + 5.25 * span);
+    let previous = -1;
+    let count = 0;
+    const lengths: number[] = [];
+    for (let position = origin; position < origin + side * span; position++) {
+      const offset = (axis === 'x' ? cross * width + position : position * width + cross) * 4;
+      const color = bytes[offset]! > 200 && bytes[offset + 2]! < 50 ? 0 : 1;
+      if (color !== previous) {
+        if (count) lengths.push(count);
+        count = 0;
+        previous = color;
+      }
+      count++;
+    }
+    if (count) lengths.push(count);
+    // The document edge can clip a fraction of the first and last cell.
+    return lengths.slice(1, -1);
+  };
+  try {
+    renderer.setDocument(bitmap);
+    for (const [name, zoom] of [
+      ...[1, 2, 3, 4, 6].map((step) => [`${step}×`, zoomStep(step, dpr)] as const),
+      ['Fit', fitZoom(5.7, dpr)] as const,
+    ]) {
+      renderer.setViewport({
+        zoom,
+        panX: 8.37,
+        panY: 8.37,
+        cssWidth: 160,
+        cssHeight: 160,
+        devicePixelRatio: dpr,
+      });
+      await frames();
+      const bytes = viewportCanvas
+        .getContext('2d')!
+        .getImageData(0, 0, viewportCanvas.width, viewportCanvas.height).data;
+      result[name] = {
+        expected: Math.round(zoom * dpr),
+        x: runs(bytes, viewportCanvas.width, 'x', zoom),
+        y: runs(bytes, viewportCanvas.width, 'y', zoom),
+      };
     }
     return result;
   } finally {

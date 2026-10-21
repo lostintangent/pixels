@@ -9,6 +9,7 @@ import {
   stepZoom,
   zoomAt,
   zoomToStep,
+  zoomStep,
 } from './viewport';
 import type { Viewport } from './contracts';
 
@@ -107,4 +108,45 @@ test('off-ladder zoom steps to the next step in either direction', () => {
   expect(screenToDocument(stepZoom(fitted, 1, anchor), anchor)).toEqual(before);
   expect(stepZoom({ ...viewport, zoom: 7.2 }, 1, anchor).zoom).toBe(8);
   expect(stepZoom({ ...viewport, zoom: 7.2 }, -1, anchor).zoom).toBe(6);
+});
+
+test.each([
+  [1.25, [0.8, 2.4, 3.2, 4, 6.4]],
+  [1.5, [2 / 1.5, 2, 5 / 1.5, 4, 6]],
+  [1.75, [2 / 1.75, 4 / 1.75, 5 / 1.75, 4, 11 / 1.75]],
+  [2.2, [2 / 2.2, 4 / 2.2, 7 / 2.2, 9 / 2.2, 13 / 2.2]],
+  [2.625, [3 / 2.625, 5 / 2.625, 8 / 2.625, 11 / 2.625, 16 / 2.625]],
+] as const)('fractional DPR %p settles each 1–6× rung on whole device pixels', (dpr, expected) => {
+  const anchor = { x: 100, y: 120 };
+  for (let index = 0; index < expected.length; index++) {
+    const step = [1, 2, 3, 4, 6][index]!;
+    expect(zoomStep(step, dpr)).toBeCloseTo(expected[index]!, 12);
+    expect(zoomToStep({ ...viewport, devicePixelRatio: dpr }, step, anchor).zoom).toBeCloseTo(
+      expected[index]!,
+      12,
+    );
+  }
+  const offLadder = { ...viewport, devicePixelRatio: dpr, zoom: 2.6 };
+  expect(stepZoom(offLadder, -1, anchor).zoom).toBeCloseTo(expected[1]!, 12);
+  expect(stepZoom(offLadder, 1, anchor).zoom).toBeCloseTo(expected[2]!, 12);
+  expect(zoomStep(8, dpr)).toBe(8);
+  expect(fitZoom(0.95, dpr)).toBe(0.95);
+  const fit = fitZoom(5.7, dpr);
+  expect(fit * dpr).toBeCloseTo(Math.floor(5.7 * dpr), 12);
+  expect(fit).toBeLessThanOrEqual(5.7);
+  expect(fitZoom(1, dpr)).toBe(1);
+  let previous = fitZoom(0.75, dpr);
+  for (let thousandths = 751; thousandths < 8100; thousandths++) {
+    const raw = thousandths / 1000;
+    const current = fitZoom(raw, dpr);
+    expect(current).toBeGreaterThanOrEqual(previous);
+    expect(current).toBeLessThanOrEqual(raw + 1e-9);
+    previous = current;
+  }
+});
+
+test.each([1, 2, 3])('integer DPR %p keeps the original ladder and fit', (dpr) => {
+  for (const step of [1, 2, 3, 4, 6, 8]) expect(zoomStep(step, dpr)).toBe(step);
+  expect(fitZoom(5.7, dpr)).toBe(5);
+  expect(fitZoom(0.95, dpr)).toBe(0.95);
 });

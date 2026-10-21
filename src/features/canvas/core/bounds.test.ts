@@ -188,4 +188,15 @@ describe('settleView', () => {
       expect(settleView(moving, 1, at, fit).zoom).toBe(label);
     }
   });
+
+  test('a fractional-DPR moving label matches the pinch settle through every nearby candidate', () => {
+    const at = { x: 195, y: 400 };
+    const start = { ...fit, devicePixelRatio: 1.75, zoom: 5 / 1.75, fittedZoom: 5 / 1.75 };
+    const floor = 2 / 1.75;
+    for (let zoom = 0.8; zoom <= 7.9; zoom += 0.03) {
+      const moving = { ...start, zoom };
+      const label = snapZoomWithin(zoom, floor, start.fittedZoom, start.devicePixelRatio);
+      expect(settleView(moving, floor, at, start).zoom).toBe(label);
+    }
+  });
 });

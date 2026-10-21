@@ -83,6 +83,13 @@ describe('zoom label', () => {
     expect(formatZoom(0.5)).toBe('50%');
     expect(formatZoom(1 / 8)).toBe('12.5%');
   });
+
+  test('fractional-DPR moving labels name their settled steps', () => {
+    expect(formatZoom(displayZoom({ zoom: 2.4, devicePixelRatio: 1.75 }, 1))).toBe('2.29×');
+    expect(formatZoom(displayZoom({ zoom: 0.92, devicePixelRatio: 2.2 }, 0.9))).toBe('90.9%');
+    const fit = 5 / 1.75;
+    expect(displayZoom({ zoom: fit * 1.03, fittedZoom: fit, devicePixelRatio: 1.75 }, 1)).toBe(fit);
+  });
 });
 
 describe('shortcuts', () => {

@@ -1,4 +1,4 @@
-import { fitViewport, fitZoom } from '../../canvas/model';
+import { fitViewport, fitZoom, zoomStep } from '../../canvas/model';
 import type { ViewBounds, Viewport, ViewportInsets } from '../../canvas/model';
 
 /** A floating island in canvas CSS pixels, such as the desktop color panel. */
@@ -15,7 +15,8 @@ const ISLAND_GAP = 12;
 /**
  * Fits the document inside `frame` and keeps it truly centered unless that would put it under an
  * island. Then it shrinks around the same center to the largest fit zoom that clears every island:
- * a whole number at or above 1×, a whole percentage below. Portrait views can also center the
+ * a whole device-pixel cell below 8× on scaled displays, a whole CSS zoom on integer displays,
+ * and a whole percentage below 1×. Portrait views can also center the
  * document beneath the islands, and either orientation can move beside their columns. The largest
  * clear zoom wins, with the original frame center preferred on a tie.
  */
@@ -49,7 +50,7 @@ export function fitAroundIslands(
   let clear = centered.zoom;
   for (const island of blocking)
     clear = Math.min(clear, clearingZoom(island, center, documentWidth, documentHeight));
-  const zoom = fitZoom(clear);
+  const zoom = fitZoom(clear, view.devicePixelRatio);
   let best = centerAt(view, zoom, documentWidth, documentHeight, center);
   if (view.cssHeight > view.cssWidth) {
     const top = Math.max(frame.top, ...blocking.map((island) => island.bottom + ISLAND_GAP));
@@ -64,9 +65,9 @@ export function fitAroundIslands(
 }
 
 /**
- * Where the artist can take the view. Zoom stops at the smaller of 1× and the zoom a fit would
- * land on right now, islands included, so a sprite still reaches true size and a large image stops
- * at its fit. Pan keeps the document overlapping the same frame the fit uses.
+ * Where the artist can take the view. Zoom stops at the smaller of the settled 1× rung and the
+ * zoom a fit would land on right now, islands included, so a sprite reaches its smallest sharp
+ * size and a large image stops at its fit. Pan overlaps the same frame the fit uses.
  */
 export function boundsFor(
   view: Viewport,
@@ -76,7 +77,12 @@ export function boundsFor(
   islands: readonly IslandRect[],
 ): ViewBounds {
   const fit = fitAroundIslands(view, documentWidth, documentHeight, frame, islands);
-  return { minZoom: Math.min(1, fit.zoom), frame, documentWidth, documentHeight };
+  return {
+    minZoom: Math.min(zoomStep(1, view.devicePixelRatio), fit.zoom),
+    frame,
+    documentWidth,
+    documentHeight,
+  };
 }
 
 /**

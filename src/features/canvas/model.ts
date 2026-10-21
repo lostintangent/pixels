@@ -11,6 +11,7 @@ export {
   snapZoom,
   stepZoom,
   zoomToStep,
+  zoomStep,
 } from './core/viewport';
 export type { ViewBounds } from './core/bounds';
 export { boundView, snapZoomWithin } from './core/bounds';

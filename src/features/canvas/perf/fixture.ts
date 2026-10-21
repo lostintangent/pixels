@@ -9,6 +9,7 @@ import {
   checkColorConversion,
   checkDocumentCorner,
   checkGridAlignment,
+  checkSettledPixelRuns,
   checkP3Canvas,
   checkPreviewGrid,
   checkZoomOutQuality,
@@ -98,6 +99,7 @@ export interface BrowserPerfApi {
   checkAnnotationLayer: typeof checkAnnotationLayer;
   checkPreviewGrid: typeof checkPreviewGrid;
   checkGridAlignment: typeof checkGridAlignment;
+  checkSettledPixelRuns: typeof checkSettledPixelRuns;
   checkDocumentCorner: typeof checkDocumentCorner;
 }
 
@@ -276,6 +278,7 @@ const api: BrowserPerfApi = {
   checkAnnotationLayer,
   checkPreviewGrid,
   checkGridAlignment,
+  checkSettledPixelRuns,
   checkDocumentCorner,
   async runMazeFill() {
     floodFill(bitmap, { at: { x: 0, y: 0 }, color: INK }, history, fillWorkspace);

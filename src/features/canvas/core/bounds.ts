@@ -1,5 +1,5 @@
 import type { ScreenPoint, Viewport, ViewportInsets } from './contracts';
-import { ZOOM_STEPS, zoomAt } from './viewport';
+import { ZOOM_STEPS, zoomAt, zoomStep } from './viewport';
 
 /*
  * Keeps the document findable. Zoom never drops below a floor, and on each axis the document keeps
@@ -9,7 +9,7 @@ import { ZOOM_STEPS, zoomAt } from './viewport';
  */
 
 export interface ViewBounds {
-  /** The lowest zoom, which the editor sets to the smaller of its fit and 1×. */
+  /** The lowest zoom, which the editor sets to the smaller of its fit and settled 1× step. */
   minZoom: number;
   /** Insets of the frame the document has to keep overlapping. */
   frame: ViewportInsets;
@@ -38,7 +38,12 @@ export function rubberBand(overshoot: number, dimension: number): number {
  * zoom at or above the floor is a candidate too, so a gesture that ends near where it started can
  * return to an off-ladder fit.
  */
-export function snapZoomWithin(zoom: number, minZoom: number, keep?: number): number {
+export function snapZoomWithin(
+  zoom: number,
+  minZoom: number,
+  keep?: number,
+  devicePixelRatio = 1,
+): number {
   let best = minZoom;
   let distance = Math.abs(Math.log(zoom / minZoom));
   if (keep !== undefined && keep >= minZoom) {
@@ -48,7 +53,8 @@ export function snapZoomWithin(zoom: number, minZoom: number, keep?: number): nu
       distance = current;
     }
   }
-  for (const step of ZOOM_STEPS) {
+  for (const base of ZOOM_STEPS) {
+    const step = zoomStep(base, devicePixelRatio);
     if (step < minZoom) continue;
     const current = Math.abs(Math.log(zoom / step));
     if (current < distance) {
@@ -80,7 +86,7 @@ export function settleView(
   at: ScreenPoint,
   start?: Viewport,
 ): Viewport {
-  const zoom = snapZoomWithin(view.zoom, minZoom, start?.zoom);
+  const zoom = snapZoomWithin(view.zoom, minZoom, start?.zoom, view.devicePixelRatio);
   const end = zoomAt(view, zoom, at);
   end.panX = Math.round(end.panX);
   end.panY = Math.round(end.panY);

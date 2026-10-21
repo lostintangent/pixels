@@ -28,12 +28,22 @@ export function clampZoom(zoom: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
-function nearestStepIndex(zoom: number): number {
+/** A settled 1–6× ladder rung occupies a whole number of device pixels on scaled displays. */
+export function zoomStep(step: number, devicePixelRatio = 1): number {
+  if (step < 1 || step >= 8 || Number.isInteger(devicePixelRatio)) return step;
+  const pixels = step * devicePixelRatio;
+  const lower = Math.max(1, Math.floor(pixels));
+  const upper = Math.ceil(pixels);
+  const whole = Math.log(pixels / lower) < Math.log(upper / pixels) ? lower : upper;
+  return whole / devicePixelRatio;
+}
+
+function nearestStepIndex(zoom: number, devicePixelRatio: number): number {
   const bounded = clampZoom(zoom);
   let best = 0;
   let distance = Infinity;
   for (let i = 0; i < ZOOM_STEPS.length; i++) {
-    const current = Math.abs(Math.log(bounded / ZOOM_STEPS[i]!));
+    const current = Math.abs(Math.log(bounded / zoomStep(ZOOM_STEPS[i]!, devicePixelRatio)));
     if (current < distance) {
       distance = current;
       best = i;
@@ -42,8 +52,8 @@ function nearestStepIndex(zoom: number): number {
   return best;
 }
 
-export function snapZoom(zoom: number): number {
-  return ZOOM_STEPS[nearestStepIndex(zoom)]!;
+export function snapZoom(zoom: number, devicePixelRatio = 1): number {
+  return zoomStep(ZOOM_STEPS[nearestStepIndex(zoom, devicePixelRatio)]!, devicePixelRatio);
 }
 
 export function screenToDocument(viewport: Viewport, point: ScreenPoint): DocumentPoint {
@@ -77,7 +87,7 @@ export function zoomToStep(
   requestedZoom: number,
   point: ScreenPoint,
 ): Viewport {
-  return zoomAt(viewport, snapZoom(requestedZoom), point);
+  return zoomAt(viewport, snapZoom(requestedZoom, viewport.devicePixelRatio), point);
 }
 
 export function settleZoom(viewport: Viewport, point: ScreenPoint): Viewport {
@@ -87,22 +97,28 @@ export function settleZoom(viewport: Viewport, point: ScreenPoint): Viewport {
 export function stepZoom(viewport: Viewport, direction: -1 | 1, point: ScreenPoint): Viewport {
   const zoom = clampZoom(viewport.zoom);
   if (direction > 0) {
-    for (const step of ZOOM_STEPS) if (step > zoom) return zoomAt(viewport, step, point);
+    for (const base of ZOOM_STEPS) {
+      const step = zoomStep(base, viewport.devicePixelRatio);
+      if (step > zoom) return zoomAt(viewport, step, point);
+    }
     return zoomAt(viewport, MAX_ZOOM, point);
   }
   for (let index = ZOOM_STEPS.length - 1; index >= 0; index--) {
-    const step = ZOOM_STEPS[index]!;
+    const step = zoomStep(ZOOM_STEPS[index]!, viewport.devicePixelRatio);
     if (step < zoom) return zoomAt(viewport, step, point);
   }
   return zoomAt(viewport, MIN_ZOOM, point);
 }
 
 /**
- * The zoom a fit settles on for a raw fitting scale. At or above 1× it is the largest whole number,
- * so every pixel is an exact square. Below 1× pixels are already area-filtered, so it keeps the
- * largest whole percentage that fits instead of dropping to a power-of-two step.
+ * The largest settled fit that fits. From 1× to below 8× on a fractional display scale, prefer
+ * whole device-pixel cells. A 1× floor bridges the interval before the first such cell fits, so
+ * growing the frame never makes the image smaller. Integer display scales retain whole CSS zooms.
+ * Below 1× pixels are area-filtered, so keep the largest whole percentage that fits.
  */
-export function fitZoom(rawZoom: number): number {
+export function fitZoom(rawZoom: number, devicePixelRatio = 1): number {
+  if (rawZoom >= 1 && rawZoom < 8 && !Number.isInteger(devicePixelRatio))
+    return clampZoom(Math.max(1, Math.floor(rawZoom * devicePixelRatio + 1e-9) / devicePixelRatio));
   if (rawZoom >= 1) return clampZoom(Math.floor(rawZoom));
   return clampZoom(Math.floor(rawZoom * 100 + 1e-9) / 100);
 }
@@ -119,7 +135,10 @@ export function fitViewport(
       : insets;
   const availableWidth = Math.max(1, viewport.cssWidth - edges.left - edges.right);
   const availableHeight = Math.max(1, viewport.cssHeight - edges.top - edges.bottom);
-  const zoom = fitZoom(Math.min(availableWidth / documentWidth, availableHeight / documentHeight));
+  const zoom = fitZoom(
+    Math.min(availableWidth / documentWidth, availableHeight / documentHeight),
+    viewport.devicePixelRatio,
+  );
   return {
     ...viewport,
     zoom,
