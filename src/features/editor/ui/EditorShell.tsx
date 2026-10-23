@@ -314,8 +314,9 @@ function DesktopChrome() {
   const actions = useRef<HTMLElement>(null);
   const rail = useRef<HTMLElement>(null);
   const pill = useRef<HTMLDivElement>(null);
+  const colors = useRef<HTMLElement>(null);
   useRoomBeside(doc, [options, actions]);
-  useDesktopLayout(session, doc, options, rail, pill);
+  useDesktopLayout(session, doc, options, rail, pill, colors);
 
   return (
     <>
@@ -349,7 +350,7 @@ function DesktopChrome() {
         <ZoomControls />
       </Island>
       <DesktopTools fade={fade} rail={rail} />
-      <DesktopColors fade={fade} />
+      <DesktopColors fade={fade} panel={colors} />
       <StatusPill ref={pill} />
     </>
   );
@@ -495,12 +496,11 @@ function DesktopTools({ fade, rail }: { fade: Fade; rail: RefObject<HTMLElement 
   );
 }
 
-function DesktopColors({ fade }: { fade: Fade }) {
+function DesktopColors({ fade, panel }: { fade: Fade; panel: RefObject<HTMLElement | null> }) {
   const session = useEditor();
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
   const recent = useEditorState((state) => state.recent);
-  const panel = useRef<HTMLElement>(null);
   useFitClearance(session, panel);
   return (
     <Island
@@ -606,6 +606,7 @@ function useDesktopLayout(
   options: RefObject<HTMLElement | null>,
   rail: RefObject<HTMLElement | null>,
   pill: RefObject<HTMLElement | null>,
+  colors: RefObject<HTMLElement | null>,
 ) {
   useLayoutEffect(() => {
     const toolbar = options.current;
@@ -645,6 +646,14 @@ function useDesktopLayout(
             ? `${tools.offsetLeft + tools.offsetWidth + PILL_GAP}px`
             : '';
       }
+      // Docked options under the Colors panel cap it one gap above them, and it scrolls inside.
+      // Otherwise its CSS max-height keeps it above the bottom edge.
+      const panel = colors.current;
+      if (panel) {
+        const left = toolbar.offsetLeft - toolbar.offsetWidth / 2;
+        const under = docked && left + toolbar.offsetWidth > panel.offsetLeft;
+        panel.style.maxHeight = under ? `${toolbar.offsetTop - PILL_GAP - panel.offsetTop}px` : '';
+      }
       const clear = docked ? Math.min(toolbar.offsetTop, pillTop) : height;
       const bottom = Math.max(DESKTOP_FRAME.bottom, height - clear + 12);
       session.setFrame(bottom === DESKTOP_FRAME.bottom ? null : { ...DESKTOP_FRAME, bottom });
@@ -660,7 +669,7 @@ function useDesktopLayout(
       window.removeEventListener('resize', report);
       session.setFrame(null);
     };
-  }, [session, header, options, rail, pill]);
+  }, [session, header, options, rail, pill, colors]);
 }
 /** The gap between stacked islands, like the colors panel under the top row. */
 const PILL_GAP = 8;
@@ -969,10 +978,39 @@ const styles = stylex.create({
     right: pixelVars.safeRight,
     // Eight 44px swatch pitches on touch.
     width: { default: 244, [COARSE]: 370 },
+    // A very short window scrolls the panel rather than cutting off Recent.
+    maxHeight: `calc(100% - ${pixelVars.safeTop} - ${islandHeight} - ${spacingVars['--spacing-2']} - ${pixelVars.safeBottom})`,
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
     padding: spacingVars['--spacing-3'],
     flexDirection: 'column',
     alignItems: 'stretch',
     gap: spacingVars['--spacing-3'],
+    // While it scrolls, its padding fades the swatches out at the cut instead of slicing them.
+    // Both bands sit in the padding and cancel the panel's gap, so a panel with room looks the
+    // same. Forced colors drop gradient backgrounds on their own.
+    '::before': {
+      content: '""',
+      position: 'sticky',
+      top: `calc(-1 * ${spacingVars['--spacing-3']})`,
+      flexShrink: 0,
+      zIndex: 1,
+      height: spacingVars['--spacing-3'],
+      marginBlock: `calc(-1 * ${spacingVars['--spacing-3']})`,
+      backgroundImage: `linear-gradient(${colorVars['--color-background-surface']}, transparent)`,
+      pointerEvents: 'none',
+    },
+    '::after': {
+      content: '""',
+      position: 'sticky',
+      bottom: `calc(-1 * ${spacingVars['--spacing-3']})`,
+      flexShrink: 0,
+      zIndex: 1,
+      height: spacingVars['--spacing-3'],
+      marginBlock: `calc(-1 * ${spacingVars['--spacing-3']})`,
+      backgroundImage: `linear-gradient(transparent, ${colorVars['--color-background-surface']})`,
+      pointerEvents: 'none',
+    },
   },
   /*
    * Upright, the tool options sit above the tools and the well ends the tool row. On a slim phone

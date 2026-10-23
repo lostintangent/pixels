@@ -3,7 +3,7 @@ import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Eraser, PaintBucket, Pencil, Pipette, Slash, SquareDashed } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, Ref } from 'react';
 import { keepFocusOnPress } from '../../../shared/react/pressFocus';
 import type { ToolKind } from '../../tools';
@@ -78,7 +78,18 @@ export function ToolRail({
   shapesRef,
 }: ToolRailProps) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
+  const group = useRef<HTMLDivElement>(null);
   const items = railItems(shapeKind);
+  const selectedIndex = items.findIndex((info) => info.kind === tool);
+  // A rail squeezed past its smallest tools scrolls, so a tool chosen by key scrolls into view.
+  useLayoutEffect(() => {
+    const scroller = group.current;
+    const button = buttons.current[selectedIndex];
+    if (!scroller || !button || scroller.scrollHeight <= scroller.clientHeight) return;
+    const top = button.offsetTop - scroller.offsetTop;
+    const bottom = top + button.offsetHeight - scroller.clientHeight;
+    scroller.scrollTop = Math.min(Math.max(scroller.scrollTop, bottom + 3), top - 3);
+  }, [selectedIndex]);
   const onKeyDown = (event: KeyboardEvent) => {
     const index = items.findIndex((info) => info.kind === tool);
     const step =
@@ -102,6 +113,7 @@ export function ToolRail({
   };
   return (
     <div
+      ref={group}
       role="radiogroup"
       aria-label="Tools"
       aria-orientation={orientation}
@@ -170,10 +182,21 @@ const SLIM = '@media (max-width: 387.98px) and (orientation: portrait)';
 
 const styles = stylex.create({
   rail: { display: 'flex' },
-  // On a short desktop window the rail's tools give up height, down to a 26px target, so the whole
-  // rail and its color well stay between the header and the bottom edge.
-  vertical: { flexDirection: 'column', gap: 2, minHeight: 0, flexShrink: 1 },
-  railTool: { flexShrink: 1, minHeight: 26 },
+  // On a short desktop window the rail's tools give up height, down to 20px around their 18px
+  // icons, so the whole rail and its color well stay between the header and the bottom edge. Only
+  // below about 290px do the tools scroll inside the rail. The inset keeps focus rings unclipped.
+  vertical: {
+    flexDirection: 'column',
+    gap: 2,
+    minHeight: 0,
+    flexShrink: 1,
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    scrollbarWidth: 'none',
+    padding: 3,
+    margin: -3,
+  },
+  railTool: { flexShrink: 1, minHeight: 20 },
   // The phone dock holds seven tools and the color well. Targets abut with no gap, so the whole
   // row is tappable. On a slim phone the well moves up and the tools spread across the row,
   // giving up a little width only below 344px.
