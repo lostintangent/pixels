@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { getPixel, type PixelPoint, type PixelRect } from '../../document';
 import { alpha, formatColor, toCss } from '../../palette';
 import type { SaveStatus } from '../core/state';
@@ -12,10 +12,12 @@ import { pixelVars } from './tokens.stylex';
  * directly instead of re-rendering, into fixed-size contained slots: a per-move text change lays
  * out only its own slot and never dirties the layout the canvas reads its pointer geometry from.
  */
-export function StatusPill() {
+export function StatusPill({ ref }: { ref?: RefObject<HTMLDivElement | null> }) {
   const session = useEditor();
   const side = useEditorState((state) => Math.max(state.document.width, state.document.height));
-  const root = useRef<HTMLDivElement>(null);
+  const own = useRef<HTMLDivElement>(null);
+  // The chrome lifts the pill clear of islands docked beneath it.
+  const root = ref ?? own;
   const position = useRef<HTMLElement>(null);
   const chip = useRef<HTMLSpanElement>(null);
   const hex = useRef<HTMLSpanElement>(null);

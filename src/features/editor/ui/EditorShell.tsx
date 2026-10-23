@@ -312,8 +312,9 @@ function DesktopChrome() {
   const doc = useRef<HTMLElement>(null);
   const options = useRef<HTMLElement>(null);
   const actions = useRef<HTMLElement>(null);
+  const pill = useRef<HTMLDivElement>(null);
   useRoomBeside(doc, [options, actions]);
-  useDesktopFitFrame(session, options);
+  useDesktopFitFrame(session, options, pill);
 
   return (
     <>
@@ -348,7 +349,7 @@ function DesktopChrome() {
       </Island>
       <DesktopTools fade={fade} />
       <DesktopColors fade={fade} />
-      <StatusPill />
+      <StatusPill ref={pill} />
     </>
   );
 }
@@ -593,8 +594,12 @@ function PhoneChrome() {
 /** A fit keeps this far from the top row and the dock. */
 const FRAME_GAP = 16;
 
-/** Keeps a fitted document above Tool options when the tablet layout docks it at the bottom. */
-function useDesktopFitFrame(session: EditorSession, options: RefObject<HTMLElement | null>) {
+/** Keeps a fitted document above Tool options and the status pill when the tablet layout docks them at the bottom. */
+function useDesktopFitFrame(
+  session: EditorSession,
+  options: RefObject<HTMLElement | null>,
+  pill: RefObject<HTMLElement | null>,
+) {
   useLayoutEffect(() => {
     const toolbar = options.current;
     const editor = toolbar?.offsetParent as HTMLElement | null;
@@ -602,10 +607,16 @@ function useDesktopFitFrame(session: EditorSession, options: RefObject<HTMLEleme
     const report = () => {
       const height = editor.clientHeight;
       if (!height) return;
-      const bottom =
-        toolbar.offsetTop > height / 2
-          ? Math.max(DESKTOP_FRAME.bottom, height - toolbar.offsetTop + 12)
-          : DESKTOP_FRAME.bottom;
+      const docked = toolbar.offsetTop > height / 2;
+      const above = height - toolbar.offsetTop;
+      // Docked at the bottom, the options would run under the pill on any narrow window, so the
+      // pill rides one row up for as long as they're docked. It moves only when the options do,
+      // never with the pointer or with how wide the options or coordinates grow. The fit frame
+      // then clears the pill, as the undocked frame already does.
+      const lift = docked ? above + PILL_GAP : 0;
+      if (pill.current) pill.current.style.bottom = docked ? `${lift}px` : '';
+      const top = docked ? lift + (pill.current?.offsetHeight ?? 0) : 0;
+      const bottom = docked ? Math.max(DESKTOP_FRAME.bottom, top + 12) : DESKTOP_FRAME.bottom;
       session.setFrame(bottom === DESKTOP_FRAME.bottom ? null : { ...DESKTOP_FRAME, bottom });
     };
     report();
@@ -618,8 +629,10 @@ function useDesktopFitFrame(session: EditorSession, options: RefObject<HTMLEleme
       window.removeEventListener('resize', report);
       session.setFrame(null);
     };
-  }, [session, options]);
+  }, [session, options, pill]);
 }
+/** The gap between stacked islands, like the colors panel under the top row. */
+const PILL_GAP = 8;
 // Sideways, past the chrome's edge, which already clears the safe area: 16px from a plain edge.
 const SIDE_GAP = 4;
 
