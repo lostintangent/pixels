@@ -315,7 +315,7 @@ function DesktopChrome() {
   const rail = useRef<HTMLElement>(null);
   const pill = useRef<HTMLDivElement>(null);
   useRoomBeside(doc, [options, actions]);
-  useDesktopFitFrame(session, options, rail, pill);
+  useDesktopLayout(session, doc, options, rail, pill);
 
   return (
     <>
@@ -595,11 +595,14 @@ function PhoneChrome() {
 const FRAME_GAP = 16;
 
 /**
- * Keeps a fitted document above Tool options and the status pill when the tablet layout docks
- * them at the bottom, and keeps the lifted pill clear of the tool rail.
+ * Stacks the desktop chrome that shares the left and bottom edges. The rail stays centered unless
+ * that would run it under the document header, and the status pill rides above Tool options when
+ * the tablet layout docks them at the bottom, or moves out beside the rail when a short window
+ * brings the rail down to its row. The fitted document clears whichever of them is lowest.
  */
-function useDesktopFitFrame(
+function useDesktopLayout(
   session: EditorSession,
+  header: RefObject<HTMLElement | null>,
   options: RefObject<HTMLElement | null>,
   rail: RefObject<HTMLElement | null>,
   pill: RefObject<HTMLElement | null>,
@@ -612,25 +615,38 @@ function useDesktopFitFrame(
       const height = editor.clientHeight;
       if (!height) return;
       const docked = toolbar.offsetTop > height / 2;
-      const above = height - toolbar.offsetTop;
-      // Docked at the bottom, the options would run under the pill on any narrow window, so the
-      // pill rides one row up for as long as they're docked. It moves only when the options do,
-      // never with the pointer or with how wide the options or coordinates grow. The fit frame
-      // then clears the pill, as the undocked frame already does.
-      const lift = docked ? above + PILL_GAP : 0;
-      const top = docked ? lift + (pill.current?.offsetHeight ?? 0) : 0;
-      // On a short window the centered rail reaches down into that row, so the pill moves out
-      // beside the rail instead of covering the color well.
+
+      // On a short window the centered rail would slide up under the header, so it pins one gap
+      // below it. Its tools give up height before it would run past the bottom edge.
       const tools = rail.current;
-      const railBottom = tools ? tools.offsetTop + tools.offsetHeight / 2 : 0;
-      const beside = docked && tools && railBottom + PILL_GAP > height - top;
-      if (pill.current) {
-        pill.current.style.bottom = docked ? `${lift}px` : '';
-        pill.current.style.left = beside
-          ? `${tools.offsetLeft + tools.offsetWidth + PILL_GAP}px`
-          : '';
+      let railBottom = 0;
+      if (tools) {
+        const head = header.current;
+        const floor = head ? head.offsetTop + head.offsetHeight + PILL_GAP : 0;
+        const centered = (height - tools.offsetHeight) / 2;
+        // The rail's top is its center: it translates up by half its height.
+        tools.style.top = centered < floor ? `${floor + tools.offsetHeight / 2}px` : '';
+        railBottom = Math.max(centered, floor) + tools.offsetHeight;
       }
-      const bottom = docked ? Math.max(DESKTOP_FRAME.bottom, top + 12) : DESKTOP_FRAME.bottom;
+
+      // Docked at the bottom, the options would run under the pill on any narrow window, so the
+      // pill rides one row up for as long as they're docked. It moves only when the options or
+      // the rail do, never with the pointer or with how wide the options or coordinates grow.
+      const status = pill.current;
+      let pillTop = height;
+      if (status) {
+        status.style.bottom = '';
+        const rest = height - status.offsetTop - status.offsetHeight;
+        const bottom = docked ? height - toolbar.offsetTop + PILL_GAP : rest;
+        pillTop = height - bottom - status.offsetHeight;
+        status.style.bottom = docked ? `${bottom}px` : '';
+        status.style.left =
+          tools && railBottom + PILL_GAP > pillTop
+            ? `${tools.offsetLeft + tools.offsetWidth + PILL_GAP}px`
+            : '';
+      }
+      const clear = docked ? Math.min(toolbar.offsetTop, pillTop) : height;
+      const bottom = Math.max(DESKTOP_FRAME.bottom, height - clear + 12);
       session.setFrame(bottom === DESKTOP_FRAME.bottom ? null : { ...DESKTOP_FRAME, bottom });
     };
     report();
@@ -644,7 +660,7 @@ function useDesktopFitFrame(
       window.removeEventListener('resize', report);
       session.setFrame(null);
     };
-  }, [session, options, rail, pill]);
+  }, [session, header, options, rail, pill]);
 }
 /** The gap between stacked islands, like the colors panel under the top row. */
 const PILL_GAP = 8;
@@ -940,7 +956,14 @@ const styles = stylex.create({
     paddingInline: spacingVars['--spacing-3'],
   },
   actions: { top: pixelVars.safeTop, right: pixelVars.safeRight },
-  rail: { left: pixelVars.safeLeft, top: '50%', transform: 'translateY(-50%)' },
+  rail: {
+    left: pixelVars.safeLeft,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    // Between the header and the bottom edge. useDesktopLayout pins it below the header when
+    // centering would collide, and its tools shrink to fit what's left.
+    maxHeight: `calc(100% - ${pixelVars.safeTop} - ${islandHeight} - ${spacingVars['--spacing-2']} - ${pixelVars.safeBottom})`,
+  },
   panel: {
     top: `calc(${pixelVars.safeTop} + ${islandHeight} + ${spacingVars['--spacing-2']})`,
     right: pixelVars.safeRight,

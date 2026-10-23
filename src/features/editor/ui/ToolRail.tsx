@@ -132,7 +132,7 @@ export function ToolRail({
             onClick={() => (shapes ? onShapesPress() : onSelect(info.kind))}
             {...stylex.props(
               styles.tool,
-              orientation === 'horizontal' && styles.dockTool,
+              orientation === 'horizontal' ? styles.dockTool : styles.railTool,
               selected && styles.selected,
             )}
           >
@@ -170,7 +170,10 @@ const SLIM = '@media (max-width: 387.98px) and (orientation: portrait)';
 
 const styles = stylex.create({
   rail: { display: 'flex' },
-  vertical: { flexDirection: 'column', gap: 2 },
+  // On a short desktop window the rail's tools give up height, down to a 26px target, so the whole
+  // rail and its color well stay between the header and the bottom edge.
+  vertical: { flexDirection: 'column', gap: 2, minHeight: 0, flexShrink: 1 },
+  railTool: { flexShrink: 1, minHeight: 26 },
   // The phone dock holds seven tools and the color well. Targets abut with no gap, so the whole
   // row is tappable. On a slim phone the well moves up and the tools spread across the row,
   // giving up a little width only below 344px.
