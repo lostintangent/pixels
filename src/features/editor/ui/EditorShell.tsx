@@ -312,9 +312,10 @@ function DesktopChrome() {
   const doc = useRef<HTMLElement>(null);
   const options = useRef<HTMLElement>(null);
   const actions = useRef<HTMLElement>(null);
+  const rail = useRef<HTMLElement>(null);
   const pill = useRef<HTMLDivElement>(null);
   useRoomBeside(doc, [options, actions]);
-  useDesktopFitFrame(session, options, pill);
+  useDesktopFitFrame(session, options, rail, pill);
 
   return (
     <>
@@ -347,7 +348,7 @@ function DesktopChrome() {
         <IslandDivider />
         <ZoomControls />
       </Island>
-      <DesktopTools fade={fade} />
+      <DesktopTools fade={fade} rail={rail} />
       <DesktopColors fade={fade} />
       <StatusPill ref={pill} />
     </>
@@ -426,13 +427,12 @@ function useShapesMenu() {
   };
 }
 
-function DesktopTools({ fade }: { fade: Fade }) {
+function DesktopTools({ fade, rail }: { fade: Fade; rail: RefObject<HTMLElement | null> }) {
   const session = useEditor();
   const shapes = useShapesMenu();
   const primary = useEditorState((state) => state.primary);
   const secondary = useEditorState((state) => state.secondary);
   const [editing, setEditing] = useState<ColorSlot | null>(null);
-  const rail = useRef<HTMLElement>(null);
 
   return (
     <>
@@ -594,10 +594,14 @@ function PhoneChrome() {
 /** A fit keeps this far from the top row and the dock. */
 const FRAME_GAP = 16;
 
-/** Keeps a fitted document above Tool options and the status pill when the tablet layout docks them at the bottom. */
+/**
+ * Keeps a fitted document above Tool options and the status pill when the tablet layout docks
+ * them at the bottom, and keeps the lifted pill clear of the tool rail.
+ */
 function useDesktopFitFrame(
   session: EditorSession,
   options: RefObject<HTMLElement | null>,
+  rail: RefObject<HTMLElement | null>,
   pill: RefObject<HTMLElement | null>,
 ) {
   useLayoutEffect(() => {
@@ -614,8 +618,18 @@ function useDesktopFitFrame(
       // never with the pointer or with how wide the options or coordinates grow. The fit frame
       // then clears the pill, as the undocked frame already does.
       const lift = docked ? above + PILL_GAP : 0;
-      if (pill.current) pill.current.style.bottom = docked ? `${lift}px` : '';
       const top = docked ? lift + (pill.current?.offsetHeight ?? 0) : 0;
+      // On a short window the centered rail reaches down into that row, so the pill moves out
+      // beside the rail instead of covering the color well.
+      const tools = rail.current;
+      const railBottom = tools ? tools.offsetTop + tools.offsetHeight / 2 : 0;
+      const beside = docked && tools && railBottom + PILL_GAP > height - top;
+      if (pill.current) {
+        pill.current.style.bottom = docked ? `${lift}px` : '';
+        pill.current.style.left = beside
+          ? `${tools.offsetLeft + tools.offsetWidth + PILL_GAP}px`
+          : '';
+      }
       const bottom = docked ? Math.max(DESKTOP_FRAME.bottom, top + 12) : DESKTOP_FRAME.bottom;
       session.setFrame(bottom === DESKTOP_FRAME.bottom ? null : { ...DESKTOP_FRAME, bottom });
     };
@@ -623,13 +637,14 @@ function useDesktopFitFrame(
     const observer = new ResizeObserver(report);
     observer.observe(toolbar);
     observer.observe(editor);
+    if (rail.current) observer.observe(rail.current);
     window.addEventListener('resize', report);
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', report);
       session.setFrame(null);
     };
-  }, [session, options, pill]);
+  }, [session, options, rail, pill]);
 }
 /** The gap between stacked islands, like the colors panel under the top row. */
 const PILL_GAP = 8;
