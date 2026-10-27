@@ -696,7 +696,7 @@ export function createEditorSession({
           return;
         }
         case 'undo':
-        case 'redo':
+        case 'redo': {
           if (gesture) return;
           commitFloating();
           const change =
@@ -708,6 +708,7 @@ export function createEditorSession({
           }
           syncHistory();
           return;
+        }
         case 'zoom':
           zoomBy(command.direction);
           return;

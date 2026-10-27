@@ -234,10 +234,10 @@ describe('recovering from a worker that fails to load', () => {
       }
       this.real = new RealWorker(url, options);
       this.real.addEventListener('message', (event) => {
-        this.dispatchEvent(new MessageEvent('message', { data: (event as MessageEvent).data }));
+        this.dispatchEvent(new MessageEvent('message', { data: event.data }));
       });
       this.real.addEventListener('error', (event) => {
-        this.dispatchEvent(new ErrorEvent('error', { message: (event as ErrorEvent).message }));
+        this.dispatchEvent(new ErrorEvent('error', { message: event.message }));
       });
     }
     postMessage(data: unknown, transfer?: Transferable[]): void {

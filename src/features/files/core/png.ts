@@ -215,7 +215,7 @@ async function deflateZlib(rows: Generator<Uint8Array>): Promise<Uint8Array> {
   let batchLength = 0;
   for (const row of rows) {
     if (batchLength + row.length > batch.length) {
-      await writer.write(batch.subarray(0, batchLength) as unknown as BufferSource);
+      await writer.write(batch.subarray(0, batchLength));
       batchLength = 0;
       if (row.length > batch.length) batch = new Uint8Array(row.length); // grow for an unusually wide row
     }
@@ -223,7 +223,7 @@ async function deflateZlib(rows: Generator<Uint8Array>): Promise<Uint8Array> {
     batchLength += row.length;
   }
   if (batchLength > 0) {
-    await writer.write(batch.subarray(0, batchLength) as unknown as BufferSource);
+    await writer.write(batch.subarray(0, batchLength));
   }
   await writer.close();
   await pump;

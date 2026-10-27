@@ -106,8 +106,7 @@ test('fully transparent hidden RGB does not divide an imported icon fill', () =>
   for (let y = 0; y < 48; y++) {
     for (let x = 0; x < 10; x++) expect(document.pixels[y * 48 + x]).toBe(BLUE);
     expect(document.pixels[y * 48 + 10]).toBe(wall);
-    for (let x = 11; x < 48; x++)
-      expect(document.pixels[y * 48 + x]).toBe(hidden[(x * 7 + y) % 3]!);
+    for (let x = 11; x < 48; x++) expect(document.pixels[y * 48 + x]).toBe(hidden[(x * 7 + y) % 3]);
   }
   history.undo(document);
   expect(document.rgbaBytes).toEqual(before);

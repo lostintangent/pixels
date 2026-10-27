@@ -42,7 +42,6 @@ export function createBitmapDocument(
   // copying a second full-size buffer on the browser's main thread.
   const pixels = initialPixels ?? new Uint32Array(width * height);
   const listeners = new Set<(rect: PixelRect, revision: number) => void>();
-  let document: BitmapDocument;
   const events = {
     subscribe(listener: (rect: PixelRect, revision: number) => void) {
       listeners.add(listener);
@@ -55,7 +54,7 @@ export function createBitmapDocument(
       for (const listener of listeners) listener(rect, document.revision);
     },
   };
-  document = {
+  const document: BitmapDocument = {
     id,
     name,
     colorSpace,

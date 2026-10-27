@@ -389,10 +389,12 @@ try {
       );
       let failed = false;
       let injected = false;
-      for (const profile of (onlyProfile ? [onlyProfile] : ['desktop', 'phone']) as Profile[]) {
-        for (const caseName of (onlyCase
-          ? [onlyCase]
-          : ['photo-2400', 'photo-3456', 'photo-4096', 'p3', 'shapes']) as CaseName[]) {
+      const profiles: Profile[] = onlyProfile ? [onlyProfile] : ['desktop', 'phone'];
+      const cases: CaseName[] = onlyCase
+        ? [onlyCase]
+        : ['photo-2400', 'photo-3456', 'photo-4096', 'p3', 'shapes'];
+      for (const profile of profiles) {
+        for (const caseName of cases) {
           const runs = caseName === 'shapes' ? 1 : repeat;
           const renderSamples: number[] = [];
           for (let run = 1; run <= runs; run++) {

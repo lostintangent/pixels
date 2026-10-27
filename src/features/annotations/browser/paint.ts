@@ -144,7 +144,7 @@ export function flattenAnnotations(
     throw new RangeError('Annotation image size does not match');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d', { colorSpace }) as ShapeContext | null;
+  const ctx = canvas.getContext('2d', { colorSpace });
   if (!ctx) throw new Error('Canvas 2D is unavailable for annotation export');
   for (const shape of shapes) paintAnnotation(ctx, shape, colorSpace);
   const layer = ctx.getImageData(0, 0, width, height, { colorSpace }).data;

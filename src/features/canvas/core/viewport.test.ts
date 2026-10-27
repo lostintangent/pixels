@@ -127,8 +127,8 @@ test.each([
     );
   }
   const offLadder = { ...viewport, devicePixelRatio: dpr, zoom: 2.6 };
-  expect(stepZoom(offLadder, -1, anchor).zoom).toBeCloseTo(expected[1]!, 12);
-  expect(stepZoom(offLadder, 1, anchor).zoom).toBeCloseTo(expected[2]!, 12);
+  expect(stepZoom(offLadder, -1, anchor).zoom).toBeCloseTo(expected[1], 12);
+  expect(stepZoom(offLadder, 1, anchor).zoom).toBeCloseTo(expected[2], 12);
   expect(zoomStep(8, dpr)).toBe(8);
   expect(fitZoom(0.95, dpr)).toBe(0.95);
   const fit = fitZoom(5.7, dpr);

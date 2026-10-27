@@ -539,9 +539,9 @@ async function thumbnailByteLength(page: Page, docId: string): Promise<number> {
         const tx = db.transaction('documents', 'readonly');
         const getRequest = tx.objectStore('documents').get(id);
         getRequest.onsuccess = () => resolve(getRequest.result?.thumbnail?.byteLength ?? 0);
-        getRequest.onerror = () => reject(getRequest.error as unknown);
+        getRequest.onerror = () => reject(getRequest.error);
       };
-      request.onerror = () => reject(request.error as unknown);
+      request.onerror = () => reject(request.error);
     });
   }, docId);
 }

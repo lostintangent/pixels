@@ -16,5 +16,5 @@
     "noUnusedParameters": true,
     "skipLibCheck": true
   },
-  "include": ["src", "eslint.config.mjs"]
+  "include": ["src"]
 }

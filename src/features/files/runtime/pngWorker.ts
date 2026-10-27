@@ -123,7 +123,7 @@ self.addEventListener(
         (bytes) => {
           // `.slice()` guarantees an exactly-sized, standalone buffer, safe to transfer regardless
           // of whether `bytes` happens to be a view over a larger backing buffer.
-          const owned = bytes.slice().buffer as ArrayBuffer;
+          const owned = bytes.slice().buffer;
           const response: EncodeSuccess = { kind: 'encode', id, bytes: owned };
           (self as unknown as Worker).postMessage(response, [owned]);
         },
@@ -154,7 +154,7 @@ self.addEventListener(
       const { id, bytes, width, height } = request;
       void convertUnknownIccPngToDisplayP3(new Uint8Array(bytes), width, height).then(
         (pixels) => {
-          const owned = pixels ? (pixels.slice().buffer as ArrayBuffer) : null;
+          const owned = pixels ? pixels.slice().buffer : null;
           const response: ConvertUnknownIccSuccess = {
             kind: 'convertUnknownIcc',
             id,
