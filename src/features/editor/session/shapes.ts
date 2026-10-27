@@ -35,7 +35,7 @@ import type { ShapeKind } from '../core/tools';
  * Shape interaction loads on demand, so an editor that never touches markup keeps the gesture and
  * handle math off its first load. The session loads it before the first press can need it.
  */
-export interface ShapeHost {
+interface ShapeHost {
   document(): BitmapDocument;
   readonly history: DocumentHistory;
   zoom(): number;
@@ -49,7 +49,7 @@ export interface ShapeHost {
   committed(): void;
 }
 
-export interface ShapePress {
+interface ShapePress {
   /** The shape a press on empty canvas draws, or null when it should fall through. */
   draw: ShapeKind | null;
   style: ShapeStyle;

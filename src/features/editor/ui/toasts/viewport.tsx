@@ -2,7 +2,7 @@ import { ToastViewport, useToast } from '@astryxdesign/core/Toast';
 import type { ShowToastFn, ToastViewportProps } from '@astryxdesign/core/Toast';
 import { useEffect } from 'react';
 
-export interface ToastLayerProps {
+interface ToastLayerProps {
   inset: ToastViewportProps['inset'];
   attach: (show: ShowToastFn) => () => void;
 }

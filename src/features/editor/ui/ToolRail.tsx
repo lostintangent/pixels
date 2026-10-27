@@ -21,7 +21,7 @@ const ICONS: Record<ToolKind, LucideIcon> = {
   select: SquareDashed,
 };
 
-export interface ToolRailProps {
+interface ToolRailProps {
   tool: EditorTool;
   /** Arrow keys arm the Shapes item with `'shapes'` like any other tool. */
   onSelect: (tool: EditorTool) => void;

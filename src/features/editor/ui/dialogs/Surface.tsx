@@ -20,7 +20,7 @@ import {
 import type { Size } from '../../core/dimensions';
 import type { Layout } from '../../session/session';
 
-export interface SurfaceProps {
+interface SurfaceProps {
   layout: Layout;
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
@@ -205,7 +205,7 @@ export function Hint({ children }: { children: ReactNode }) {
   return <div {...stylex.props(styles.hint)}>{children}</div>;
 }
 
-export interface FooterProps {
+interface FooterProps {
   layout: Layout;
   note: ReactNode;
   action: string;

@@ -5,7 +5,7 @@ import { pixelVars } from './tokens.stylex';
 
 type IslandElement = 'div' | 'header' | 'nav' | 'aside';
 
-export interface IslandProps {
+interface IslandProps {
   as?: IslandElement;
   axis?: 'x' | 'y';
   role?: string;

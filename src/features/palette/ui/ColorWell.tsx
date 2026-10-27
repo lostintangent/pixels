@@ -9,7 +9,7 @@ import { PaletteColorSpace } from './colorSpace';
 import { preloadColorPicker } from './deferred';
 import type { SwatchSlot } from './Swatches';
 
-export interface ColorWellProps {
+interface ColorWellProps {
   primary: PackedColor;
   secondary: PackedColor;
   onEdit: (slot: SwatchSlot) => void;

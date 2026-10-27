@@ -9,7 +9,7 @@ import type { Layout } from '../session/session';
 import { SHAPE_ICONS } from './ShapeIcons';
 import { pixelVars } from './tokens.stylex';
 
-export interface ShapesPopoverProps {
+interface ShapesPopoverProps {
   open: boolean;
   layout: Layout;
   shapeKind: ShapeKind;

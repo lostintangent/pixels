@@ -9,7 +9,7 @@ import { PaletteColorSpace } from './colorSpace';
 
 export type SwatchSlot = 'primary' | 'secondary';
 
-export interface SwatchesProps {
+interface SwatchesProps {
   label: string;
   colors: readonly PackedColor[];
   /** Empty cells pad the grid so recents keep their shape before they fill. */

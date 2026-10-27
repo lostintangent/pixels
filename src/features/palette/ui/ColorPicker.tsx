@@ -8,7 +8,7 @@ import { formatColor, fromHsv, readHexDraft, toCss, toHsvKeepingHue } from '../c
 import type { Hsv } from '../core/color';
 import { PaletteColorSpace } from './colorSpace';
 
-export interface ColorPickerProps {
+interface ColorPickerProps {
   color: PackedColor;
   onChange: (color: PackedColor) => void;
   /** Taller field for touch. */

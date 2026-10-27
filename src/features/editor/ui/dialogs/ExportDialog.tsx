@@ -84,7 +84,7 @@ function fitPreview(
   };
 }
 
-export interface ExportDialogProps {
+interface ExportDialogProps {
   layout: Layout;
   onExport: (fileName: string, scale: number) => void;
 }

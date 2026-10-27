@@ -7,7 +7,7 @@ import { ColorPickerPopover, preloadColorPicker } from './deferred';
 import { Swatches } from './Swatches';
 import type { SwatchSlot } from './Swatches';
 
-export interface ColorPanelProps {
+interface ColorPanelProps {
   palette: readonly PackedColor[];
   recent: readonly PackedColor[];
   recentSlots: number;
