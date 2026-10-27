@@ -46,7 +46,7 @@ export interface GestureState {
   readonly ignored: ReadonlySet<number>;
 }
 
-export interface GestureStep {
+interface GestureStep {
   state: GestureState;
   commands: readonly GestureCommand[];
 }
@@ -56,7 +56,7 @@ export const STRAY_MS = 250;
 /** Every finger of a tap lands and lifts within this window. */
 export const TAP_MS = 300;
 /** Movement in CSS pixels that turns a tap into a pinch. */
-export const TAP_SLOP = 10;
+const TAP_SLOP = 10;
 
 type Mode = Idle | Draw | Pan | Pinch;
 

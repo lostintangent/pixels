@@ -1,7 +1,7 @@
 import type { PixelPoint } from '../../document';
 import type { Annotation, AnnotationHandle, AnnotationHandleId } from './contracts';
 
-export interface RectangleGeometry {
+interface RectangleGeometry {
   x: number;
   y: number;
   width: number;

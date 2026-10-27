@@ -22,7 +22,7 @@ export interface WheelInput {
   time: number;
 }
 
-export type WheelIntent =
+type WheelIntent =
   | { kind: 'pan'; dx: number; dy: number }
   | { kind: 'zoom'; factor: number }
   | { kind: 'step'; direction: -1 | 1 }
@@ -39,7 +39,7 @@ export const initialWheelState: WheelState = { pending: 0, lastStepAt: -Infinity
 /** A pause this long makes the next wheel click step at once. */
 export const WHEEL_STEP_MS = 150;
 /** Gathered delta that makes one step during a continuous spin. */
-export const WHEEL_STEP_DELTA = 100;
+const WHEEL_STEP_DELTA = 100;
 const LINE_PX = 16;
 const PAGE_PX = 800;
 
