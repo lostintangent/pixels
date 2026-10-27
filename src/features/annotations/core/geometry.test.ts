@@ -12,7 +12,8 @@ import {
   targetsOf,
   verticalExtentOf,
 } from './geometry';
-import { annotationsFor, createAnnotationSet, isValidAnnotation } from './set';
+import { annotationsFor, createAnnotationSet } from './set';
+import { isValidAnnotation } from './validate';
 import { hitAnnotationSet } from './hit';
 import { findAnnotationsFor, watchAnnotationSet } from './registry';
 import { createBitmapDocument } from '../../document';

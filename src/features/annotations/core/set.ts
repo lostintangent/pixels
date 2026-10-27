@@ -3,8 +3,6 @@ import type { Annotation, AnnotationChange, AnnotationSet } from './contracts';
 import { findAnnotationsFor, registerAnnotationSet } from './registry';
 import { isValidAnnotation } from './validate';
 
-export { isValidAnnotation } from './validate';
-
 function copy(shape: Annotation): Annotation {
   return { ...shape, start: { ...shape.start }, end: { ...shape.end } };
 }
