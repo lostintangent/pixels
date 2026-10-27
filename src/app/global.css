@@ -28,6 +28,17 @@ body,
 }
 
 /*
+ * Keycaps and unselected segments draw secondary text on a 10% neutral fill. In dark mode that
+ * is #9e9e9e on #3c3c3c, 4.11:1, under AA. #b3b3b3 is 5.26:1 there and still 4.5:1 under the
+ * hover overlay. Light mode resolves to the same token, forced colors repaint text anyway, and
+ * the selected and disabled segments keep their own colors.
+ */
+.astryx-kbd > kbd,
+.astryx-segmented-control-item[aria-checked='false']:not(:disabled, [aria-disabled='true']) {
+  color: light-dark(var(--color-text-secondary), #b3b3b3);
+}
+
+/*
  * Forced colors repaint the slider's div track and thumb as Canvas, so the brush size vanishes.
  * The same theme classes carry system colors here.
  */
