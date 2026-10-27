@@ -33,7 +33,7 @@ export interface ToolRailProps {
   /** A press on the Shapes item, which arms it and toggles the popover. */
   onShapesPress: () => void;
   /** Anchors the Shapes popover. */
-  shapesRef: RefObject<HTMLButtonElement | null>;
+  anchor: RefObject<HTMLButtonElement | null>;
 }
 
 interface RailItem {
@@ -75,7 +75,7 @@ export function ToolRail({
   hasTooltips,
   shapeKind,
   onShapesPress,
-  shapesRef,
+  anchor,
 }: ToolRailProps) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const group = useRef<HTMLDivElement>(null);
@@ -131,7 +131,7 @@ export function ToolRail({
             key={info.kind}
             ref={(node) => {
               buttons.current[index] = node;
-              if (shapes) shapesRef.current = node;
+              if (shapes) anchor.current = node;
             }}
             type="button"
             role="radio"

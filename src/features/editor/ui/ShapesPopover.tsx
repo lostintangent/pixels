@@ -12,7 +12,7 @@ import { pixelVars } from './tokens.stylex';
 export interface ShapesPopoverProps {
   open: boolean;
   layout: Layout;
-  kind: ShapeKind;
+  shapeKind: ShapeKind;
   /** The rail's Shapes item. Desktop opens beside it, phone centers above it. */
   anchor: RefObject<HTMLElement | null>;
   /** The phone dock, which the popover clears by 8px. */
@@ -33,7 +33,7 @@ interface Placement {
 export function ShapesPopover({
   open,
   layout,
-  kind,
+  shapeKind,
   anchor,
   dock,
   onPick,
@@ -122,7 +122,7 @@ export function ShapesPopover({
     >
       {SHAPES.map((shape) => {
         const Icon = SHAPE_ICONS[shape.kind];
-        const checked = shape.kind === kind;
+        const checked = shape.kind === shapeKind;
         return (
           <button
             key={shape.kind}

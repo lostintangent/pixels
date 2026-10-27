@@ -122,7 +122,7 @@ const SIDEWAYS_QUERY = '(orientation: landscape) and (min-width: 600px)';
 export function EditorShell() {
   const { document, isNew } = documentRoute.useLoaderData();
   const { documentStore } = documentRoute.useRouteContext();
-  const layout = useLayout();
+  const layout: Layout = useMediaQuery(PHONE_QUERY) ? 'phone' : 'desktop';
   const sideways = useMediaQuery(SIDEWAYS_QUERY);
   // Kept current while editing, since the next document mounts before the previous one unmounts.
   const [saved] = useState(readToolPreferences);
@@ -439,15 +439,7 @@ function DesktopTools({ fade, rail }: { fade: Fade; rail: RefObject<HTMLElement 
         xstyle={[styles.rail, fade.xstyle]}
         inert={fade.inert}
       >
-        <ToolRail
-          tool={shapes.tool}
-          onSelect={shapes.onSelect}
-          orientation="vertical"
-          hasTooltips
-          shapeKind={shapes.shapeKind}
-          onShapesPress={shapes.onShapesPress}
-          shapesRef={shapes.anchor}
-        />
+        <ToolRail {...shapes} orientation="vertical" hasTooltips />
         <IslandDivider axis="y" />
         <ColorWell
           primary={primary}
@@ -458,15 +450,7 @@ function DesktopTools({ fade, rail }: { fade: Fade; rail: RefObject<HTMLElement 
           hasTooltips
         />
       </Island>
-      <ShapesPopover
-        when={shapes.open}
-        open={shapes.open}
-        layout="desktop"
-        kind={shapes.shapeKind}
-        anchor={shapes.anchor}
-        onPick={shapes.onPick}
-        onClose={shapes.onClose}
-      />
+      <ShapesPopover {...shapes} when={shapes.open} layout="desktop" />
       <ColorPickerPopover
         anchorRef={rail}
         isOpen={editing !== null}
@@ -730,15 +714,7 @@ function PhoneDock({ fade, dock, onEdit }: PhoneDockProps) {
       </div>
       <span aria-hidden {...stylex.props(styles.dockRule)} />
       <div {...stylex.props(styles.dockTools)}>
-        <ToolRail
-          tool={shapes.tool}
-          onSelect={shapes.onSelect}
-          orientation="horizontal"
-          hasTooltips={false}
-          shapeKind={shapes.shapeKind}
-          onShapesPress={shapes.onShapesPress}
-          shapesRef={shapes.anchor}
-        />
+        <ToolRail {...shapes} orientation="horizontal" hasTooltips={false} />
       </div>
       <div {...stylex.props(styles.dockWell)}>
         <ColorWell
@@ -753,16 +729,7 @@ function PhoneDock({ fade, dock, onEdit }: PhoneDockProps) {
         />
       </div>
       {/* After the rail, so the anchor ref is attached before the popover measures it. */}
-      <ShapesPopover
-        when={shapes.open}
-        open={shapes.open}
-        layout="phone"
-        kind={shapes.shapeKind}
-        anchor={shapes.anchor}
-        dock={dock}
-        onPick={shapes.onPick}
-        onClose={shapes.onClose}
-      />
+      <ShapesPopover {...shapes} when={shapes.open} layout="phone" dock={dock} />
     </Island>
   );
 }
@@ -877,10 +844,6 @@ function useMediaQuery(query: string): boolean {
     () => matchMedia(query).matches,
     () => false,
   );
-}
-
-function useLayout(): Layout {
-  return useMediaQuery(PHONE_QUERY) ? 'phone' : 'desktop';
 }
 
 const COARSE = '@media (pointer: coarse)';
