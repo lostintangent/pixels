@@ -54,10 +54,12 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
 
       const command = resolveShortcut(
         {
-          key: chordKey(event),
+          key: event.key,
+          code: event.code,
           mod: IS_APPLE ? event.metaKey : event.ctrlKey,
           shift: event.shiftKey,
           alt: event.altKey,
+          altGraph: event.getModifierState('AltGraph'),
         },
         {
           hasSelection: session.state.state.selection !== null,
@@ -91,10 +93,4 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [session, run]);
-}
-
-/** Option rewrites letters on macOS (⌥N is a dead key, ⌥C is ç), so Alt chords read the physical key. */
-function chordKey(event: KeyboardEvent): string {
-  const letter = event.altKey ? /^Key([A-Z])$/.exec(event.code)?.[1] : undefined;
-  return letter ? letter.toLowerCase() : event.key;
 }

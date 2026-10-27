@@ -36,9 +36,13 @@ export type ShapeAction = 'delete' | 'deselect' | 'duplicate';
 /** A platform-neutral key press. `mod` is Command on Apple platforms and Control elsewhere. */
 export interface KeyPress {
   key: string;
+  /** Physical key for Option letter chords and non-Latin tool letters. */
+  code?: string;
   mod: boolean;
   shift: boolean;
   alt: boolean;
+  /** AltGr reports Control+Alt on some systems, but types one character. */
+  altGraph?: boolean;
 }
 
 export interface ShortcutContext {
@@ -59,13 +63,36 @@ const NUDGES: Record<string, readonly [number, number]> = {
 const TOOL_KEYS = new Map(TOOLS.map((tool) => [tool.key, tool.kind]));
 const SHAPE_KEYS = new Map(SHAPES.map((shape) => [shape.key, shape.kind]));
 
+function shortcutKey(press: KeyPress): string {
+  const physicalLetter = /^Key([A-Z])$/.exec(press.code ?? '')?.[1]?.toLowerCase();
+  // Option rewrites letters on macOS (⌥N is a dead key, ⌥C is ç). Command chords keep their
+  // physical letter. Unmodified non-Latin layouts also need a physical fallback for tool keys.
+  if (physicalLetter && press.alt && !press.altGraph) return physicalLetter;
+  if (
+    physicalLetter &&
+    !press.altGraph &&
+    /^\p{L}$/u.test(press.key) &&
+    !/^[a-z]$/i.test(press.key)
+  )
+    return physicalLetter;
+  return press.key.length === 1 ? press.key.toLowerCase() : press.key;
+}
+
+/** Shift or Option can be necessary to type the printed symbol on a different layout. */
+function typedNonLetter(press: KeyPress, key: string): boolean {
+  return press.code !== undefined && key.length === 1 && !/^[a-z]$/i.test(key);
+}
+
 /** Maps a key press to an editor command. Returns null for keys the editor leaves alone. */
 export function resolveShortcut(press: KeyPress, context: ShortcutContext): EditorCommand | null {
-  const key = press.key.length === 1 ? press.key.toLowerCase() : press.key;
+  const key = shortcutKey(press);
+  const mod = press.mod && !press.altGraph;
+  const alt = press.alt && !press.altGraph;
+  const layoutSymbol = typedNonLetter(press, key);
   const shape = context.hasShapeSelection === true;
 
-  if (press.mod) {
-    if (press.alt) {
+  if (mod) {
+    if (alt) {
       if (press.shift) return null;
       if (key === 'n') return { type: 'open', panel: 'new' };
       return key === 'c' ? { type: 'open', panel: 'resize' } : null;
@@ -75,7 +102,7 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
     if (key === 'e' && press.shift) return { type: 'open', panel: 'export' };
     // Shift types + on most layouts, so ⌘+ reads either way, as it does in browsers.
     if (key === '+') return { type: 'zoom', direction: 1 };
-    if (press.shift) return null;
+    if (press.shift && !layoutSymbol) return null;
     switch (key) {
       case 'o':
         return { type: 'open-file' };
@@ -106,7 +133,7 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
     }
   }
 
-  if (press.alt) return null;
+  if (alt && !layoutSymbol) return null;
   if (shape) {
     switch (key) {
       case 'Escape':
@@ -139,7 +166,7 @@ export function resolveShortcut(press: KeyPress, context: ShortcutContext): Edit
     const step = press.shift ? 10 : 1;
     return { type: 'nudge', dx: nudge[0] * step, dy: nudge[1] * step };
   }
-  if (press.shift) return null;
+  if (press.shift && !layoutSymbol) return null;
   const tool = TOOL_KEYS.get(key);
   if (tool) return { type: 'tool', tool };
   const kind = SHAPE_KEYS.get(key);
