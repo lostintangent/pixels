@@ -13,16 +13,9 @@ import type { ToastViewportProps } from '@astryxdesign/core/Toast';
 import { getRouteApi } from '@tanstack/react-router';
 import { useSelector } from '@tanstack/react-store';
 import { Grid3x3, Minus, Plus, Redo2, Undo2 } from 'lucide-react';
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { useMediaQuery } from '../../../shared/react/mediaQuery';
 import { CanvasSurface, MAX_ZOOM, MIN_ZOOM } from '../../canvas';
 import type { CanvasInput, CanvasPointerSample, OverlayState } from '../../canvas';
 import { containsPoint, type BitmapDocument } from '../../document';
@@ -827,22 +820,6 @@ function ZoomControls() {
         tooltip="Pixel grid  ·  ⌘'"
       />
     </>
-  );
-}
-
-function useMediaQuery(query: string): boolean {
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const list = matchMedia(query);
-      list.addEventListener('change', onChange);
-      return () => list.removeEventListener('change', onChange);
-    },
-    [query],
-  );
-  return useSyncExternalStore(
-    subscribe,
-    () => matchMedia(query).matches,
-    () => false,
   );
 }
 

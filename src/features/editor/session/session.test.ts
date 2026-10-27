@@ -370,7 +370,7 @@ test('a move committed as the editor leaves reaches its final autosave flush', a
   const document = createBitmapDocument('leave', 3, 1);
   document.pixels[0] = A;
   await saveDocument(document, store);
-  const autosave = attachAutosave(document, store, { debounceMs: 5000, maxWaitMs: 20000 });
+  const autosave = attachAutosave(document, store);
   const session = createEditorSession({ document, save: 'saved' });
   session.run({ type: 'tool', tool: 'select' });
   session.run({ type: 'selection', action: 'all' });

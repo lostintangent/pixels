@@ -1,6 +1,6 @@
 import { createStore } from '@tanstack/store';
 import { useSelector } from '@tanstack/react-store';
-import { useSyncExternalStore } from 'react';
+import { useMediaQuery } from '../../../shared/react/mediaQuery';
 
 /** An app preference, not document state: it follows the person, not the canvas. */
 export type Appearance = 'system' | 'light' | 'dark';
@@ -34,20 +34,10 @@ export function useAppearance(): Appearance {
   return useSelector(appearance, (mode) => mode);
 }
 
-function subscribeToSystemScheme(onChange: () => void): () => void {
-  const query = matchMedia(DARK_QUERY);
-  query.addEventListener('change', onChange);
-  return () => query.removeEventListener('change', onChange);
-}
-
 /** The scheme actually on screen, resolving `system` against the OS. */
 export function useColorScheme(): ColorScheme {
   const mode = useAppearance();
-  const systemDark = useSyncExternalStore(
-    subscribeToSystemScheme,
-    () => matchMedia(DARK_QUERY).matches,
-    () => false,
-  );
+  const systemDark = useMediaQuery(DARK_QUERY);
   if (mode === 'system') return systemDark ? 'dark' : 'light';
   return mode;
 }
