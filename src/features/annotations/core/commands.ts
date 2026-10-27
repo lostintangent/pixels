@@ -59,10 +59,9 @@ export function annotationHistoryState(set: AnnotationSet): HistoryExternalState
 export function beginAnnotationEdit(
   document: BitmapDocument,
   history: DocumentHistory,
-  label: string,
 ): AnnotationEdit {
   const set = annotationsFor(document);
-  const transaction = history.begin(label, document, annotationHistoryState(set));
+  const transaction = history.begin(document, annotationHistoryState(set));
   let closed = false;
   const ensureOpen = () => {
     if (closed) throw new Error('Annotation edit is closed');
@@ -94,7 +93,7 @@ export function deleteAnnotation(
 ): boolean {
   const set = annotationsFor(document);
   if (!set.get(id)) return false;
-  const transaction = history.begin('Delete shape', document, annotationHistoryState(set));
+  const transaction = history.begin(document, annotationHistoryState(set));
   set.remove(id);
   return transaction.commit();
 }
@@ -113,7 +112,7 @@ export function duplicateAnnotation(
   const source = set.get(id);
   if (!source) return null;
   const next = translateAnnotation({ ...source, id: createAnnotationId() }, offset);
-  const transaction = history.begin('Duplicate shape', document, annotationHistoryState(set));
+  const transaction = history.begin(document, annotationHistoryState(set));
   set.commit(next);
   transaction.commit();
   return next.id;
@@ -134,6 +133,6 @@ export function resizeAnnotatedDocument(
       .snapshot()
       .map((shape) => translateAnnotation(shape, offset)),
   );
-  history.pushReplacement('Resize canvas', document, next);
+  history.pushReplacement(document, next);
   return next;
 }

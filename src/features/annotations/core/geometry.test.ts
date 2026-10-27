@@ -200,12 +200,12 @@ test('one preview gesture commits once, while cancel leaves no history entry', (
   const document = createBitmapDocument('gesture', 64, 64);
   const set = annotationsFor(document);
   const history = createDocumentHistory();
-  const cancelled = beginAnnotationEdit(document, history, 'Rectangle');
+  const cancelled = beginAnnotationEdit(document, history);
   cancelled.preview(rectangle);
   expect(set.shapes).toEqual([]);
   cancelled.cancel();
   expect(history.canUndo).toBe(false);
-  const edit = beginAnnotationEdit(document, history, 'Rectangle');
+  const edit = beginAnnotationEdit(document, history);
   edit.preview(rectangle);
   edit.preview({ ...rectangle, end: { x: 35, y: 30 } });
   expect(edit.commit({ ...rectangle, end: { x: 35, y: 30 } })).toBe(true);

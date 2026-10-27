@@ -1,11 +1,4 @@
-import type {
-  BitmapDocument,
-  DocumentColorSpace,
-  PackedColor,
-  PixelPoint,
-  PixelRect,
-} from '../../document';
-import type { DocumentHistory } from '../../history';
+import type { DocumentColorSpace, PackedColor, PixelPoint, PixelRect } from '../../document';
 
 export interface Brush {
   color: PackedColor;
@@ -31,17 +24,10 @@ export interface StrokeSession {
   end(): boolean;
   cancel(): void;
 }
-export type BeginStroke = (
-  document: BitmapDocument,
-  brush: Brush,
-  history: DocumentHistory,
-) => StrokeSession;
-
 /** Previews rasterize only into overlay pixels, never the document. */
 export interface LinePreview {
   readonly overlay: Uint32Array;
   readonly bounds: PixelRect | null;
-  readonly dirty: PixelRect | null;
   update(to: PixelPoint, snap?: boolean): PixelRect | null;
   commit(): boolean;
   cancel(): void;

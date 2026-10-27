@@ -82,9 +82,6 @@ export function beginLinePreview(
     get bounds() {
       return dirty;
     },
-    get dirty() {
-      return dirty;
-    },
     update(to, snap = false) {
       if (closed) throw new Error('Line preview is closed');
       const previous = dirty;
@@ -110,7 +107,7 @@ export function beginLinePreview(
       if (closed) throw new Error('Line preview is closed');
       closed = true;
       if (!dirty) return false;
-      const transaction = history.begin('Line', document);
+      const transaction = history.begin(document);
       transaction.capture(dirty);
       const changed = draw(document.pixels, document.width, document.height, 0, 0);
       if (!changed) {

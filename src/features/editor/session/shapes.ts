@@ -113,12 +113,6 @@ interface Amend {
   timer: ReturnType<typeof setTimeout>;
 }
 
-function dragLabel(drag: ShapeDrag): string {
-  if (drag.mode === 'draw') return drag.kind === 'rectangle' ? 'Draw rectangle' : 'Draw arrow';
-  if (drag.mode === 'handle') return 'Resize shape';
-  return drag.id === drag.original.id ? 'Move shape' : 'Duplicate shape';
-}
-
 export function createShapeController(host: ShapeHost): ShapeController {
   let drag: Drag | null = null;
   let amend: Amend | null = null;
@@ -166,7 +160,7 @@ export function createShapeController(host: ShapeHost): ShapeController {
     if (!base) return;
     const shape = change(base);
     if (!amend) {
-      const edit = beginAnnotationEdit(host.document(), host.history, label);
+      const edit = beginAnnotationEdit(host.document(), host.history);
       amend = { id, label, edit, base, shape, timer: setTimeout(flush, AMEND_MS) };
     } else {
       clearTimeout(amend.timer);
@@ -223,7 +217,7 @@ export function createShapeController(host: ShapeHost): ShapeController {
       const current = drag;
       if (!current) return;
       if (!current.live && !leftDeadZone(current.press, point, host.zoom(), current.touch)) return;
-      current.edit ??= beginAnnotationEdit(host.document(), host.history, dragLabel(current.drag));
+      current.edit ??= beginAnnotationEdit(host.document(), host.history);
       current.live = liveShape(current.drag, point, modifiers, current.style, bounds());
       current.edit.preview(current.live);
       // An Option copy moves its handles onto the copy.

@@ -88,7 +88,7 @@ export function beginSelection(
       if (floating) throw new Error('Selection is already floating');
       const copied = copyRegion(document, rect);
       if (!copied) return null;
-      transaction = history.begin('Move selection', document);
+      transaction = history.begin(document);
       floating = copied;
       lifted = true;
       return copied;
@@ -112,7 +112,7 @@ export function beginSelection(
       };
       const clip: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
       if (!intersectRect(bounds, documentBounds, clip)) return null;
-      transaction = history.begin('Paste', document);
+      transaction = history.begin(document);
       floating = {
         bounds,
         sourceBounds: { ...bounds },

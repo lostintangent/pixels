@@ -1,6 +1,5 @@
 /** Pixel tools needed for the first pencil stroke and the always-available selection model. */
 export type {
-  BeginStroke,
   Brush,
   FillInput,
   FloatingSelection,

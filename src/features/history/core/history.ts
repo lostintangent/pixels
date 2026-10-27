@@ -13,7 +13,6 @@ interface TileSnapshot {
   saved: Uint32Array;
 }
 interface Entry {
-  label: string;
   bounds: PixelRect;
   tiles: TileSnapshot[];
   full: Uint32Array | null;
@@ -72,7 +71,7 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
     get maxBytes() {
       return maxBytes;
     },
-    begin(label, document, external): HistoryTransaction {
+    begin(document, external): HistoryTransaction {
       if (active) throw new Error('A history transaction is already active');
       active = true;
       const tiles = new Map<number, TileSnapshot>();
@@ -94,7 +93,6 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
         active = false;
       };
       const entry = (): Entry => ({
-        label,
         bounds: bounds ?? { x: 0, y: 0, width: 0, height: 0 },
         tiles: [...tiles.values()],
         full,
@@ -205,14 +203,13 @@ export function createDocumentHistory(maxBytes = DEFAULT_BUDGET): DocumentHistor
         },
       };
     },
-    pushReplacement(label, before, after) {
+    pushReplacement(before, after) {
       if (active) throw new Error('Cannot replace a document during a history transaction');
       if (before === after) return;
       for (const redo of future) usedBytes -= redo.bytes;
       future.length = 0;
       const bytes = Math.max(before.pixels.byteLength, after.pixels.byteLength);
       past.push({
-        label,
         bounds: { x: 0, y: 0, width: 0, height: 0 },
         tiles: [],
         full: null,

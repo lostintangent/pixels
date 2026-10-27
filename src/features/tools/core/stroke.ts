@@ -11,7 +11,7 @@ export function beginStroke(
 ): StrokeSession {
   if (!Number.isInteger(brush.size) || brush.size < 1 || brush.size > 64)
     throw new RangeError('Brush size must be 1 to 64');
-  const transaction = history.begin(brush.color === 0 ? 'Eraser' : 'Pencil', document);
+  const transaction = history.begin(document);
   const bounds: PixelRect = { x: 0, y: 0, width: document.width, height: document.height };
   const clipped: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
   let lastSample: StrokeSample | null = null;

@@ -24,13 +24,9 @@ export interface DocumentHistory {
   readonly canRedo: boolean;
   readonly usedBytes: number;
   readonly maxBytes: number;
-  begin(
-    label: string,
-    document: BitmapDocument,
-    external?: HistoryExternalState,
-  ): HistoryTransaction;
+  begin(document: BitmapDocument, external?: HistoryExternalState): HistoryTransaction;
   /** A dimension change swaps whole document objects in the same ordered stack. */
-  pushReplacement(label: string, before: BitmapDocument, after: BitmapDocument): void;
+  pushReplacement(before: BitmapDocument, after: BitmapDocument): void;
   undo(document: BitmapDocument): HistoryChange | null;
   redo(document: BitmapDocument): HistoryChange | null;
   clear(): void;

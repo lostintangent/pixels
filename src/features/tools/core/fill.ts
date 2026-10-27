@@ -63,7 +63,7 @@ function floodFillLarge(
       if (pixels[i] === source || (transparentSource && pixels[i]! >>> 24 === 0)) sourceCount++;
     }
   }
-  const transaction = history.begin('Fill', document);
+  const transaction = history.begin(document);
   if (sourceCount === pixels.length) {
     const dirty = { x: 0, y: 0, width, height };
     transaction.capture(dirty);
@@ -218,7 +218,7 @@ function floodFillCompact(
   for (let i = 0; i < pixels.length; i++) {
     if (pixels[i] === source || (transparentSource && pixels[i]! >>> 24 === 0)) sourceCount++;
   }
-  const transaction = history.begin('Fill', document);
+  const transaction = history.begin(document);
   if (sourceCount === pixels.length) {
     const dirty = { x: 0, y: 0, width, height };
     transaction.capture(dirty);
