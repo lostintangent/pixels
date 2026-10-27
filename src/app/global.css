@@ -38,10 +38,6 @@ body,
   color: light-dark(var(--color-text-secondary), #b3b3b3);
 }
 
-/*
- * Forced colors repaint the slider's div track and thumb as Canvas, so the brush size vanishes.
- * The same theme classes carry system colors here.
- */
 @media (forced-colors: active) {
   /* Forced colors drop surface shadows and backgrounds, so floating layers draw an edge.
      A submenu is its own surface, directly inside its popover. */
@@ -52,6 +48,7 @@ body,
     outline: 1px solid CanvasText;
   }
 
+  /* The slider's div track and thumb would repaint as Canvas, hiding the brush size. */
   .astryx-slider-track {
     background-color: GrayText;
   }
