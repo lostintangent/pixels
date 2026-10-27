@@ -9,9 +9,8 @@ export interface AutosaveScheduler {
 }
 
 /**
- * Debounces flushes: each change resets a 1000ms timer, but the wait since the first pending
- * change is capped at 5000ms, so a continuous stroke still saves periodically. Tests drive this
- * with `jest.useFakeTimers()` rather than an injected clock.
+ * Debounces flushes: each change resets the timer, but the wait since the first pending change is
+ * capped, so a continuous stroke still saves periodically.
  */
 export function createAutosaveScheduler(onFlush: () => void): AutosaveScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null;

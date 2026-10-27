@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
 import type { DocumentSnapshot, DocumentStore, DocumentSummary } from '../core/contracts';
 import { attachAutosave, saveDocument } from './autosaveRuntime';
@@ -144,81 +144,179 @@ function createFakeStore(): DocumentStore & {
 }
 
 describe('attachAutosave', () => {
-  test('does not save a blank, never-edited document', async () => {
-    const document = createBitmapDocument('blank', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-    await advance(1000, store);
-    expect(store.saves).toHaveLength(0);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
+  describe('with fake timers', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
 
-  test('saves the whole document immediately when initialResave is requested (import, resize)', async () => {
-    const document = createBitmapDocument('imported', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store, { initialResave: true });
-    await advance(1000, store);
-    expect(store.saves).toHaveLength(1);
-    expect(store.saves[0]!.fullResave).toBe(true);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
-
-  test('an edit schedules a debounced incremental save', async () => {
-    const document = createBitmapDocument('doc', 128, 128);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-
-    document.pixels[0] = packRgba(1, 2, 3, 255);
-    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(999, store);
-    expect(store.saves).toHaveLength(0);
-    await advance(1, store);
-    expect(store.saves).toHaveLength(1);
-    expect(store.saves[0]!.fullResave).toBe(false);
-    expect(store.saves[0]!.tiles).toHaveLength(1);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
-
-  test('reports saving then saved via onStatus', async () => {
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const statuses: string[] = [];
-    const autosave = attachAutosave(document, store, {
-      onStatus: (status) => statuses.push(status),
+    test('does not save a blank, never-edited document', async () => {
+      const document = createBitmapDocument('blank', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      await advance(1000, store);
+      expect(store.saves).toHaveLength(0);
+      autosave.dispose();
     });
-    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(1000, store);
-    expect(statuses).toEqual(['saving', 'saved']);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
 
-  test('a failed flush keeps its dirty tiles pending so a retry saves them', async () => {
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const statuses: string[] = [];
-    const autosave = attachAutosave(document, store, {
-      onStatus: (status) => statuses.push(status),
+    test('saves the whole document immediately when initialResave is requested (import, resize)', async () => {
+      const document = createBitmapDocument('imported', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store, { initialResave: true });
+      await advance(1000, store);
+      expect(store.saves).toHaveLength(1);
+      expect(store.saves[0]!.fullResave).toBe(true);
+      autosave.dispose();
     });
-    store.failNext = true;
-    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(1000, store);
-    expect(statuses).toEqual(['saving', 'error']);
-    expect(store.saves).toHaveLength(0);
 
-    await autosave.flush(); // manual retry, same as a save-status "Retry" button would call
-    expect(statuses).toEqual(['saving', 'error', 'saving', 'saved']);
-    expect(store.saves).toHaveLength(1);
-    autosave.dispose();
-    jest.useRealTimers();
+    test('an edit schedules a debounced incremental save', async () => {
+      const document = createBitmapDocument('doc', 128, 128);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+
+      document.pixels[0] = packRgba(1, 2, 3, 255);
+      document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+      await advance(999, store);
+      expect(store.saves).toHaveLength(0);
+      await advance(1, store);
+      expect(store.saves).toHaveLength(1);
+      expect(store.saves[0]!.fullResave).toBe(false);
+      expect(store.saves[0]!.tiles).toHaveLength(1);
+      autosave.dispose();
+    });
+
+    test('reports saving then saved via onStatus', async () => {
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const statuses: string[] = [];
+      const autosave = attachAutosave(document, store, {
+        onStatus: (status) => statuses.push(status),
+      });
+      document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+      await advance(1000, store);
+      expect(statuses).toEqual(['saving', 'saved']);
+      autosave.dispose();
+    });
+
+    test('a failed flush keeps its dirty tiles pending so a retry saves them', async () => {
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const statuses: string[] = [];
+      const autosave = attachAutosave(document, store, {
+        onStatus: (status) => statuses.push(status),
+      });
+      store.failNext = true;
+      document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+      await advance(1000, store);
+      expect(statuses).toEqual(['saving', 'error']);
+      expect(store.saves).toHaveLength(0);
+
+      await autosave.flush(); // manual retry, same as a save-status "Retry" button would call
+      expect(statuses).toEqual(['saving', 'error', 'saving', 'saved']);
+      expect(store.saves).toHaveLength(1);
+      autosave.dispose();
+    });
+
+    test('dispose stops future saves', async () => {
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      autosave.dispose();
+      document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+      await advance(1000, store);
+      expect(store.saves).toHaveLength(0);
+    });
+
+    test('committing a shape schedules a save, with zero dirty tiles since no pixel changed', async () => {
+      const { annotationsFor } = await import('../../annotations/model');
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+
+      annotationsFor(document).commit({
+        id: 'r1',
+        kind: 'rectangle',
+        start: { x: 0, y: 0 },
+        end: { x: 5, y: 5 },
+        width: 1,
+        color: packRgba(1, 2, 3),
+      });
+      await advance(1000, store);
+
+      expect(store.saves).toHaveLength(1);
+      expect(store.saves[0]!.tiles).toHaveLength(0);
+      expect(store.saves[0]!.shapes).toHaveLength(1);
+      autosave.dispose();
+    });
+
+    test('a shape still in preview (mid-drag) never schedules a save on its own', async () => {
+      const { annotationsFor } = await import('../../annotations/model');
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+
+      annotationsFor(document).showPreview({
+        id: 'preview',
+        kind: 'rectangle',
+        start: { x: 0, y: 0 },
+        end: { x: 5, y: 5 },
+        width: 1,
+        color: packRgba(1, 2, 3),
+      });
+      await advance(1000, store);
+
+      expect(store.saves).toHaveLength(0);
+      autosave.dispose();
+    });
+
+    test('a failed shapes-only save keeps the shape list dirty, so a retry saves it', async () => {
+      const { annotationsFor } = await import('../../annotations/model');
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+
+      store.failNext = true;
+      annotationsFor(document).commit({
+        id: 'r1',
+        kind: 'rectangle',
+        start: { x: 0, y: 0 },
+        end: { x: 5, y: 5 },
+        width: 1,
+        color: packRgba(1, 2, 3),
+      });
+      await advance(1000, store);
+      expect(store.saves).toHaveLength(0); // the one attempt failed
+
+      await autosave.flush(); // retry
+      expect(store.saves).toHaveLength(1);
+      expect(store.saves[0]!.shapes).toHaveLength(1);
+      autosave.dispose();
+    });
+
+    test('restoring a prior shape list (as undo/redo does, via replace) schedules a save', async () => {
+      const { annotationsFor } = await import('../../annotations/model');
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      const shape = {
+        id: 'r1',
+        kind: 'rectangle' as const,
+        start: { x: 0, y: 0 },
+        end: { x: 5, y: 5 },
+        width: 1,
+        color: packRgba(1, 2, 3),
+      };
+
+      // Undo/redo restores a prior snapshot via `AnnotationSet.replace`, the same call this
+      // simulates directly — see `annotationHistoryState` in `annotations/core/commands.ts`.
+      annotationsFor(document).replace([shape]);
+      await advance(1000, store);
+      expect(store.saves).toHaveLength(1);
+
+      annotationsFor(document).replace([]); // an "undo" back to no shapes
+      await advance(1000, store);
+      expect(store.saves).toHaveLength(2);
+      expect(store.saves[1]!.shapes).toEqual([]);
+      autosave.dispose();
+    });
   });
 
   test('an edit that lands while a save is in flight is not dropped when that save completes', async () => {
@@ -321,18 +419,6 @@ describe('attachAutosave', () => {
     autosave.dispose();
   });
 
-  test('dispose stops future saves', async () => {
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-    autosave.dispose();
-    document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(1000, store);
-    expect(store.saves).toHaveLength(0);
-    jest.useRealTimers();
-  });
-
   test('dispose flushes any dirty tiles instead of dropping them', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
@@ -355,107 +441,6 @@ describe('attachAutosave', () => {
     autosave.dispose();
     await store.waitForIdle();
     expect(store.saves).toHaveLength(1);
-  });
-
-  test('committing a shape schedules a save, with zero dirty tiles since no pixel changed', async () => {
-    const { annotationsFor } = await import('../../annotations/model');
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-
-    annotationsFor(document).commit({
-      id: 'r1',
-      kind: 'rectangle',
-      start: { x: 0, y: 0 },
-      end: { x: 5, y: 5 },
-      width: 1,
-      color: packRgba(1, 2, 3),
-    });
-    await advance(1000, store);
-
-    expect(store.saves).toHaveLength(1);
-    expect(store.saves[0]!.tiles).toHaveLength(0);
-    expect(store.saves[0]!.shapes).toHaveLength(1);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
-
-  test('a shape still in preview (mid-drag) never schedules a save on its own', async () => {
-    const { annotationsFor } = await import('../../annotations/model');
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-
-    annotationsFor(document).showPreview({
-      id: 'preview',
-      kind: 'rectangle',
-      start: { x: 0, y: 0 },
-      end: { x: 5, y: 5 },
-      width: 1,
-      color: packRgba(1, 2, 3),
-    });
-    await advance(1000, store);
-
-    expect(store.saves).toHaveLength(0);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
-
-  test('a failed shapes-only save keeps the shape list dirty, so a retry saves it', async () => {
-    const { annotationsFor } = await import('../../annotations/model');
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-
-    store.failNext = true;
-    annotationsFor(document).commit({
-      id: 'r1',
-      kind: 'rectangle',
-      start: { x: 0, y: 0 },
-      end: { x: 5, y: 5 },
-      width: 1,
-      color: packRgba(1, 2, 3),
-    });
-    await advance(1000, store);
-    expect(store.saves).toHaveLength(0); // the one attempt failed
-
-    await autosave.flush(); // retry
-    expect(store.saves).toHaveLength(1);
-    expect(store.saves[0]!.shapes).toHaveLength(1);
-    autosave.dispose();
-    jest.useRealTimers();
-  });
-
-  test('restoring a prior shape list (as undo/redo does, via replace) schedules a save', async () => {
-    const { annotationsFor } = await import('../../annotations/model');
-    const document = createBitmapDocument('doc', 32, 32);
-    const store = createFakeStore();
-    jest.useFakeTimers();
-    const autosave = attachAutosave(document, store);
-    const shape = {
-      id: 'r1',
-      kind: 'rectangle' as const,
-      start: { x: 0, y: 0 },
-      end: { x: 5, y: 5 },
-      width: 1,
-      color: packRgba(1, 2, 3),
-    };
-
-    // Undo/redo restores a prior snapshot via `AnnotationSet.replace`, the same call this
-    // simulates directly — see `annotationHistoryState` in `annotations/core/commands.ts`.
-    annotationsFor(document).replace([shape]);
-    await advance(1000, store);
-    expect(store.saves).toHaveLength(1);
-
-    annotationsFor(document).replace([]); // an "undo" back to no shapes
-    await advance(1000, store);
-    expect(store.saves).toHaveLength(2);
-    expect(store.saves[1]!.shapes).toEqual([]);
-    autosave.dispose();
-    jest.useRealTimers();
   });
 });
 
