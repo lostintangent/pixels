@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, durationVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { getPixel, type PixelPoint, type PixelRect } from '../../document';
+import { containsPoint, getPixel } from '../../document';
 import { alpha, formatColor, toCss } from '../../palette';
 import type { SaveStatus } from '../core/state';
 import { useEditor, useEditorState } from './EditorContext';
@@ -55,7 +55,7 @@ export function StatusPill({ ref }: { ref?: RefObject<HTMLDivElement | null> }) 
       stopEdits();
       stopEdits = session.bitmap.state.events.subscribe((rect) => {
         const point = session.pointer.state;
-        if (point && contains(rect, point)) render();
+        if (point && containsPoint(rect, point)) render();
       });
       render();
     };
@@ -111,12 +111,6 @@ const digits = (value: number) => String(value).length;
 // React renders these slots empty, so the Text node is ours. Reused across effect re-runs.
 const textOf = (slot: HTMLElement): Text =>
   slot.firstChild instanceof Text ? slot.firstChild : slot.appendChild(document.createTextNode(''));
-
-const contains = (rect: PixelRect, point: PixelPoint) =>
-  point.x >= rect.x &&
-  point.y >= rect.y &&
-  point.x < rect.x + rect.width &&
-  point.y < rect.y + rect.height;
 
 const SLOW_SAVE_MS = 400;
 

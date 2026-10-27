@@ -18,7 +18,13 @@ import type {
   Viewport,
   ViewportInsets,
 } from '../../canvas/model';
-import { convertPixelColorSpace, fullRect, getPixel, intersectRect } from '../../document';
+import {
+  containsPoint,
+  convertPixelColorSpace,
+  fullRect,
+  getPixel,
+  intersectRect,
+} from '../../document';
 import type {
   BitmapDocument,
   CanvasAnchor,
@@ -474,15 +480,6 @@ export function createEditorSession({
     return { x: point.x - before, y: point.y - before, width: size, height: size };
   }
 
-  function contains(rect: PixelRect, point: PixelPoint): boolean {
-    return (
-      point.x >= rect.x &&
-      point.y >= rect.y &&
-      point.x < rect.x + rect.width &&
-      point.y < rect.y + rect.height
-    );
-  }
-
   function marqueeRect(anchor: PixelPoint, point: PixelPoint): PixelRect {
     const { width, height } = document();
     const x0 = Math.max(0, Math.min(anchor.x, point.x));
@@ -894,7 +891,7 @@ export function createEditorSession({
 
     hover(point, alt = false) {
       const cell = point && { x: Math.floor(point.x), y: Math.floor(point.y) };
-      const inside = cell && contains(documentRect(), cell) ? cell : null;
+      const inside = cell && containsPoint(documentRect(), cell) ? cell : null;
       const previous = pointer.state;
       if (previous?.x !== inside?.x || previous?.y !== inside?.y) pointer.setState(() => inside);
       hovering = cell !== null;
@@ -921,7 +918,9 @@ export function createEditorSession({
       if (tool === 'select' || tool === 'shapes') {
         const rect = state.state.selection;
         const inMarquee =
-          tool === 'select' && rect !== null && contains(selection.floating?.bounds ?? rect, cell);
+          tool === 'select' &&
+          rect !== null &&
+          containsPoint(selection.floating?.bounds ?? rect, cell);
         if (overlay.state.coarseAnnotationHandles !== touch)
           setOverlay({ coarseAnnotationHandles: touch });
         if (tool === 'shapes' && rect) {
@@ -952,7 +951,7 @@ export function createEditorSession({
       }
       if (tool === 'select') {
         const rect = state.state.selection;
-        if (rect && contains(selection.floating?.bounds ?? rect, cell)) {
+        if (rect && containsPoint(selection.floating?.bounds ?? rect, cell)) {
           const before = {
             selection: { ...rect },
             floatingBounds: selection.floating ? { ...selection.floating.bounds } : null,
@@ -980,7 +979,7 @@ export function createEditorSession({
       const color = tool === 'eraser' ? TRANSPARENT : primary;
       const brush = { color, size: brushSize, pixelPerfect: brushSize === 1 };
       if (tool === 'fill' || tool === 'line') {
-        if (tool === 'fill' && !contains(documentRect(), cell)) return;
+        if (tool === 'fill' && !containsPoint(documentRect(), cell)) return;
         if (!paintExtras) {
           queuedPaint = {
             tool,

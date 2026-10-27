@@ -25,7 +25,7 @@ import {
 import type { RefObject } from 'react';
 import { CanvasSurface, MAX_ZOOM, MIN_ZOOM } from '../../canvas';
 import type { CanvasInput, CanvasPointerSample, OverlayState } from '../../canvas';
-import type { BitmapDocument } from '../../document';
+import { containsPoint, type BitmapDocument } from '../../document';
 import type { DocumentStore } from '../../files';
 import {
   ColorPanel,
@@ -261,13 +261,7 @@ function Canvas({ session }: { session: EditorSession }) {
       const x = Math.floor(point.x);
       const y = Math.floor(point.y);
       if (tool === 'select') {
-        const within =
-          selection !== null &&
-          x >= selection.x &&
-          y >= selection.y &&
-          x < selection.x + selection.width &&
-          y < selection.y + selection.height;
-        if (within) return alt ? 'copy' : 'move';
+        if (selection && containsPoint(selection, point)) return alt ? 'copy' : 'move';
         return session.shapeCursorAt(point, alt) ?? 'crosshair';
       }
       if (tool === 'shapes') return session.shapeCursorAt(point, alt) ?? 'crosshair';
