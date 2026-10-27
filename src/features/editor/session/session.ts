@@ -76,7 +76,7 @@ export function preloadPaintExtras(): void {
 }
 
 /** Modifier state for one canvas gesture sample. */
-export interface GestureInput {
+interface GestureInput {
   /** Fractional document coordinates. */
   point: PixelPoint;
   shift: boolean;
@@ -193,7 +193,7 @@ export interface EditorSession {
   cancelGesture(): void;
 }
 
-export interface EditorSessionOptions {
+interface EditorSessionOptions {
   document: BitmapDocument;
   /** Null for a document that has never been saved or edited. */
   save: SaveStatus | null;

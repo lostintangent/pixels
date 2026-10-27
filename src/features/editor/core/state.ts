@@ -13,7 +13,7 @@ export type SaveStatus = 'saved' | 'saving' | 'error';
 export type ColorSlot = 'primary' | 'secondary';
 
 /** The selected markup shape. It never coexists with a pixel selection. */
-export interface SelectedShape {
+interface SelectedShape {
   id: string;
   kind: ShapeKind;
 }

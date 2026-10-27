@@ -5,9 +5,6 @@
  */
 export const BRUSH_SIZES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 32, 48, 64] as const;
 
-export const MIN_BRUSH_SIZE = BRUSH_SIZES[0];
-export const MAX_BRUSH_SIZE = BRUSH_SIZES[BRUSH_SIZES.length - 1];
-
 /** The index of the largest step at or below `size`. */
 export function brushSizeIndex(size: number): number {
   let index = 0;

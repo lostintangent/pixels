@@ -4,7 +4,7 @@ import type { ShowToastFn, ToastDismissFn, ToastOptions } from '@astryxdesign/co
  * A toast front door that works before the toast runtime has loaded. Toasts raised early wait
  * in order and show once a viewport attaches. Dismissing one that never showed simply drops it.
  */
-export interface Toaster {
+interface Toaster {
   show: ShowToastFn;
   /** Connects a live viewport, flushes the queue, and returns a detach function. */
   attach: (show: ShowToastFn) => () => void;

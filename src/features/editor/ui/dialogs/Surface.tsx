@@ -264,7 +264,7 @@ export function sideError(value: number): { type: 'error'; message: string } | u
   return message === null ? undefined : { type: 'error', message };
 }
 
-export interface SizeFields extends Size {
+interface SizeFields extends Size {
   isLinked: boolean;
   /** The pair as of the last commit, current even inside the keystroke that committed it. */
   latest: () => Size;
@@ -316,7 +316,7 @@ export function useSizeFields(initial: Size, initiallyLinked: boolean): SizeFiel
   return { ...size, isLinked, ...actions };
 }
 
-export interface DimensionsProps {
+interface DimensionsProps {
   fields: SizeFields;
   /** Return in either field, once both sides are usable. The dialog decides whether it applies. */
   onSubmit: (size: Size) => void;

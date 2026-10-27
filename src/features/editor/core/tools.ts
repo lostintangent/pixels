@@ -1,7 +1,7 @@
 import type { ToolKind } from '../../tools';
 import { brushSizeAt, brushSizeIndex } from './brush';
 
-export interface ToolInfo {
+interface ToolInfo {
   kind: ToolKind;
   label: string;
   /** Single-letter shortcut, lowercase. */
@@ -37,7 +37,7 @@ export type ShapeKind = 'rectangle' | 'arrow';
 /** Everything the rail can select: the pixel tools plus the Shapes item. */
 export type EditorTool = ToolKind | 'shapes';
 
-export interface ShapeInfo {
+interface ShapeInfo {
   kind: ShapeKind;
   label: string;
   /** Single-letter shortcut, lowercase. */

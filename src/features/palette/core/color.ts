@@ -61,7 +61,7 @@ export function parseHex(input: string): PackedColor | null {
  * apply live. Three digits are also the start of six, so they wait for Enter or blur. A prefix of
  * a valid entry is still in progress, not an error.
  */
-export type HexDraft =
+type HexDraft =
   | { kind: 'complete'; color: PackedColor }
   | { kind: 'short'; color: PackedColor }
   | { kind: 'partial' }

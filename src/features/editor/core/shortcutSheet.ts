@@ -7,7 +7,7 @@ import { SHAPES, TOOLS } from './tools';
  */
 
 /** One step of a way to act: a keycap chord, or a word for the pointer or touch part. */
-export type SheetToken = { readonly keys: string } | { readonly text: string };
+type SheetToken = { readonly keys: string } | { readonly text: string };
 /** One way to do something, read left to right, such as ⌥ then "drag". */
 export type SheetWay = readonly SheetToken[];
 

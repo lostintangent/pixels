@@ -18,7 +18,7 @@ import type {
 import type { PixelPoint } from '../../document';
 
 /** Shape hit tolerance in screen pixels: a finger covers more than a cursor. */
-export const SHAPE_HIT_SLOP = { mouse: 5, touch: 14 } as const;
+const SHAPE_HIT_SLOP = { mouse: 5, touch: 14 } as const;
 /** How far from a handle's center a press still grabs it, in screen pixels. Touch is a 44 px target. */
 const HANDLE_REACH = { mouse: 8, touch: 22 } as const;
 /** Movement below this many screen pixels keeps a press a tap, so a tap never draws or moves. */
@@ -36,7 +36,7 @@ const KEEP_ON_IMAGE = 8;
  */
 const DUPLICATE_STEP = 12;
 
-export interface ShapeTarget {
+interface ShapeTarget {
   shape: Annotation;
   /** The grabbed handle, or null for the body. */
   handle: AnnotationHandleId | null;
