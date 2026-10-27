@@ -57,7 +57,7 @@ export function prunedButAsked(
  * fails if a bundled Astryx module quotes a pruned icon name, or the theme stops registering a
  * kept one.
  */
-export function astryxIcons(kept: ReadonlySet<string> = THEME_ICON_NAMES): Plugin {
+export function astryxIcons(): Plugin {
   let registered = new Set<string>();
   const asked = new Set<string>();
   return {
@@ -72,10 +72,12 @@ export function astryxIcons(kept: ReadonlySet<string> = THEME_ICON_NAMES): Plugi
       if (id.endsWith(DEFAULT_ICONS)) return { code: 'export const defaultIcons = {};', map: null };
       if (id.endsWith(THEME_ICONS)) {
         registered = registeredIcons(code);
-        for (const name of kept)
+        for (const name of THEME_ICON_NAMES)
           if (!registered.has(name)) this.error(`The theme no longer registers a "${name}" icon.`);
         return {
-          code: code.replace(ENTRY, (line, name: string) => (kept.has(name) ? line : '')),
+          code: code.replace(ENTRY, (line, name: string) =>
+            THEME_ICON_NAMES.has(name) ? line : '',
+          ),
           map: null,
         };
       }
@@ -84,7 +86,7 @@ export function astryxIcons(kept: ReadonlySet<string> = THEME_ICON_NAMES): Plugi
     },
     buildEnd(error) {
       if (error) return;
-      const missing = prunedButAsked(asked, registered, kept);
+      const missing = prunedButAsked(asked, registered, THEME_ICON_NAMES);
       if (missing.length)
         this.error(
           `Bundled Astryx code can ask for ${missing.join(', ')}. Add to THEME_ICON_NAMES.`,
