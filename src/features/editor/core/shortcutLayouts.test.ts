@@ -91,6 +91,36 @@ describe('keyboard layouts', () => {
       press('ç', 'KeyC', { mod: true, alt: true }),
       { type: 'open', panel: 'resize' },
     ],
+    [
+      'Firefox Mac Command+Option+N reports AltGraph',
+      press('Dead', 'KeyN', { mod: true, alt: true, altGraph: true }),
+      { type: 'open', panel: 'new' },
+    ],
+    [
+      'Firefox Mac Command+Option+C reports AltGraph',
+      press('ç', 'KeyC', { mod: true, alt: true, altGraph: true }),
+      { type: 'open', panel: 'resize' },
+    ],
+    [
+      'Firefox Mac Option+B reports AltGraph',
+      press('∫', 'KeyB', { alt: true, altGraph: true }),
+      null,
+    ],
+    [
+      'Firefox Mac German Option+5 types left bracket',
+      press('[', 'Digit5', { alt: true, altGraph: true }),
+      sizeDown,
+    ],
+    [
+      'Firefox Windows Control+Alt+N reports AltGraph',
+      press('n', 'KeyN', { mod: true, alt: true, altGraph: true }),
+      { type: 'open', panel: 'new' },
+    ],
+    [
+      'Firefox Windows Control+Alt+B is not Pencil',
+      press('b', 'KeyB', { mod: true, alt: true, altGraph: true }),
+      null,
+    ],
   ];
 
   for (const [name, input, expected] of cases)

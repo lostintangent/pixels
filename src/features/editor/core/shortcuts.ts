@@ -63,14 +63,19 @@ const NUDGES: Record<string, readonly [number, number]> = {
 const TOOL_KEYS = new Map(TOOLS.map((tool) => [tool.key, tool.kind]));
 const SHAPE_KEYS = new Map(SHAPES.map((shape) => [shape.key, shape.kind]));
 
-function shortcutKey(press: KeyPress): string {
+/** AltGraph can also be reported for Command+Option on macOS and Control+Alt on Windows. */
+function altGraphTypesCharacter(press: KeyPress): boolean {
+  return press.altGraph === true && press.key !== 'Dead' && !/^\p{Script=Latin}$/u.test(press.key);
+}
+
+function shortcutKey(press: KeyPress, altGraphTyping: boolean): string {
   const physicalLetter = /^Key([A-Z])$/.exec(press.code ?? '')?.[1]?.toLowerCase();
   // Option rewrites letters on macOS (⌥N is a dead key, ⌥C is ç). Command chords keep their
   // physical letter. Unmodified non-Latin layouts also need a physical fallback for tool keys.
-  if (physicalLetter && press.alt && !press.altGraph) return physicalLetter;
+  if (physicalLetter && press.alt && !altGraphTyping) return physicalLetter;
   if (
     physicalLetter &&
-    !press.altGraph &&
+    !altGraphTyping &&
     /^\p{L}$/u.test(press.key) &&
     !/^[a-z]$/i.test(press.key)
   )
@@ -85,9 +90,10 @@ function typedNonLetter(press: KeyPress, key: string): boolean {
 
 /** Maps a key press to an editor command. Returns null for keys the editor leaves alone. */
 export function resolveShortcut(press: KeyPress, context: ShortcutContext): EditorCommand | null {
-  const key = shortcutKey(press);
-  const mod = press.mod && !press.altGraph;
-  const alt = press.alt && !press.altGraph;
+  const altGraphTyping = altGraphTypesCharacter(press);
+  const key = shortcutKey(press, altGraphTyping);
+  const mod = press.mod && !altGraphTyping;
+  const alt = press.alt && !altGraphTyping;
   const layoutSymbol = typedNonLetter(press, key);
   const shape = context.hasShapeSelection === true;
 

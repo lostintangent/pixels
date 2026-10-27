@@ -59,7 +59,8 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
           mod: IS_APPLE ? event.metaKey : event.ctrlKey,
           shift: event.shiftKey,
           alt: event.altKey,
-          altGraph: event.getModifierState('AltGraph'),
+          // Firefox reports AltGraph for Option on macOS, including Command+Option chords.
+          altGraph: !IS_APPLE && event.getModifierState('AltGraph'),
         },
         {
           hasSelection: session.state.state.selection !== null,
