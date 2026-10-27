@@ -7,16 +7,5 @@ export interface PaletteState {
   recent: readonly PackedColor[];
 }
 
-export type { Hsv } from './core/color';
-export {
-  alpha,
-  formatColor,
-  fromHsv,
-  parseHex,
-  toCss,
-  toHex,
-  toHsv,
-  toHsvKeepingHue,
-  TRANSPARENT,
-} from './core/color';
+export { alpha, formatColor, toCss, TRANSPARENT } from './core/color';
 export { DEFAULT_PALETTE, RECENT_LIMIT, rememberColor } from './core/palette';
