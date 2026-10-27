@@ -21,14 +21,7 @@ export type EditorCommand =
   | { type: 'nudge'; dx: number; dy: number };
 
 export type SelectionAction =
-  | 'all'
-  | 'commit'
-  | 'cancel'
-  | 'clear'
-  | 'copy'
-  | 'cut'
-  | 'paste'
-  | 'duplicate';
+  'all' | 'commit' | 'cancel' | 'clear' | 'copy' | 'cut' | 'paste' | 'duplicate';
 
 /** What the keyboard can do to the selected markup shape. Arrow keys nudge it like pixels. */
 export type ShapeAction = 'delete' | 'deselect' | 'duplicate';

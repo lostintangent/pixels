@@ -2,16 +2,7 @@ import type { PackedColor, PixelPoint } from '../../document';
 
 export type AnnotationKind = 'rectangle' | 'arrow';
 export type AnnotationHandleId =
-  | 'nw'
-  | 'ne'
-  | 'se'
-  | 'sw'
-  | 'n'
-  | 's'
-  | 'e'
-  | 'w'
-  | 'start'
-  | 'end';
+  'nw' | 'ne' | 'se' | 'sw' | 'n' | 's' | 'e' | 'w' | 'start' | 'end';
 
 /** Coordinates and stroke width are document pixels; color is encoded in the document color space. */
 export interface Annotation {

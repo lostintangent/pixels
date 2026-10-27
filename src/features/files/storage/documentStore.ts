@@ -459,8 +459,7 @@ export function createDocumentStore(options: { databaseName?: string } = {}): Do
       const db = await dbPromise;
       const tx = db.transaction([DOCUMENTS_STORE, TILES_STORE], 'readonly');
       const record = (await requestToPromise(tx.objectStore(DOCUMENTS_STORE).get(id))) as
-        | DocumentRecord
-        | undefined;
+        DocumentRecord | undefined;
       if (record) lastKnownThumbnail.set(id, record.thumbnail);
       const index = tx.objectStore(TILES_STORE).index(TILES_BY_ID_INDEX);
       const tileRecords = (await requestToPromise(
