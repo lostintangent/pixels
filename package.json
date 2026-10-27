@@ -29,6 +29,7 @@
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
+    "build:playground": "vp build --base /pixels/ --outDir dist/playground && cp dist/playground/index.html dist/playground/404.html",
     "check": "vp check",
     "lint": "vp lint",
     "fmt": "vp fmt",

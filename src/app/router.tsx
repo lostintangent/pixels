@@ -56,6 +56,8 @@ export function createAppRouter(documentStore: DocumentStore) {
   return createRouter({
     routeTree: rootRoute.addChildren([indexRoute, documentRoute]),
     context: { documentStore },
+    // Vite's `base`: `/` locally, `/pixels/` for the GitHub Pages playground.
+    basepath: import.meta.env.BASE_URL,
   });
 }
 

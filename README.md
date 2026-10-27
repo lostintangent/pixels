@@ -1,31 +1,27 @@
-# Pixels!
+# 🖼️ Pixels
 
-A pixel-first bitmap editor. See `AGENTS.md` for architecture and toolchain decisions.
+A small, fast bitmap editor for pixel art and marking up screenshots. It opens images exactly as your other apps show them, keeps every pixel crisp at any zoom, and stays out of the way while you draw.
 
-## Development
+Pixels runs in your browser on desktop and phone. There's nothing to install and no account to create, and your work saves as you go.
 
-Pixels needs Bun 1.4.3-canary.1 (4b02e1031) or newer. Install it with `bun upgrade --canary`. Stable Bun 1.4.2 miscompiles StyleX's CSS tokenizer, so the dev server answers 500 for some files, and `bun test` fails with a message that says so.
+> _Try it out:_ [web playground](https://lostintangent.github.io/pixels)
 
-```sh
-bun install
-bun run dev
-```
+<img width="1000" src="docs/hero.png" />
 
-Open the URL printed by Vite (usually <http://localhost:5173>). Both `/` and `/d/$docId` are routed by TanStack Router.
+## Features
 
-The dev and preview servers listen on all interfaces and accept any `*.ts.net` host, so another device on your tailnet can open `http://<machine>.<tailnet>.ts.net:5173`. Over plain HTTP the phone share sheet is unavailable, so Export downloads the PNG instead.
+- **True color:** Mac screenshots and other Display P3 images look exactly like they do in Preview, and exports keep their color.
+- **Crisp pixels:** Zoom settles on whole device pixels, so art stays square and sharp on every display.
+- **Editable markup:** Add rectangles and arrows from the Shapes menu, then move, resize, and restyle them anytime.
+- **Fast:** Drawing, filling, and panning stay smooth even on big screenshots, held to strict performance budgets.
+- **Desktop and phone:** Draw with a mouse, pen, or finger, and pinch to zoom, in a layout made for each.
+- **Always saved:** Every change saves in the browser, so a reload never loses work.
+- **Keyboard friendly:** Shortcuts work across keyboard layouts, and `?` lists them all.
 
-## Quality gates
+## Developing
 
-```sh
-bun run check
-bun test
-bun run build
-bun run perf --repeat 5
-```
+1. Clone this repo and install [Bun](https://bun.sh) 1.4.3 or newer
+1. `bun install`
+1. `bun run dev`
 
-`bun run perf` is being implemented alongside the pixel core. It is not yet a passing gate.
-
-Vite+ handles dev, build, Oxlint, and Oxfmt. Use `vp fmt` for formatting.
-
-Features own their framework-free `core/`, React `ui/`, tests, and perf cases. Other features import only through each feature's `index.ts`.
+See [AGENTS.md](AGENTS.md) for tests, performance gates, and how the code is organized.
