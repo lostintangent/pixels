@@ -25,9 +25,7 @@ import {
   ColorPickerPopover,
   ColorSheet,
   ColorWell,
-  DEFAULT_PALETTE,
   PaletteColorSpace,
-  RECENT_LIMIT,
 } from '../../palette';
 import type { EditorCommand } from '../core/shortcuts';
 import { sameToolPreferences } from '../core/preferences';
@@ -483,9 +481,7 @@ function DesktopColors({ fade, panel }: { fade: Fade; panel: RefObject<HTMLEleme
     >
       <ColorPanel
         anchorRef={panel}
-        palette={DEFAULT_PALETTE}
         recent={recent}
-        recentSlots={RECENT_LIMIT}
         primary={primary}
         secondary={secondary}
         onChoose={(color, slot) => session.chooseColor(color, slot)}
@@ -745,9 +741,7 @@ function PhoneColors({
       onOpenChange={(open) => session.setPanel(open ? 'colors' : null)}
       editing={editing}
       onEditingChange={onEditingChange}
-      palette={DEFAULT_PALETTE}
       recent={recent}
-      recentSlots={RECENT_LIMIT}
       primary={primary}
       secondary={secondary}
       onChoose={(color, slot) => session.chooseColor(color, slot)}

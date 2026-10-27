@@ -1,37 +1,27 @@
 import * as stylex from '@stylexjs/stylex';
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { RefObject } from 'react';
 import type { PackedColor } from '../../document';
+import { DEFAULT_PALETTE, RECENT_LIMIT } from '../core/palette';
 import { ColorPickerPopover, preloadColorPicker } from './deferred';
 import { Swatches } from './Swatches';
 import type { SwatchSlot } from './Swatches';
 
 interface ColorPanelProps {
-  palette: readonly PackedColor[];
   recent: readonly PackedColor[];
-  recentSlots: number;
   primary: PackedColor;
   secondary: PackedColor;
   onChoose: (color: PackedColor, slot: SwatchSlot) => void;
-  /** What the custom picker opens beside. Defaults to the panel itself. */
-  anchorRef?: RefObject<HTMLElement | null>;
+  /** What the custom picker opens beside. */
+  anchorRef: RefObject<HTMLElement | null>;
 }
 
 /** Desktop color panel: palette and recents always visible, the picker on demand. */
-export function ColorPanel({
-  palette,
-  recent,
-  recentSlots,
-  primary,
-  secondary,
-  onChoose,
-  anchorRef,
-}: ColorPanelProps) {
+export function ColorPanel({ recent, primary, secondary, onChoose, anchorRef }: ColorPanelProps) {
   const [picking, setPicking] = useState(false);
-  const anchor = useRef<HTMLDivElement>(null);
   return (
-    <div ref={anchor} {...stylex.props(styles.panel)}>
+    <div {...stylex.props(styles.panel)}>
       <div {...stylex.props(styles.label)}>
         <span>Palette</span>
         <button
@@ -47,7 +37,7 @@ export function ColorPanel({
       </div>
       <Swatches
         label="Palette"
-        colors={palette}
+        colors={DEFAULT_PALETTE}
         primary={primary}
         secondary={secondary}
         onChoose={onChoose}
@@ -58,13 +48,13 @@ export function ColorPanel({
       <Swatches
         label="Recent colors"
         colors={recent}
-        slots={recentSlots}
+        slots={RECENT_LIMIT}
         primary={primary}
         secondary={secondary}
         onChoose={onChoose}
       />
       <ColorPickerPopover
-        anchorRef={anchorRef ?? anchor}
+        anchorRef={anchorRef}
         isOpen={picking}
         onOpenChange={setPicking}
         title="Primary color"

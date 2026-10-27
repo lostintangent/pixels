@@ -9,6 +9,7 @@ import {
 } from '@astryxdesign/core/theme/tokens.stylex';
 import { ArrowLeftRight } from 'lucide-react';
 import type { PackedColor } from '../../document';
+import { DEFAULT_PALETTE, RECENT_LIMIT } from '../core/palette';
 import { formatColor } from '../core/color';
 import { ColorPicker } from './ColorPicker';
 import { ColorSlots } from './ColorSlots';
@@ -20,9 +21,7 @@ export interface ColorSheetProps {
   onOpenChange: (isOpen: boolean) => void;
   editing: SwatchSlot;
   onEditingChange: (slot: SwatchSlot) => void;
-  palette: readonly PackedColor[];
   recent: readonly PackedColor[];
-  recentSlots: number;
   primary: PackedColor;
   secondary: PackedColor;
   onChoose: (color: PackedColor, slot: SwatchSlot) => void;
@@ -35,9 +34,7 @@ export function ColorSheet({
   onOpenChange,
   editing,
   onEditingChange,
-  palette,
   recent,
-  recentSlots,
   primary,
   secondary,
   onChoose,
@@ -80,7 +77,7 @@ export function ColorSheet({
           <div {...stylex.props(styles.label)}>Palette</div>
           <Swatches
             label="Palette"
-            colors={palette}
+            colors={DEFAULT_PALETTE}
             primary={current}
             onChoose={chooseAndClose}
             size="lg"
@@ -89,7 +86,7 @@ export function ColorSheet({
           <Swatches
             label="Recent colors"
             colors={recent}
-            slots={recentSlots}
+            slots={RECENT_LIMIT}
             primary={current}
             onChoose={chooseAndClose}
             size="lg"
