@@ -4,7 +4,7 @@ import { colorVars, durationVars } from '@astryxdesign/core/theme/tokens.stylex'
 import { Eraser, PaintBucket, Pencil, Pipette, Slash, SquareDashed } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLayoutEffect, useRef } from 'react';
-import type { KeyboardEvent, Ref } from 'react';
+import type { KeyboardEvent, RefObject } from 'react';
 import { keepFocusOnPress } from '../../../shared/react/pressFocus';
 import type { ToolKind } from '../../tools';
 import { shapeInfo, TOOLS } from '../core/tools';
@@ -33,7 +33,7 @@ export interface ToolRailProps {
   /** A press on the Shapes item, which arms it and toggles the popover. */
   onShapesPress: () => void;
   /** Anchors the Shapes popover. */
-  shapesRef?: Ref<HTMLButtonElement>;
+  shapesRef: RefObject<HTMLButtonElement | null>;
 }
 
 interface RailItem {
@@ -91,7 +91,6 @@ export function ToolRail({
     scroller.scrollTop = Math.min(Math.max(scroller.scrollTop, bottom + 3), top - 3);
   }, [selectedIndex]);
   const onKeyDown = (event: KeyboardEvent) => {
-    const index = items.findIndex((info) => info.kind === tool);
     const step =
       event.key === 'ArrowDown' || event.key === 'ArrowRight'
         ? 1
@@ -104,7 +103,7 @@ export function ToolRail({
         : event.key === 'End'
           ? items.length - 1
           : step
-            ? (index + step + items.length) % items.length
+            ? (selectedIndex + step + items.length) % items.length
             : -1;
     if (target < 0) return;
     event.preventDefault();
@@ -132,7 +131,7 @@ export function ToolRail({
             key={info.kind}
             ref={(node) => {
               buttons.current[index] = node;
-              if (shapes) assignRef(shapesRef, node);
+              if (shapes) shapesRef.current = node;
             }}
             type="button"
             role="radio"
@@ -168,11 +167,6 @@ export function ToolRail({
       })}
     </div>
   );
-}
-
-function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
-  if (typeof ref === 'function') ref(value);
-  else if (ref) (ref as { current: T | null }).current = value;
 }
 
 const FORCED = '@media (forced-colors: active)';
