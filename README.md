@@ -20,7 +20,7 @@ Pixels runs in your browser on desktop and phone. There's nothing to install and
 
 ## Developing
 
-1. Clone this repo and install [Bun](https://bun.sh) 1.4.3 or newer
+1. Clone this repo and install [Bun](https://bun.sh) canary 1.4.4 or newer
 1. `bun install`
 1. `bun run dev`
 

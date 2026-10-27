@@ -74,7 +74,7 @@ function median(values: number[]): number {
 
 async function buildFixture(output: string): Promise<void> {
   const process = Bun.spawn(
-    ['bunx', 'vp', 'build', 'perf/browser', '--outDir', output, '--emptyOutDir'],
+    ['bunx', 'vite', 'build', 'perf/browser', '--outDir', output, '--emptyOutDir'],
     {
       cwd: resolve(import.meta.dirname, '../../../..'),
       stdout: 'inherit',

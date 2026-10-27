@@ -14,7 +14,7 @@ async function buildApp(output: string, manifest: boolean): Promise<void> {
   const build = Bun.spawn(
     [
       'bunx',
-      'vp',
+      'vite',
       'build',
       ...(manifest ? ['--manifest'] : []),
       '--outDir',
@@ -45,7 +45,7 @@ async function waitForPreview(port: number): Promise<void> {
     }
     await Bun.sleep(50);
   }
-  throw new Error('vp preview did not start within 5 seconds');
+  throw new Error('vite preview did not start within 5 seconds');
 }
 
 function groupExists(pid: number): boolean {
@@ -78,7 +78,7 @@ async function waitForGroupExit(pid: number, timeoutMs: number): Promise<boolean
   return true;
 }
 
-/** `vp preview` forks the Vite listener. Stop its entire isolated process group on every exit. */
+/** Stop the preview process group on every exit. */
 async function stopPreview(preview: Bun.Subprocess): Promise<void> {
   const pid = preview.pid;
   signalGroup(pid, 'SIGTERM');
@@ -102,7 +102,7 @@ export async function withProductionPreview<T>(
     const server = Bun.spawn(
       [
         'bunx',
-        'vp',
+        'vite',
         'preview',
         '--host',
         '127.0.0.1',

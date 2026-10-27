@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
-import { isSimpleMessage } from './messageFormat';
+import { isSimpleMessage } from './messageFormat.ts';
 
 const CATALOG_ID = '\0astryx-en-catalog';
 const PLACEHOLDER = /(["'`])__ASTRYX_EN_CATALOG__\1/;

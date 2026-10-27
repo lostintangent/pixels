@@ -1,0 +1,31 @@
+[fmt]
+singleQuote = true
+trailingComma = "all"
+printWidth = 100
+sortPackageJson = false
+ignorePatterns = ["dist/", ".playwright-cli/", "bun.lock"]
+
+[lint]
+typeAware = true
+ignorePatterns = ["dist/", ".playwright-cli/"]
+
+[lint.categories]
+correctness = "warn"
+
+[lint.rules]
+"@typescript-eslint/no-explicit-any" = "error"
+"@typescript-eslint/only-throw-error" = "off"
+"react-hooks/*" = "off"
+"react/*" = "off"
+"jsx-a11y/*" = "off"
+"promise/*" = "off"
+"import/*" = "off"
+"bun:test/*" = "off"
+"@typescript-eslint/no-unnecessary-type-assertion" = "off"
+"@typescript-eslint/prefer-promise-reject-errors" = "off"
+"@typescript-eslint/require-await" = "off"
+"@typescript-eslint/no-unsafe-assignment" = "off"
+"@typescript-eslint/no-unsafe-argument" = "off"
+"@typescript-eslint/no-unsafe-member-access" = "off"
+"prefer-const" = "off"
+"no-case-declarations" = "off"

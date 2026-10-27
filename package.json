@@ -10,9 +10,7 @@
     "fake-indexeddb": "^6.2.5",
     "lightningcss": "^1.33.0",
     "playwright": "^1.58.0",
-    "typescript": "~5.9.3",
-    "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0",
-    "vite-plus": "1.0.0-rc.0"
+    "vite": "^8.3.5"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.6.3",
@@ -27,12 +25,9 @@
     "react-dom": "^19.3.0"
   },
   "scripts": {
-    "dev": "vp dev",
-    "build": "vp build",
-    "build:playground": "vp build --base /pixels/ --outDir dist/playground && cp dist/playground/index.html dist/playground/404.html",
-    "check": "vp check",
-    "lint": "vp lint",
-    "fmt": "vp fmt",
+    "dev": "vite dev",
+    "build": "vite build",
+    "build:playground": "vite build --base /pixels/ --outDir dist/playground && cp dist/playground/index.html dist/playground/404.html",
     "test": "bun test",
     "perf": "bun src/shared/perf/run.ts",
     "perf:browser": "bun src/shared/perf/browser/run.ts",
@@ -42,8 +37,5 @@
     "perf:import": "bun src/features/files/perf/run-import.ts",
     "golden:export": "bun src/features/files/golden/run.ts",
     "durability": "bun src/features/files/durability/run.ts"
-  },
-  "overrides": {
-    "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0-rc.0"
   }
 }

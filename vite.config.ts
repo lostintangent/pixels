@@ -1,10 +1,10 @@
-import { defineConfig } from 'vite-plus';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
-import { astryxIcons } from './src/shared/build/astryxIcons';
-import { astryxMessages } from './src/shared/build/astryxMessages';
-import { modulePreload } from './src/shared/build/modulePreload';
-import { stylexOptions } from './src/shared/build/stylexOptions';
+import { astryxIcons } from './src/shared/build/astryxIcons.ts';
+import { astryxMessages } from './src/shared/build/astryxMessages.ts';
+import { modulePreload } from './src/shared/build/modulePreload.ts';
+import { stylexOptions } from './src/shared/build/stylexOptions.ts';
 
 const preload = modulePreload();
 
@@ -21,28 +21,8 @@ export default defineConfig({
       },
     },
   },
-  // Reachable from other devices over Tailscale. `vp preview` inherits both settings.
+  // Reachable from other devices over Tailscale. `vite preview` inherits both settings.
   server: { host: true, allowedHosts: ['.ts.net'] },
-  lint: {
-    plugins: ['oxc', 'typescript', 'unicorn'],
-    categories: { correctness: 'warn' },
-    env: { builtin: true },
-    ignorePatterns: ['dist/**', 'node_modules/**', '.playwright-cli/**'],
-    jsPlugins: ['./lint/feature-boundaries.js'],
-    rules: {
-      'boundaries/public-feature-imports': 'error',
-      'boundaries/framework-free-core': 'error',
-      'typescript/no-explicit-any': 'error',
-    },
-    options: { typeAware: true, typeCheck: true },
-  },
-  fmt: {
-    singleQuote: true,
-    trailingComma: 'all',
-    printWidth: 100,
-    sortPackageJson: false,
-    ignorePatterns: ['node_modules', 'dist', '.playwright-cli', 'bun.lock'],
-  },
   plugins: [
     preload.plugin,
     astryxMessages(),

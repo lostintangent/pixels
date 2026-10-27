@@ -58,7 +58,7 @@ declare global {
 }
 
 async function buildFixture(): Promise<void> {
-  const build = Bun.spawn(['bunx', 'vp', 'build', 'perf/golden'], {
+  const build = Bun.spawn(['bunx', 'vite', 'build', 'perf/golden'], {
     cwd: resolve(import.meta.dirname, '../../../..'),
     stdout: 'inherit',
     stderr: 'inherit',
