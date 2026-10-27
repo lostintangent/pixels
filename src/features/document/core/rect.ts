@@ -1,4 +1,13 @@
-import type { PixelRect } from './contracts';
+import type { PixelPoint, PixelRect } from './contracts';
+
+export function containsPoint(rect: PixelRect, point: PixelPoint): boolean {
+  return (
+    point.x >= rect.x &&
+    point.y >= rect.y &&
+    point.x < rect.x + rect.width &&
+    point.y < rect.y + rect.height
+  );
+}
 
 export function intersectRect(
   rect: PixelRect,
