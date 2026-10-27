@@ -127,15 +127,6 @@ export interface DocumentStore {
 
 export type AutosaveStatus = 'saved' | 'saving' | 'error';
 
-export interface AutosaveClock {
-  now(): number;
-  setTimeout(callback: () => void, ms: number): unknown;
-  clearTimeout(id: unknown): void;
-}
-
 export interface AutosaveOptions {
-  debounceMs?: number;
-  maxWaitMs?: number;
-  clock?: AutosaveClock;
   onStatus?: (status: AutosaveStatus, error?: unknown) => void;
 }

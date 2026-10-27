@@ -1,10 +1,5 @@
-import type { AutosaveClock } from './contracts';
-
-export const realClock: AutosaveClock = {
-  now: () => Date.now(),
-  setTimeout: (callback, ms) => setTimeout(callback, ms),
-  clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
-};
+const DEBOUNCE_MS = 1000;
+const MAX_WAIT_MS = 5000;
 
 export interface AutosaveScheduler {
   /** Call on every dirty-rect notification. Schedules or reschedules a flush. */
@@ -14,23 +9,17 @@ export interface AutosaveScheduler {
 }
 
 /**
- * Debounces flushes: each change resets a `debounceMs` timer, but the wait since the first
- * pending change is capped at `maxWaitMs`, so a continuous stroke still saves periodically.
- * Pure aside from the injected clock, so tests drive it without real timers.
+ * Debounces flushes: each change resets a 1000ms timer, but the wait since the first pending
+ * change is capped at 5000ms, so a continuous stroke still saves periodically. Tests drive this
+ * with `jest.useFakeTimers()` rather than an injected clock.
  */
-export function createAutosaveScheduler(
-  onFlush: () => void,
-  options: { debounceMs?: number; maxWaitMs?: number; clock?: AutosaveClock } = {},
-): AutosaveScheduler {
-  const debounceMs = options.debounceMs ?? 1000;
-  const maxWaitMs = options.maxWaitMs ?? 5000;
-  const clock = options.clock ?? realClock;
-  let timer: unknown = null;
+export function createAutosaveScheduler(onFlush: () => void): AutosaveScheduler {
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let firstChangeAt: number | null = null;
 
   function scheduleFlushIn(delay: number): void {
-    if (timer !== null) clock.clearTimeout(timer);
-    timer = clock.setTimeout(() => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
       timer = null;
       firstChangeAt = null;
       onFlush();
@@ -39,13 +28,13 @@ export function createAutosaveScheduler(
 
   return {
     noteChange() {
-      const now = clock.now();
+      const now = Date.now();
       if (firstChangeAt === null) firstChangeAt = now;
-      const remainingBeforeMaxWait = maxWaitMs - (now - firstChangeAt);
-      scheduleFlushIn(Math.max(0, Math.min(debounceMs, remainingBeforeMaxWait)));
+      const remainingBeforeMaxWait = MAX_WAIT_MS - (now - firstChangeAt);
+      scheduleFlushIn(Math.max(0, Math.min(DEBOUNCE_MS, remainingBeforeMaxWait)));
     },
     cancel() {
-      if (timer !== null) clock.clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
       timer = null;
       firstChangeAt = null;
     },

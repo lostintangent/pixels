@@ -202,7 +202,7 @@ export function attachAutosave(
     flush().catch(() => {
       /* status already reported via onStatus; a scheduled flush must not throw unhandled */
     });
-  }, options);
+  });
 
   if (fullResavePending) scheduler.noteChange();
 

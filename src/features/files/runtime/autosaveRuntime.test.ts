@@ -1,11 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { createBitmapDocument, packRgba } from '../../document';
-import type {
-  AutosaveClock,
-  DocumentSnapshot,
-  DocumentStore,
-  DocumentSummary,
-} from '../core/contracts';
+import type { DocumentSnapshot, DocumentStore, DocumentSummary } from '../core/contracts';
 import { attachAutosave, saveDocument } from './autosaveRuntime';
 import { terminatePngWorkerClient } from './pngWorkerClient';
 
@@ -17,46 +12,12 @@ afterEach(() => {
   terminatePngWorkerClient();
 });
 
-interface PendingTimer {
-  id: number;
-  dueAt: number;
-  callback: () => void;
-}
-
-function createManualClock() {
-  let now = 0;
-  let nextId = 1;
-  const pending = new Map<number, PendingTimer>();
-  const clock: AutosaveClock = {
-    now: () => now,
-    setTimeout(callback, ms) {
-      const id = nextId++;
-      pending.set(id, { id, dueAt: now + ms, callback });
-      return id;
-    },
-    clearTimeout(id) {
-      pending.delete(id as number);
-    },
-  };
-  // `store` is whichever fake store the test attached to this clock's autosave; a fired timer's
-  // flush does real async work (a PNG worker round trip), so this waits for that store to report
-  // itself idle again instead of guessing at a sleep duration a busy machine can outrun.
-  async function advance(ms: number, store: { waitForIdle(): Promise<void> }): Promise<void> {
-    const target = now + ms;
-    for (;;) {
-      const due = [...pending.values()]
-        .filter((t) => t.dueAt <= target)
-        .sort((a, b) => a.dueAt - b.dueAt);
-      if (due.length === 0) break;
-      const next = due[0]!;
-      pending.delete(next.id);
-      now = next.dueAt;
-      next.callback();
-      await store.waitForIdle();
-    }
-    now = target;
-  }
-  return { clock, advance };
+/** Fires every fake timer due within `ms` of fake-clock advancement, then waits for the fake
+ *  store's own real async work (a PNG worker round trip) to settle before returning — so a
+ *  timer-triggered flush is waited for exactly as long as it actually takes, under `jest.useFakeTimers()`. */
+async function advance(ms: number, store: { waitForIdle(): Promise<void> }): Promise<void> {
+  jest.advanceTimersByTime(ms);
+  await store.waitForIdle();
 }
 
 function createFakeStore(): DocumentStore & {
@@ -72,9 +33,9 @@ function createFakeStore(): DocumentStore & {
   /** Resolves once every `save()` call not currently paused on a `blockNextSave`/
    *  `blockNextSaveAndFail` gate has fully settled, including `flush()`'s own synchronous
    *  follow-up (its `inFlightFlushes--` bookkeeping and `onStatus` call) — not just this fake
-   *  store's own promise. A test driving the manual clock awaits this instead of a fixed sleep,
-   *  so a timer-triggered flush is waited for exactly as long as its real async work (the PNG
-   *  worker round trip) actually takes, however long that is under load. */
+   *  store's own promise. `advance()` awaits this instead of a fixed sleep, so a timer-triggered
+   *  flush is waited for exactly as long as its real async work (the PNG worker round trip)
+   *  actually takes, however long that is under load. */
   waitForIdle(): Promise<void>;
 } {
   const saved = new Map<string, DocumentSnapshot & { thumbnail: Uint8Array }>();
@@ -186,77 +147,70 @@ describe('attachAutosave', () => {
   test('does not save a blank, never-edited document', async () => {
     const document = createBitmapDocument('blank', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
     await advance(1000, store);
     expect(store.saves).toHaveLength(0);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('saves the whole document immediately when initialResave is requested (import, resize)', async () => {
     const document = createBitmapDocument('imported', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, {
-      clock,
-      debounceMs: 100,
-      maxWaitMs: 500,
-      initialResave: true,
-    });
-    await advance(100, store);
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store, { initialResave: true });
+    await advance(1000, store);
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.fullResave).toBe(true);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('an edit schedules a debounced incremental save', async () => {
     const document = createBitmapDocument('doc', 128, 128);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 200, maxWaitMs: 1000 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
 
     document.pixels[0] = packRgba(1, 2, 3, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(199, store);
+    await advance(999, store);
     expect(store.saves).toHaveLength(0);
     await advance(1, store);
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.fullResave).toBe(false);
     expect(store.saves[0]!.tiles).toHaveLength(1);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('reports saving then saved via onStatus', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
+    jest.useFakeTimers();
     const statuses: string[] = [];
     const autosave = attachAutosave(document, store, {
-      clock,
-      debounceMs: 50,
-      maxWaitMs: 200,
       onStatus: (status) => statuses.push(status),
     });
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(50, store);
+    await advance(1000, store);
     expect(statuses).toEqual(['saving', 'saved']);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('a failed flush keeps its dirty tiles pending so a retry saves them', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
+    jest.useFakeTimers();
     const statuses: string[] = [];
     const autosave = attachAutosave(document, store, {
-      clock,
-      debounceMs: 50,
-      maxWaitMs: 200,
       onStatus: (status) => statuses.push(status),
     });
     store.failNext = true;
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    await advance(50, store);
+    await advance(1000, store);
     expect(statuses).toEqual(['saving', 'error']);
     expect(store.saves).toHaveLength(0);
 
@@ -264,13 +218,13 @@ describe('attachAutosave', () => {
     expect(statuses).toEqual(['saving', 'error', 'saving', 'saved']);
     expect(store.saves).toHaveLength(1);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('an edit that lands while a save is in flight is not dropped when that save completes', async () => {
     const document = createBitmapDocument('doc', 256, 256);
     const store = createFakeStore();
-    const { clock } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+    const autosave = attachAutosave(document, store);
 
     const release = store.blockNextSave();
     document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
@@ -297,12 +251,8 @@ describe('attachAutosave', () => {
   test('an older flush finishing after a newer one has started never reports "saved" itself', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock } = createManualClock();
     const statuses: string[] = [];
     const autosave = attachAutosave(document, store, {
-      clock,
-      debounceMs: 5000,
-      maxWaitMs: 20000,
       onStatus: (status) => statuses.push(status),
     });
 
@@ -332,12 +282,8 @@ describe('attachAutosave', () => {
   test("a failure that lands while a newer flush is already saving is not masked by that flush's success", async () => {
     const document = createBitmapDocument('doc', 256, 256);
     const store = createFakeStore();
-    const { clock } = createManualClock();
     const statuses: string[] = [];
     const autosave = attachAutosave(document, store, {
-      clock,
-      debounceMs: 5000,
-      maxWaitMs: 20000,
       onStatus: (status) => statuses.push(status),
     });
 
@@ -378,22 +324,22 @@ describe('attachAutosave', () => {
   test('dispose stops future saves', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 50, maxWaitMs: 200 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
     autosave.dispose();
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     await advance(1000, store);
     expect(store.saves).toHaveLength(0);
+    jest.useRealTimers();
   });
 
   test('dispose flushes any dirty tiles instead of dropping them', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+    const autosave = attachAutosave(document, store);
     document.pixels[0] = packRgba(4, 5, 6, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
-    autosave.dispose(); // long before the 5s debounce would ever fire on its own
+    autosave.dispose(); // long before the 1s debounce would ever fire on its own
     await store.waitForIdle(); // let the real encode + store.save settle
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.fullResave).toBe(false);
@@ -402,8 +348,7 @@ describe('attachAutosave', () => {
   test('a second dispose is a no-op', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+    const autosave = attachAutosave(document, store);
     document.pixels[0] = packRgba(4, 5, 6, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     autosave.dispose();
@@ -416,8 +361,8 @@ describe('attachAutosave', () => {
     const { annotationsFor } = await import('../../annotations/model');
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
 
     annotationsFor(document).commit({
       id: 'r1',
@@ -427,20 +372,21 @@ describe('attachAutosave', () => {
       width: 1,
       color: packRgba(1, 2, 3),
     });
-    await advance(100, store);
+    await advance(1000, store);
 
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.tiles).toHaveLength(0);
     expect(store.saves[0]!.shapes).toHaveLength(1);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('a shape still in preview (mid-drag) never schedules a save on its own', async () => {
     const { annotationsFor } = await import('../../annotations/model');
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
 
     annotationsFor(document).showPreview({
       id: 'preview',
@@ -454,14 +400,15 @@ describe('attachAutosave', () => {
 
     expect(store.saves).toHaveLength(0);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('a failed shapes-only save keeps the shape list dirty, so a retry saves it', async () => {
     const { annotationsFor } = await import('../../annotations/model');
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 50, maxWaitMs: 200 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
 
     store.failNext = true;
     annotationsFor(document).commit({
@@ -472,21 +419,22 @@ describe('attachAutosave', () => {
       width: 1,
       color: packRgba(1, 2, 3),
     });
-    await advance(50, store);
+    await advance(1000, store);
     expect(store.saves).toHaveLength(0); // the one attempt failed
 
     await autosave.flush(); // retry
     expect(store.saves).toHaveLength(1);
     expect(store.saves[0]!.shapes).toHaveLength(1);
     autosave.dispose();
+    jest.useRealTimers();
   });
 
   test('restoring a prior shape list (as undo/redo does, via replace) schedules a save', async () => {
     const { annotationsFor } = await import('../../annotations/model');
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock, advance } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 100, maxWaitMs: 500 });
+    jest.useFakeTimers();
+    const autosave = attachAutosave(document, store);
     const shape = {
       id: 'r1',
       kind: 'rectangle' as const,
@@ -499,14 +447,15 @@ describe('attachAutosave', () => {
     // Undo/redo restores a prior snapshot via `AnnotationSet.replace`, the same call this
     // simulates directly — see `annotationHistoryState` in `annotations/core/commands.ts`.
     annotationsFor(document).replace([shape]);
-    await advance(100, store);
+    await advance(1000, store);
     expect(store.saves).toHaveLength(1);
 
     annotationsFor(document).replace([]); // an "undo" back to no shapes
-    await advance(100, store);
+    await advance(1000, store);
     expect(store.saves).toHaveLength(2);
     expect(store.saves[1]!.shapes).toEqual([]);
     autosave.dispose();
+    jest.useRealTimers();
   });
 });
 
@@ -556,12 +505,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     await withFakeWindow(async (fakeWindow) => {
       const document = createBitmapDocument('doc', 256, 256);
       const store = createFakeStore();
-      const { clock } = createManualClock();
-      const autosave = attachAutosave(document, store, {
-        clock,
-        debounceMs: 5000,
-        maxWaitMs: 20000,
-      });
+      const autosave = attachAutosave(document, store);
 
       const release = store.blockNextSave();
       document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
@@ -593,12 +537,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
       const { annotationsFor } = await import('../../annotations/model');
       const document = createBitmapDocument('doc', 32, 32);
       const store = createFakeStore();
-      const { clock } = createManualClock();
-      const autosave = attachAutosave(document, store, {
-        clock,
-        debounceMs: 5000,
-        maxWaitMs: 20000,
-      });
+      const autosave = attachAutosave(document, store);
 
       annotationsFor(document).commit({
         id: 'r1',
@@ -629,11 +568,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
       const { annotationsFor } = await import('../../annotations/model');
       const document = createBitmapDocument('doc', 32, 32);
       const store = createFakeStore();
-      const { clock } = createManualClock();
       const autosave = attachAutosave(document, store, {
-        clock,
-        debounceMs: 5000,
-        maxWaitMs: 20000,
         flushPendingEdits() {
           annotationsFor(document).commit({
             id: 'r1',
@@ -658,12 +593,8 @@ describe('crash-recovery journal: stashed only at page exit', () => {
   test('flushPendingEdits never runs on an ordinary dispose', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock } = createManualClock();
     let called = false;
     const autosave = attachAutosave(document, store, {
-      clock,
-      debounceMs: 5000,
-      maxWaitMs: 20000,
       flushPendingEdits() {
         called = true;
       },
@@ -677,12 +608,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     await withFakeWindow(async (fakeWindow) => {
       const document = createBitmapDocument('doc', 32, 32);
       const store = createFakeStore();
-      const { clock } = createManualClock();
-      const autosave = attachAutosave(document, store, {
-        clock,
-        debounceMs: 5000,
-        maxWaitMs: 20000,
-      });
+      const autosave = attachAutosave(document, store);
       document.pixels[0] = packRgba(1, 1, 1, 255);
       document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
 
@@ -708,12 +634,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     await withFakeWindow(async (fakeWindow) => {
       const document = createBitmapDocument('doc', 256, 256);
       const store = createFakeStore();
-      const { clock } = createManualClock();
-      const autosave = attachAutosave(document, store, {
-        clock,
-        debounceMs: 5000,
-        maxWaitMs: 20000,
-      });
+      const autosave = attachAutosave(document, store);
 
       const release = store.blockNextSave();
       document.pixels[0] = packRgba(1, 1, 1, 255); // tile 0:0
@@ -742,12 +663,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     await withFakeWindow(async (fakeWindow) => {
       const document = createBitmapDocument('doc', 32, 32);
       const store = createFakeStore();
-      const { clock } = createManualClock();
-      const autosave = attachAutosave(document, store, {
-        clock,
-        debounceMs: 5000,
-        maxWaitMs: 20000,
-      });
+      const autosave = attachAutosave(document, store);
       document.pixels[0] = packRgba(1, 1, 1, 255);
       document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
       await autosave.flush(); // commits normally, off the exit path
@@ -762,8 +678,7 @@ describe('crash-recovery journal: stashed only at page exit', () => {
   test('an ordinary dispose (in-app navigation) never writes to the crash journal', async () => {
     const document = createBitmapDocument('doc', 32, 32);
     const store = createFakeStore();
-    const { clock } = createManualClock();
-    const autosave = attachAutosave(document, store, { clock, debounceMs: 5000, maxWaitMs: 20000 });
+    const autosave = attachAutosave(document, store);
     document.pixels[0] = packRgba(4, 5, 6, 255);
     document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
     autosave.dispose();

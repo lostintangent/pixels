@@ -14,11 +14,7 @@ describe('stale-read guarantee', () => {
   test('navigating away before the debounce fires still persists, and an immediate reload reads it', async () => {
     const store = freshStore();
     const document = createBitmapDocument('doc-a', 8, 8, 'A');
-    const autosave = attachAutosave(document, store, {
-      initialResave: true,
-      debounceMs: 5000,
-      maxWaitMs: 20000,
-    });
+    const autosave = attachAutosave(document, store, { initialResave: true });
     await autosave.flush(); // the initial full save a real "New canvas" flow awaits before navigating in
 
     // Edit, then leave immediately, long before the 5s debounce would ever fire on its own.
@@ -38,16 +34,8 @@ describe('stale-read guarantee', () => {
     const store = freshStore();
     const documentA = createBitmapDocument('doc-a', 8, 8, 'A');
     const documentB = createBitmapDocument('doc-b', 8, 8, 'B');
-    const autosaveA = attachAutosave(documentA, store, {
-      initialResave: true,
-      debounceMs: 5000,
-      maxWaitMs: 20000,
-    });
-    const autosaveB = attachAutosave(documentB, store, {
-      initialResave: true,
-      debounceMs: 5000,
-      maxWaitMs: 20000,
-    });
+    const autosaveA = attachAutosave(documentA, store, { initialResave: true });
+    const autosaveB = attachAutosave(documentB, store, { initialResave: true });
     await Promise.all([autosaveA.flush(), autosaveB.flush()]);
 
     documentA.pixels[0] = packRgba(1, 1, 1, 1);

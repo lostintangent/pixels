@@ -16,8 +16,6 @@ function freshStore() {
   return createDocumentStore({ databaseName: `rename-test-db-${dbCounter++}` });
 }
 
-const SLOW = { debounceMs: 5000, maxWaitMs: 20000 };
-
 function paint(document: ReturnType<typeof createBitmapDocument>, x: number) {
   document.pixels[x] = packRgba(200, 40, 20);
   document.events.invalidate({ x, y: 0, width: 1, height: 1 });
@@ -28,7 +26,7 @@ describe('renameDocument', () => {
     const store = freshStore();
     const document = createBitmapDocument('doc-a', 8, 8, 'Untitled');
     await saveDocument(document, store);
-    const autosave = attachAutosave(document, store, SLOW);
+    const autosave = attachAutosave(document, store);
 
     await renameDocument(document, 'Hero sprite', store, true);
     paint(document, 0);
@@ -46,7 +44,7 @@ describe('renameDocument', () => {
     const store = freshStore();
     const document = createBitmapDocument('doc-a', 8, 8, 'Untitled');
     await saveDocument(document, store);
-    const autosave = attachAutosave(document, store, SLOW);
+    const autosave = attachAutosave(document, store);
 
     paint(document, 1);
     const saving = autosave.flush(); // its snapshot already holds the old name
@@ -60,7 +58,7 @@ describe('renameDocument', () => {
   test('naming a blank canvas that was never stored keeps it in Recent', async () => {
     const store = freshStore();
     const document = createBitmapDocument('doc-blank', 16, 16, 'Untitled');
-    const autosave = attachAutosave(document, store, SLOW);
+    const autosave = attachAutosave(document, store);
     expect(await store.listRecents()).toHaveLength(0);
 
     await renameDocument(document, 'Tiles', store, false);
@@ -76,7 +74,7 @@ describe('renameDocument', () => {
   test('a kept blank canvas still saves later strokes incrementally', async () => {
     const store = freshStore();
     const document = createBitmapDocument('doc-blank', 16, 16, 'Untitled');
-    const autosave = attachAutosave(document, store, SLOW);
+    const autosave = attachAutosave(document, store);
     await renameDocument(document, 'Tiles', store, false);
 
     paint(document, 3);
