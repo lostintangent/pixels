@@ -1,31 +1,19 @@
 import type { BitmapDocument, PackedColor, PixelPoint } from '../../document';
 import type { DocumentHistory } from '../../history';
 import { beginLinePreview, FillWorkspace, floodFill, LinePreviewWorkspace } from '../../tools';
-import type { Brush, LinePreview, MutationResult } from '../../tools/model';
+import type { Brush } from '../../tools/model';
 
-export interface PaintExtras {
-  fill(
-    document: BitmapDocument,
-    at: PixelPoint,
-    color: PackedColor,
-    history: DocumentHistory,
-  ): MutationResult;
-  line(
-    document: BitmapDocument,
-    at: PixelPoint,
-    brush: Brush,
-    history: DocumentHistory,
-  ): LinePreview;
-}
+/** Fill and Line load on first use. Each keeps one workspace for the life of the session. */
+export type PaintExtras = ReturnType<typeof createPaintExtras>;
 
-export function createPaintExtras(): PaintExtras {
+export function createPaintExtras() {
   const fillWorkspace = new FillWorkspace();
   const lineWorkspace = new LinePreviewWorkspace();
   return {
-    fill(document, at, color, history) {
+    fill(document: BitmapDocument, at: PixelPoint, color: PackedColor, history: DocumentHistory) {
       return floodFill(document, { at, color }, history, fillWorkspace);
     },
-    line(document, at, brush, history) {
+    line(document: BitmapDocument, at: PixelPoint, brush: Brush, history: DocumentHistory) {
       return beginLinePreview(document, at, brush, history, lineWorkspace);
     },
   };

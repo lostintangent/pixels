@@ -18,7 +18,7 @@ import type {
   Viewport,
   ViewportInsets,
 } from '../../canvas/model';
-import { convertPixelColorSpace, getPixel, intersectRect } from '../../document';
+import { convertPixelColorSpace, fullRect, getPixel, intersectRect } from '../../document';
 import type {
   BitmapDocument,
   CanvasAnchor,
@@ -280,12 +280,7 @@ export function createEditorSession({
   const setOverlay = (patch: Partial<OverlayState>) =>
     overlay.setState((current) => ({ ...current, ...patch }));
   const document = () => bitmap.state;
-  const documentRect = (): PixelRect => ({
-    x: 0,
-    y: 0,
-    width: document().width,
-    height: document().height,
-  });
+  const documentRect = () => fullRect(document().width, document().height);
 
   function syncHistory(): void {
     update((current) =>
@@ -364,10 +359,7 @@ export function createEditorSession({
     queuedPaint = null;
     if (!press || !paintExtras || press.document !== document()) return;
     if (press.tool === 'fill') {
-      if (paintExtras.fill(press.document, press.at, press.color, history).dirty) {
-        update((current) => recordPaintedColor(current, press.color));
-        syncHistory();
-      }
+      fill(paintExtras, press.at, press.color);
       if (gesture?.kind === 'paint-queued' && gesture.press === press) gesture = { kind: 'fill' };
       return;
     }
@@ -380,6 +372,12 @@ export function createEditorSession({
       gesture = { kind: 'line', preview, color: press.color };
       setOverlay({ preview: linePreview(preview, dirty) });
     } else preview.cancel();
+  }
+
+  function fill(extras: PaintExtras, at: PixelPoint, color: PackedColor): void {
+    if (!extras.fill(document(), at, color, history).dirty) return;
+    update((current) => recordPaintedColor(current, color));
+    syncHistory();
   }
 
   function hasShapes(bitmap: BitmapDocument = document()): boolean {
@@ -538,15 +536,7 @@ export function createEditorSession({
       case 'copy':
       case 'cut': {
         if (!rect) return;
-        const floating = selection.floating;
-        const copied = floating
-          ? {
-              bounds: { ...floating.bounds },
-              sourceBounds: { ...floating.bounds },
-              pixels: floating.pixels.slice(),
-              colorSpace: floating.colorSpace,
-            }
-          : copySelection(document(), rect);
+        const copied = copyPixels(rect);
         if (copied) {
           clipboard.write(copied);
           update((current) => ({ ...current, hasClipboardPixels: true }));
@@ -561,19 +551,23 @@ export function createEditorSession({
       }
       case 'duplicate': {
         if (!rect) return;
-        const floating = selection.floating;
-        const copied = floating
-          ? {
-              bounds: { ...floating.bounds },
-              sourceBounds: { ...floating.bounds },
-              pixels: floating.pixels.slice(),
-              colorSpace: floating.colorSpace,
-            }
-          : copySelection(document(), rect);
+        const copied = copyPixels(rect);
         if (copied) paste(copied, { x: copied.bounds.x, y: copied.bounds.y });
         return;
       }
     }
+  }
+
+  /** The floating pixels if there are any, else the document's pixels under the marquee. */
+  function copyPixels(rect: PixelRect): FloatingSelection | null {
+    const floating = selection.floating;
+    if (!floating) return copySelection(document(), rect);
+    return {
+      bounds: { ...floating.bounds },
+      sourceBounds: { ...floating.bounds },
+      pixels: floating.pixels.slice(),
+      colorSpace: floating.colorSpace,
+    };
   }
 
   /** Lifts like a drag, so a run of nudges stays one float and commits as one undo step. */
@@ -737,9 +731,7 @@ export function createEditorSession({
           update((current) => ({ ...current, chromeHidden: !current.chromeHidden }));
           return;
         case 'open':
-          if (gesture) session.endGesture();
-          if (command.panel === 'export') commitFloating();
-          update((current) => openPanel(current, command.panel));
+          session.setPanel(command.panel);
           return;
         case 'open-file':
           // File pickers need the DOM, so the shell handles this one before it reaches here.
@@ -1003,10 +995,7 @@ export function createEditorSession({
           gesture = { kind: 'paint-queued', press: queuedPaint };
           void loadPaintExtras();
         } else if (tool === 'fill') {
-          if (paintExtras.fill(document(), cell, color, history).dirty) {
-            update((current) => recordPaintedColor(current, color));
-            syncHistory();
-          }
+          fill(paintExtras, cell, color);
           gesture = { kind: 'fill' };
         } else {
           const preview = paintExtras.line(document(), cell, brush, history);
@@ -1101,8 +1090,6 @@ export function createEditorSession({
           current.shapes.lift();
           break;
         case 'shape-queued':
-          current.press.ended = true;
-          break;
         case 'paint-queued':
           current.press.ended = true;
           break;
