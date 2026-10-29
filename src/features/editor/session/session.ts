@@ -194,7 +194,7 @@ export interface EditorSession {
   /** Pastes outside pixels centered on the canvas as a selection. False when they don't fit. */
   place(image: Pick<BitmapDocument, 'width' | 'height' | 'pixels' | 'colorSpace'>): boolean;
   /** Loads the annotation-aware resize on first use, so it stays off the first load. */
-  resizeDocument(width: number, height: number, anchor: CanvasAnchor): Promise<void>;
+  resizeDocument(width: number, height: number, anchor: CanvasAnchor): Promise<boolean>;
   toDocument(point: ScreenPoint): PixelPoint;
   /** The cursor over a markup shape or one of its handles, or null over anything else. */
   shapeCursorAt(point: PixelPoint, alt: boolean): string | null;
@@ -902,11 +902,12 @@ export function createEditorSession({
         ({ resizeAnnotatedDocument } = await import('../../annotations'));
       } catch (error) {
         reportLoadFailure(error);
-        return;
+        return false;
       }
       if (gesture) session.endGesture();
       commitFloating();
       installDocument(resizeAnnotatedDocument(document(), history, width, height, anchor));
+      return true;
     },
 
     toDocument(point) {

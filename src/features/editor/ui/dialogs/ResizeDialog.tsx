@@ -45,8 +45,7 @@ export function ResizeDialog({ layout }: { layout: Layout }) {
   const crops = width < current.width || height < current.height;
   const close = () => session.setPanel(null);
   const resize = async (size: Size = fields.latest()) => {
-    await session.resizeDocument(size.width, size.height, anchor);
-    close();
+    if (await session.resizeDocument(size.width, size.height, anchor)) close();
   };
   const submit = (size: Size) => {
     if (size.width !== current.width || size.height !== current.height) void resize(size);
