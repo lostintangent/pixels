@@ -35,9 +35,14 @@ export function modulePreload(): {
     },
     // A missing graph retains Vite's full list, so an unexpected hook order cannot silently
     // remove a dependency. The initial-size gate will catch the resulting extra bytes.
-    resolveDependencies: (_filename, deps) => {
+    resolveDependencies: (filename, deps) => {
       const graph = entryGraph;
-      return graph ? deps.filter((dep) => !graph.has(dep)) : deps;
+      // A failed JS modulepreload keeps WebKit's matching dynamic import failed after reconnect.
+      // Let retryable editor surfaces fetch their JS through the module loader; retain CSS hints.
+      const safeDeps = /(?:^|\/)(?:shapes|all|picker|surfaces)-[^/]+\.js$/.test(filename)
+        ? deps.filter((dep) => !dep.endsWith('.js'))
+        : deps;
+      return graph ? safeDeps.filter((dep) => !graph.has(dep)) : safeDeps;
     },
   };
 }
