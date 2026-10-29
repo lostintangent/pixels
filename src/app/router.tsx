@@ -4,7 +4,7 @@ import {
   createRouter,
   redirect,
 } from '@tanstack/react-router';
-import { EditorShell } from '../features/editor';
+import { EditorShell, RouteError } from '../features/editor';
 import {
   createDocumentId,
   createDocumentStore,
@@ -46,6 +46,7 @@ const documentRoute = createRoute({
 export const router = createRouter({
   routeTree: rootRoute.addChildren([indexRoute, documentRoute]),
   context: { documentStore: createDocumentStore() },
+  defaultErrorComponent: RouteError,
   // Vite's `base`: `/` locally, `/pixels/` for the GitHub Pages playground.
   basepath: import.meta.env.BASE_URL,
 });
