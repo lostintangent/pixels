@@ -4,6 +4,7 @@ import { CircleAlert } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
+import { isLoadFailure, reportLoadFailure } from '../../../../shared/chunkErrors';
 import { createBitmapDocument } from '../../../document';
 import type { BitmapDocument, PackedColor } from '../../../document';
 import {
@@ -76,6 +77,7 @@ export function FileActionsProvider({
     const fail = (error: unknown, fallback: string, storageFull?: string) => {
       clearTimeout(slow);
       opening(false);
+      if (isLoadFailure(error)) return reportLoadFailure(error);
       const message =
         error instanceof SaveError && storageFull
           ? storageFull

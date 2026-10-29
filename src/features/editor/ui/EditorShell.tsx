@@ -213,14 +213,16 @@ function Panels({ layout }: { layout: Layout }) {
   useShortcuts(session, run);
   useClipboard(session, files);
   const panel = useEditorState((state) => state.panel);
+  const close = () => session.setPanel(null);
 
   return (
     <>
-      <NewCanvasDialog when={panel === 'new'} layout={layout} />
-      <ResizeDialog when={panel === 'resize'} layout={layout} />
-      <ShortcutsDialog when={panel === 'shortcuts'} layout={layout} />
+      <NewCanvasDialog when={panel === 'new'} onLoadFail={close} layout={layout} />
+      <ResizeDialog when={panel === 'resize'} onLoadFail={close} layout={layout} />
+      <ShortcutsDialog when={panel === 'shortcuts'} onLoadFail={close} layout={layout} />
       <ExportDialog
         when={panel === 'export'}
+        onLoadFail={close}
         layout={layout}
         onExport={(fileName, scale) => {
           files.exportPng(fileName, scale);
@@ -441,7 +443,7 @@ function DesktopTools({ fade, rail }: { fade: Fade; rail: RefObject<HTMLElement 
           hasTooltips
         />
       </Island>
-      <ShapesPopover {...shapes} when={shapes.open} layout="desktop" />
+      <ShapesPopover {...shapes} when={shapes.open} onLoadFail={shapes.onClose} layout="desktop" />
       <ColorPickerPopover
         anchorRef={rail}
         isOpen={editing !== null}
@@ -718,7 +720,13 @@ function PhoneDock({ fade, dock, onEdit }: PhoneDockProps) {
         />
       </div>
       {/* After the rail, so the anchor ref is attached before the popover measures it. */}
-      <ShapesPopover {...shapes} when={shapes.open} layout="phone" dock={dock} />
+      <ShapesPopover
+        {...shapes}
+        when={shapes.open}
+        onLoadFail={shapes.onClose}
+        layout="phone"
+        dock={dock}
+      />
     </Island>
   );
 }

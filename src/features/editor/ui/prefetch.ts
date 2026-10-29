@@ -2,7 +2,6 @@ import { preloadColorPicker } from '../../palette';
 import { preloadPaintExtras, preloadShapeController } from '../session/session';
 import { preloadDialogs } from './dialogs';
 import { preloadMenus } from './menus';
-import { preloadToasts } from './toasts';
 
 /** How long input must pause before background work may start. */
 const QUIET_MS = 1000;
@@ -32,7 +31,6 @@ export function prefetchWhenIdle(): void {
     }
     for (const type of INPUT) window.removeEventListener(type, wait, true);
     preloadMenus();
-    preloadToasts();
     preloadDialogs();
     preloadColorPicker();
     preloadPaintExtras();

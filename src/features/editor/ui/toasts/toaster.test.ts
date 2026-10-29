@@ -25,12 +25,14 @@ describe('toaster', () => {
     expect(live.dismissed).toEqual(['Saved']);
   });
 
-  test('asks for a viewport once, on the first early toast', () => {
+  test('every early toast asks for a viewport, so a failed load is retried', () => {
     let requests = 0;
     const toaster = createToaster(() => requests++);
     toaster.show(toast('One'));
     toaster.show(toast('Two'));
-    expect(requests).toBe(1);
+    toaster.attach(viewport().show);
+    toaster.show(toast('Three'));
+    expect(requests).toBe(2);
   });
 
   test('flushes early toasts in order when a viewport attaches', () => {

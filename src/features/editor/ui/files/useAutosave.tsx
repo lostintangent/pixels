@@ -1,5 +1,6 @@
 import { Button } from '@astryxdesign/core/Button';
 import { useEffect } from 'react';
+import { saveBeforeReload } from '../../../../shared/chunkErrors';
 import { attachAutosave } from '../../../files';
 import type { Autosave, DocumentStore } from '../../../files';
 import type { EditorSession } from '../../session/session';
@@ -18,6 +19,11 @@ export function useAutosave(session: EditorSession, store: DocumentStore): void 
   useEffect(() => {
     let autosave: Autosave | null = null;
     let dismissError: (() => void) | null = null;
+    // A Reload offered for a failed load or an update stores everything first.
+    const stopSaving = saveBeforeReload(async () => {
+      session.flushPendingEdits();
+      await autosave?.flush();
+    });
 
     const attach = (initialResave: boolean) => {
       autosave?.dispose();
@@ -59,6 +65,7 @@ export function useAutosave(session: EditorSession, store: DocumentStore): void 
 
     return () => {
       subscription.unsubscribe();
+      stopSaving();
       dismissError?.();
       // Leaving for another document ends a floating selection the way a tool change does, so
       // the move the artist last saw is what gets saved. A reload never runs this and keeps the

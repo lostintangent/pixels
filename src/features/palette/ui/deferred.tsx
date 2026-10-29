@@ -9,11 +9,13 @@ const LazyPopover = deferred(() => picker().then((m) => m.ColorPickerPopover));
 const LazySheet = deferred(() => picker().then((m) => m.ColorSheet));
 
 export function ColorPickerPopover(props: ColorPickerPopoverProps) {
-  return <LazyPopover when={props.isOpen} {...props} />;
+  return (
+    <LazyPopover when={props.isOpen} onLoadFail={() => props.onOpenChange(false)} {...props} />
+  );
 }
 
 export function ColorSheet(props: ColorSheetProps) {
-  return <LazySheet when={props.isOpen} {...props} />;
+  return <LazySheet when={props.isOpen} onLoadFail={() => props.onOpenChange(false)} {...props} />;
 }
 
 /** Warms the picker when the user heads toward it. */

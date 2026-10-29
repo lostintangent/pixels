@@ -6,6 +6,7 @@ import { useSelector } from '@tanstack/react-store';
 import { Download } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
+import { isLoadFailure, reportLoadFailure, workerError } from '../../../../shared/chunkErrors';
 import { findAnnotationsFor } from '../../../annotations/model';
 import type { BitmapDocument } from '../../../document';
 import { exportFileName, exportSizeLabel } from '../../core/exportName';
@@ -94,7 +95,7 @@ let lastRequest = 0;
 
 function createPreviewWorker(): Worker {
   const created = new Worker(new URL('./previewWorker.ts', import.meta.url), { type: 'module' });
-  created.addEventListener('error', () => {
+  created.addEventListener('error', (event) => {
     // A script-load failure (a flaky network, or a server restart that changed chunk hashes
     // under an open tab) can never recover on this worker: it won't deliver a message for the
     // in-flight request, or any future one, so the preview would stay blank for the rest of the
@@ -103,6 +104,8 @@ function createPreviewWorker(): Worker {
     // fix as `pngWorkerClient.ts`'s own cached client.
     created.terminate();
     if (worker === created) worker = undefined;
+    const error = workerError(event);
+    if (isLoadFailure(error)) reportLoadFailure(error);
   });
   return created;
 }

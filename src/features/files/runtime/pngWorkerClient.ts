@@ -1,3 +1,4 @@
+import { workerError } from '../../../shared/chunkErrors';
 import type { Annotation } from '../../annotations';
 import type { DocumentColorSpace } from '../../document';
 import { ImportError, type ImportErrorReason } from '../core/contracts';
@@ -86,7 +87,7 @@ function createWorkerBackedClient(onFatalError: () => void): PngWorkerClient {
       }
     },
   );
-  worker.addEventListener('error', (event: ErrorEvent) => {
+  worker.addEventListener('error', (event) => {
     // A worker-level failure (e.g. a load error, most often a chunk 404 after a deploy, or a
     // flaky network dropping the script request) can't be correlated to one request; fail every
     // request still in flight rather than hanging them forever. The worker that failed to load
@@ -94,7 +95,7 @@ function createWorkerBackedClient(onFatalError: () => void): PngWorkerClient {
     // cache here too — otherwise every later call would keep reusing this dead worker, postMessage
     // into it forever, and never settle, which is exactly what left Open stuck on "Opening…".
     for (const [id, request] of pending) {
-      request.reject(new Error(event.message || 'PNG worker failed'));
+      request.reject(workerError(event));
       pending.delete(id);
     }
     worker.terminate();
