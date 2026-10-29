@@ -10,10 +10,7 @@ import { pixelVars } from './tokens.stylex';
 
 const COPY = {
   offline: ['You’re offline', 'Part of Pixels hasn’t loaded yet. This opens once you reconnect.'],
-  reload: [
-    'Pixels needs a reload',
-    'Part of Pixels didn’t load, usually because a newer version is out.',
-  ],
+  reload: ['Pixels needs a reload', 'Part of Pixels didn’t load. Reloading keeps your work.'],
   broken: ['This document didn’t open', 'Something went wrong while opening it.'],
 } as const;
 
