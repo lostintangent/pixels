@@ -10,6 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { reportLoadFailure } from '../../../../shared/chunkErrors';
 import { displayZoom, formatZoom } from '../../core/zoom';
 import type { Layout } from '../../session/session';
 import { useEditor, useEditorState } from '../EditorContext';
@@ -144,18 +145,23 @@ let surfaces: Surfaces | null = null;
 let loading: Promise<void> | undefined;
 const arrivals = new Set<() => void>();
 
-/** Fetches the menus. Safe to call often, and a failed fetch is retried on the next intent. */
-export function preloadMenus(): void {
-  loading ??= import('./surfaces').then(
+/** Fetches the menus, at most once at a time. A failure clears it, so the next intent retries. */
+function loadMenus(): Promise<void> {
+  return (loading ??= import('./surfaces').then(
     (module) => {
       surfaces = module;
       for (const notify of arrivals) notify();
     },
     (error: unknown) => {
-      console.error(error);
       loading = undefined;
+      throw error;
     },
-  );
+  ));
+}
+
+/** Warms the menus in the background. Safe to call often, and silent when it fails. */
+export function preloadMenus(): void {
+  loadMenus().catch(() => {});
 }
 
 const subscribe = (notify: () => void) => {
@@ -229,7 +235,10 @@ function DeferredMenu({ surface, layout, button, hasChevron = true }: DeferredMe
         }}
         onClick={() => {
           handoff.current.open = true;
-          preloadMenus();
+          loadMenus().catch((error: unknown) => {
+            handoff.current.open = false;
+            reportLoadFailure(error);
+          });
         }}
       />
     </span>

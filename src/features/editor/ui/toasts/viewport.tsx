@@ -1,7 +1,7 @@
 import { Button } from '@astryxdesign/core/Button';
 import { ToastViewport, useToast } from '@astryxdesign/core/Toast';
 import type { ShowToastFn, ToastViewportProps } from '@astryxdesign/core/Toast';
-import { useEffect } from 'react';
+import { useEffect, useEffectEvent } from 'react';
 import { reloadPixels } from '../../../../shared/chunkErrors';
 import type { Interruption } from '../../../../shared/chunkErrors';
 
@@ -35,9 +35,9 @@ function Attach({ attach }: Pick<ToastLayerProps, 'attach'>) {
  */
 function Explain({ interruption }: Pick<ToastLayerProps, 'interruption'>) {
   const show = useToast();
-
-  useEffect(() => {
-    if (!interruption) return;
+  // Each toast change hands out a new `show`. Rerunning for it would replace the offline toast
+  // as it leaves on reconnect, so only a new interruption runs this again.
+  const explain = useEffectEvent((interruption: Interruption) => {
     let dismiss: (() => void) | undefined;
     const offline = () => {
       dismiss = show({
@@ -63,6 +63,8 @@ function Explain({ interruption }: Pick<ToastLayerProps, 'interruption'>) {
     const online = () => dismiss?.();
     window.addEventListener('online', online);
     return () => window.removeEventListener('online', online);
-  }, [interruption, show]);
+  });
+
+  useEffect(() => (interruption ? explain(interruption) : undefined), [interruption]);
   return null;
 }
