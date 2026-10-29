@@ -1,0 +1,24 @@
+diff --git a/dist/Toast/ToastViewport.js b/dist/Toast/ToastViewport.js
+index bcc42ce1c062ad359e099b0873f13e0ebe734cf3..a1551b56f3bc246ffae62e4c20ba040cf8879525 100644
+--- a/dist/Toast/ToastViewport.js
++++ b/dist/Toast/ToastViewport.js
+@@ -142,7 +142,19 @@ function ToastRow({
+   const isAutoHide = o.isAutoHide ?? (type === 'error' ? false : true);
+   const dur = o.autoHideDuration ?? 5000;
+   const [isSettled, setIsSettled] = useState(false);
++  const row = useRef(null);
++  // A row dismissed before its entrance transition starts (in the same frame, or in a hidden tab)
++  // collapses from 0fr to 0fr, which runs no transition, so no transitionend would remove it.
++  useEffect(() => {
++    if (!isExiting) return;
++    const frame = requestAnimationFrame(() => {
++      const el = row.current;
++      if (el && !el.getAnimations?.().some(a => a.transitionProperty === 'grid-template-rows')) onExited(entry.id);
++    });
++    return () => cancelAnimationFrame(frame);
++  }, [isExiting, onExited, entry.id]);
+   return /*#__PURE__*/_jsx("div", {
++    ref: row,
+     "data-toast-id": entry.id,
+     ...{
+       0: {

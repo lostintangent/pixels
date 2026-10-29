@@ -28,6 +28,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@astryxdesign/core@0.6.3": "patches/@astryxdesign%2Fcore@0.6.3.patch",
+  },
   "packages": {
     "@astryxdesign/core": ["@astryxdesign/core@0.6.3", "", { "dependencies": { "intl-messageformat": "^11.2.9" }, "peerDependencies": { "@stylexjs/stylex": "^0.19.0", "react": ">=19.0.0", "react-dom": ">=19.0.0" } }, "sha512-ieaZZn0wjP8saWkfSXFgzvrA0UfXWeOBsvuvsbtJ0789LdYacTJS83UXsROcvPLONUIOO/Iy1Ar5+70xvcVpgg=="],
 

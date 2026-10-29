@@ -37,5 +37,8 @@
     "perf:import": "bun src/features/files/perf/run-import.ts",
     "golden:export": "bun src/features/files/golden/run.ts",
     "durability": "bun src/features/files/durability/run.ts"
+  },
+  "patchedDependencies": {
+    "@astryxdesign/core@0.6.3": "patches/@astryxdesign%2Fcore@0.6.3.patch"
   }
 }
