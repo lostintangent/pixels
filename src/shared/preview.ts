@@ -10,13 +10,14 @@ export interface ProductionPreview {
   port: number;
 }
 
-async function buildApp(output: string, manifest: boolean): Promise<void> {
+async function buildApp(output: string, manifest: boolean, base?: string): Promise<void> {
   const build = Bun.spawn(
     [
       'bunx',
       'vite',
       'build',
       ...(manifest ? ['--manifest'] : []),
+      ...(base ? ['--base', base] : []),
       '--outDir',
       output,
       '--emptyOutDir',
@@ -34,8 +35,8 @@ async function availablePort(): Promise<number> {
   return port;
 }
 
-async function waitForPreview(port: number): Promise<void> {
-  const url = `http://127.0.0.1:${port}/`;
+async function waitForPreview(port: number, base: string): Promise<void> {
+  const url = `http://127.0.0.1:${port}${base}`;
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
       const response = await fetch(url);
@@ -92,12 +93,13 @@ async function stopPreview(preview: Bun.Subprocess): Promise<void> {
 
 /** Builds the app into a private directory and guarantees preview tree and files are removed. */
 export async function withProductionPreview<T>(
-  options: { manifest?: boolean },
+  options: { manifest?: boolean; base?: string },
   run: (preview: ProductionPreview) => Promise<T>,
 ): Promise<T> {
+  const base = options.base ?? '/';
   const output = await mkdtemp(join(tmpdir(), 'pixels-preview-'));
   try {
-    await buildApp(output, options.manifest ?? false);
+    await buildApp(output, options.manifest ?? false, options.base);
     const port = await availablePort();
     const server = Bun.spawn(
       [
@@ -109,6 +111,7 @@ export async function withProductionPreview<T>(
         '--port',
         String(port),
         '--strictPort',
+        ...(options.base ? ['--base', options.base] : []),
         '--outDir',
         output,
       ],
@@ -138,8 +141,9 @@ export async function withProductionPreview<T>(
     process.on('SIGINT', onSigint);
     process.on('SIGTERM', onSigterm);
     try {
-      await waitForPreview(port);
-      return await run({ baseUrl: `http://127.0.0.1:${port}`, output, port });
+      await waitForPreview(port, base);
+      const baseUrl = `http://127.0.0.1:${port}${base === '/' ? '' : base.replace(/\/$/, '')}`;
+      return await run({ baseUrl, output, port });
     } finally {
       process.off('SIGINT', onSigint);
       process.off('SIGTERM', onSigterm);

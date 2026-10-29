@@ -4,6 +4,7 @@ import stylex from '@stylexjs/unplugin/vite';
 import { astryxIcons } from './src/shared/build/astryxIcons.ts';
 import { astryxMessages } from './src/shared/build/astryxMessages.ts';
 import { modulePreload } from './src/shared/build/modulePreload.ts';
+import { serviceWorker } from './src/shared/build/serviceWorker.ts';
 import { stylexOptions } from './src/shared/build/stylexOptions.ts';
 
 const preload = modulePreload();
@@ -29,6 +30,7 @@ export default defineConfig({
     astryxIcons(),
     stylex(stylexOptions),
     react(),
+    serviceWorker(),
     {
       name: 'stylex-dev-html',
       transformIndexHtml(_html, context) {
