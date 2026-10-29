@@ -1,5 +1,6 @@
 import { createStore } from '@tanstack/store';
 import type { Store } from '@tanstack/store';
+import { reportLoadFailure } from '../../../shared/chunkErrors';
 import {
   boundView,
   documentToScreen,
@@ -72,13 +73,21 @@ import type { PaintExtras } from './paintExtras';
 let paintModule: Promise<typeof import('./paintExtras')> | null = null;
 
 function importPaintExtras(): Promise<typeof import('./paintExtras')> {
-  paintModule ??= import('./paintExtras');
+  paintModule ??= import('./paintExtras').catch((error: unknown) => {
+    paintModule = null;
+    throw error;
+  });
   return paintModule;
 }
 
 /** Idle prefetch keeps the first Fill or Line gesture instant without adding to initial JS. */
 export function preloadPaintExtras(): void {
-  void importPaintExtras();
+  void importPaintExtras().catch(() => {});
+}
+
+/** Warm shape interaction without treating a background fetch failure as a user intent. */
+export function preloadShapeController(): void {
+  void import('./shapes').catch(() => {});
 }
 
 /** Modifier state for one canvas gesture sample. */
@@ -310,24 +319,31 @@ export function createEditorSession({
 
   /** Loads shape interaction before the first press can need it. */
   function loadShapes(): Promise<void> {
-    shapesLoading ??= import('./shapes').then(({ createShapeController }) => {
-      shapes = createShapeController({
-        document,
-        history,
-        zoom: () => viewport.state.zoom,
-        state: () => state.state,
-        update,
-        showHandles: (id) => {
-          if (overlay.state.selectedAnnotationId !== id) setOverlay({ selectedAnnotationId: id });
-        },
-        clearPixels: () => {
-          commitFloating();
-          if (state.state.selection) setSelection(null);
-        },
-        committed: syncHistory,
+    shapesLoading ??= import('./shapes')
+      .then(({ createShapeController }) => {
+        shapes = createShapeController({
+          document,
+          history,
+          zoom: () => viewport.state.zoom,
+          state: () => state.state,
+          update,
+          showHandles: (id) => {
+            if (overlay.state.selectedAnnotationId !== id) setOverlay({ selectedAnnotationId: id });
+          },
+          clearPixels: () => {
+            commitFloating();
+            if (state.state.selection) setSelection(null);
+          },
+          committed: syncHistory,
+        });
+        replayQueuedPress();
+      })
+      .catch((error: unknown) => {
+        shapesLoading = null;
+        queuedPress = null;
+        if (gesture?.kind === 'shape-queued') gesture = null;
+        reportLoadFailure(error);
       });
-      replayQueuedPress();
-    });
     return shapesLoading;
   }
 
@@ -353,10 +369,17 @@ export function createEditorSession({
   }
 
   function loadPaintExtras(): Promise<void> {
-    paintLoading ??= importPaintExtras().then(({ createPaintExtras }) => {
-      paintExtras = createPaintExtras();
-      replayQueuedPaint();
-    });
+    paintLoading ??= importPaintExtras()
+      .then(({ createPaintExtras }) => {
+        paintExtras = createPaintExtras();
+        replayQueuedPaint();
+      })
+      .catch((error: unknown) => {
+        paintLoading = null;
+        queuedPaint = null;
+        if (gesture?.kind === 'paint-queued') gesture = null;
+        reportLoadFailure(error);
+      });
     return paintLoading;
   }
 
@@ -874,7 +897,13 @@ export function createEditorSession({
 
     async resizeDocument(width, height, anchor) {
       if (gesture) session.endGesture();
-      const { resizeAnnotatedDocument } = await import('../../annotations');
+      let resizeAnnotatedDocument: typeof import('../../annotations').resizeAnnotatedDocument;
+      try {
+        ({ resizeAnnotatedDocument } = await import('../../annotations'));
+      } catch (error) {
+        reportLoadFailure(error);
+        return;
+      }
       if (gesture) session.endGesture();
       commitFloating();
       installDocument(resizeAnnotatedDocument(document(), history, width, height, anchor));

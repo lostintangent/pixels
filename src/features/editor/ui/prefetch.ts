@@ -1,5 +1,5 @@
 import { preloadColorPicker } from '../../palette';
-import { preloadPaintExtras } from '../session/session';
+import { preloadPaintExtras, preloadShapeController } from '../session/session';
 import { preloadDialogs } from './dialogs';
 import { preloadMenus } from './menus';
 import { preloadToasts } from './toasts';
@@ -20,14 +20,24 @@ export function prefetchWhenIdle(): void {
   if (scheduled) return;
   scheduled = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let waitingForOnline = false;
 
   const run = () => {
+    if (!navigator.onLine) {
+      if (!waitingForOnline) {
+        waitingForOnline = true;
+        window.addEventListener('online', resume, { once: true });
+      }
+      return;
+    }
     for (const type of INPUT) window.removeEventListener(type, wait, true);
     preloadMenus();
     preloadToasts();
     preloadDialogs();
     preloadColorPicker();
     preloadPaintExtras();
+    preloadShapeController();
+    void import('../../annotations').catch(() => {});
   };
   const idle = () =>
     typeof requestIdleCallback === 'function'
@@ -36,6 +46,10 @@ export function prefetchWhenIdle(): void {
   function wait() {
     clearTimeout(timer);
     timer = setTimeout(idle, QUIET_MS);
+  }
+  function resume() {
+    waitingForOnline = false;
+    wait();
   }
 
   for (const type of INPUT) window.addEventListener(type, wait, { capture: true, passive: true });

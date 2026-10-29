@@ -1,6 +1,7 @@
 import type { BitmapDocument, DocumentColorSpace, PixelRect } from '../../document';
 import { intersectRect, unionRect } from '../../document';
 import { watchAnnotationSet, type AnnotationSet } from '../../annotations/model';
+import { reportLoadFailure } from '../../../shared/chunkErrors';
 import type { Viewport } from '../core/contracts';
 import type { CanvasRenderer, OverlayPreview, OverlayState, RendererSurface } from './contracts';
 
@@ -228,12 +229,18 @@ export function createCanvasRenderer(surface: RendererSurface): CanvasRenderer {
   function loadPainter(): void {
     if (painter || painterLoading) return;
     painterLoading = true;
-    void import('../../annotations').then((module) => {
-      if (disposed) return;
-      painter = module;
-      annotationDirty = overlayDirty = true;
-      schedule();
-    });
+    void import('../../annotations').then(
+      (module) => {
+        if (disposed) return;
+        painter = module;
+        annotationDirty = overlayDirty = true;
+        schedule();
+      },
+      (error: unknown) => {
+        painterLoading = false;
+        if (!disposed) reportLoadFailure(error);
+      },
+    );
   }
 
   function updateBackingStore(view: Viewport): void {
