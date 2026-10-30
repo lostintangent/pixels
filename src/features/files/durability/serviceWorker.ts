@@ -116,8 +116,8 @@ const offlineAfterOneVisit: Case = {
       await waitForCanvasReady(page);
       if (!(await samePixels(page, clip, painted))) return false;
 
-      // Export lives in the same lazy chunk as Shapes, New, and Resize — opening it offline
-      // proves the whole precached dialogs surface, not just the shell and main bundle.
+      // Export lives in the same lazy chunk as New and Resize (`dialogs/all.ts`) — opening it
+      // offline proves the whole precached dialogs surface, not just the shell and main bundle.
       const downloaded = page.waitForEvent('download', { timeout: 10_000 });
       await page.keyboard.press('Meta+Shift+e');
       await page.getByRole('button', { name: 'Export' }).click();
