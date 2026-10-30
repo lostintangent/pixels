@@ -16,8 +16,9 @@ const COPY = {
 
 /**
  * The page a route shows when its loader or editor throws. Code that never arrived needs the
- * network: offline, it waits and retries on reconnect, and online only a reload helps, since
- * Chromium remembers the failed fetch. Anything else can be tried again, or left for a new canvas.
+ * network, and only a reload fetches it again, since Chromium remembers the failed import. Offline,
+ * the page reloads on reconnect. It holds no unsaved work. Anything else can be tried again, or
+ * left for a new canvas.
  */
 export function RouteError({ error }: ErrorComponentProps) {
   const router = useRouter();
@@ -29,10 +30,10 @@ export function RouteError({ error }: ErrorComponentProps) {
     : navigator.onLine && !unreachable
       ? 'reload'
       : 'offline';
-  const retry = () => {
-    setUnreachable(false);
-    void router.invalidate();
-  };
+  const retry =
+    state === 'broken'
+      ? () => void router.invalidate()
+      : () => void reloadPixels().then((reloaded) => reloaded || setUnreachable(true));
 
   useEffect(() => {
     if (state !== 'offline') return;
@@ -59,11 +60,7 @@ export function RouteError({ error }: ErrorComponentProps) {
           <Button
             variant="primary"
             label={state === 'reload' ? 'Reload' : 'Try again'}
-            onClick={
-              state === 'reload'
-                ? () => void reloadPixels().then((reloaded) => reloaded || setUnreachable(true))
-                : retry
-            }
+            onClick={retry}
           />
         </div>
       </section>
