@@ -33,6 +33,7 @@ import { useEditor, useEditorState } from '../EditorContext';
 import { useFileActions } from '../files/FileActions';
 import { formatEdited, useRecents } from '../files/useRecents';
 import type { RecentDocument } from '../files/useRecents';
+import { pixelVars } from '../tokens.stylex';
 import { exposeCheckedState } from './checked';
 import type { CheckedKind } from './checked';
 import { Logo } from './index';
@@ -296,6 +297,8 @@ export function RenameField({ onDone }: { onDone: (restoreFocus: boolean) => voi
   );
 }
 
+const THUMB_SIZE = 28;
+
 const styles = stylex.create({
   // Same box, mark, and type as the title pill, so the name doesn't move when it becomes editable.
   field: {
@@ -334,24 +337,27 @@ const styles = stylex.create({
   checked: { display: 'flex', alignItems: 'center', gap: spacingVars['--spacing-2'] },
   shortcut: { display: { default: 'contents', '@media (pointer: coarse)': 'none' } },
   thumb: {
-    display: 'grid',
-    placeItems: 'center',
-    width: 28,
-    height: 28,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
     overflow: 'hidden',
     borderRadius: 6,
+    backgroundColor: pixelVars.canvasBg,
     boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
-    backgroundImage:
-      'repeating-conic-gradient(light-dark(#fff, #3a3a3c) 0 25%, light-dark(#ebebef, #313133) 0 50%)',
-    backgroundSize: '6px 6px',
   },
   thumbImage: {
     display: 'block',
-    width: '100%',
-    height: '100%',
-    objectFit: 'contain',
+    flexShrink: 0,
     imageRendering: 'pixelated',
+    backgroundImage:
+      'repeating-conic-gradient(light-dark(#fff, #3a3a3c) 0 25%, light-dark(#ebebef, #313133) 0 50%)',
+    backgroundSize: '6px 6px',
+    backgroundPosition: 'center',
   },
+  thumbSize: (width: number, height: number) => ({ width, height }),
 });
 
 /** A menu row's shortcut. Hidden on touch, where it's noise beside a 44px row. */
@@ -388,11 +394,23 @@ function Checked({
   );
 }
 
-/** The stored thumbnail at icon size, crisp and on a checker so transparency reads. */
+/**
+ * The stored thumbnail fitted whole into an icon tile, crisp and on a checker so transparency
+ * reads. Like the editor, the art sits on workspace gray, so a portrait's side bands don't pass
+ * for transparent pixels. The fit comes from the document's size, and a 1 px floor keeps a
+ * hairline document visible.
+ */
 function Thumbnail({ recent }: { recent: RecentDocument }) {
+  const scale = THUMB_SIZE / Math.max(recent.width, recent.height, 1);
+  const width = Math.max(1, Math.round(recent.width * scale));
+  const height = Math.max(1, Math.round(recent.height * scale));
   return (
     <span aria-hidden {...stylex.props(styles.thumb)}>
-      <img src={recent.thumbnail} alt="" {...stylex.props(styles.thumbImage)} />
+      <img
+        src={recent.thumbnail}
+        alt=""
+        {...stylex.props(styles.thumbImage, styles.thumbSize(width, height))}
+      />
     </span>
   );
 }
