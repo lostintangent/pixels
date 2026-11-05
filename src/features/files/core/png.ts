@@ -358,16 +358,19 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   }
 
   const gamma = resolveGamma(gama, cicp, iccp, srgb);
-  const gammaLut = gamma !== null ? buildGammaLut(gamma) : null;
-  // 16-bit samples apply the gamma LUT to their high byte during decode, before their reduction
-  // to 8 bits, rather than after: a dark 16-bit sample otherwise reduces to a small 8-bit number
-  // first (via the usual round(value * 255 / 65535)), and running the LUT on that already-coarser
-  // number loses precision gamma correction needs most in the shadows. Indexing by the high byte
-  // alone (rather than that rounded reduction) is what real decoders (Chrome and WebKit, both
-  // backed by libpng) actually do for 16-bit gamma correction, confirmed by reverse-engineering
-  // their output against real 16-bit gAMA 1.0 fixtures: a native sample of 489 out of 65535
-  // decodes to 21 under a full 65536-entry precision LUT, but both engines produce 13, exactly
-  // matching a 256-entry LUT indexed by the sample's high byte (489 >> 8 = 1).
+  // 16-bit samples get gamma-corrected at their full native precision, before their reduction to
+  // 8 bits, via a 65536-entry LUT built once per file: a dark 16-bit sample otherwise reduces to
+  // a small 8-bit number first (via the usual round(value * 255 / 65535)), and running the usual
+  // 256-entry LUT on that already-coarser number loses the precision gamma correction needs most
+  // in the shadows. Full precision is the exact math and matches WebKit (ImageIO, the same
+  // decoder Preview uses) byte-for-byte on a real 16-bit gAMA 1.0 fixture: measured against the
+  // generator's own raw samples, full precision has 0 max diff on WebKit versus 8 for a
+  // high-byte-indexed 256-entry table. Chrome instead indexes a 256-entry table by each sample's
+  // high byte, discarding the other 248 possible low-byte values into the same output and
+  // collapsing its 256 darkest shadow levels into one; it disagrees with WebKit here (max diff 8
+  // against full precision) the same way it disagrees on gAMA combined with cHRM, where this
+  // codebase already favors WebKit's answer.
+  const gammaLut = gamma !== null ? buildGammaLut(gamma, ihdr.bitDepth) : null;
   let pixels = decodeImage(raw, ihdr, palette, trns, ihdr.bitDepth === 16 ? gammaLut : null);
   if (gammaLut && ihdr.bitDepth !== 16) applyGammaLut(pixels, gammaLut);
   const colorTag = await classifyColorTag({ cicp, iccp, srgb });
@@ -405,21 +408,24 @@ function resolveGamma(
   return gamma;
 }
 
-/** Builds the 256-entry per-channel gamma lookup table: index `s` is a normalized 8-bit sample
- *  (or, for 16-bit sources, a 16-bit sample's high byte), and the output is its gamma-corrected,
- *  sRGB-encoded display byte. Shared by the post-hoc 8-bit path and the pre-reduction 16-bit
- *  path, since both ultimately read through the same 256-entry curve. */
-function buildGammaLut(gamma: number): Uint8Array {
-  const lut = new Uint8Array(256);
-  for (let s = 0; s < 256; s++) lut[s] = gammaByte(s / 255, gamma);
+/** Builds the per-channel gamma lookup table: index `s` is a normalized native sample (8-bit
+ *  depths get a 256-entry table; 16-bit gets a 65536-entry table, since decode runs on a worker
+ *  and the per-file cost of a bigger table is negligible there), and the output is its
+ *  gamma-corrected, sRGB-encoded display byte. Shared by the post-hoc 8-bit path and the
+ *  pre-reduction 16-bit path. */
+function buildGammaLut(gamma: number, bitDepth: number): Uint8Array {
+  const size = bitDepth === 16 ? 65536 : 256;
+  const maxSample = size - 1;
+  const lut = new Uint8Array(size);
+  for (let s = 0; s < size; s++) lut[s] = gammaByte(s / maxSample, gamma);
   return lut;
 }
 
 /**
  * Applies a gamma lookup table in place to a decoded PNG's color channels (never alpha). Used for
- * every bit depth except 16, which instead applies the same table during decode, indexed by each
- * native sample's high byte (see `buildGammaLut`'s call site in `decodePng`). Verified against
- * real Chrome/WebKit decodes of the same files.
+ * every bit depth except 16, which instead applies the same correction during decode, indexed by
+ * each native 16-bit sample directly (see `buildGammaLut`'s call site in `decodePng`), so no
+ * precision is lost reducing to 8 bits first.
  */
 function applyGammaLut(pixels: Uint32Array, lut: Uint8Array): void {
   const bytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
@@ -876,10 +882,11 @@ function writePass(
         ? value
         : Math.round((value * 255) / maxSample);
 
-  // Color (non-alpha) samples index the gamma LUT by their native sample's high byte when one
-  // applies (matching how real decoders handle 16-bit gamma correction, see `decodePng`); every
-  // other case (including alpha, always linear coverage) uses the plain scale above.
-  const colorScale = gammaLut16 ? (value: number): number => gammaLut16[value >>> 8]! : scaleTo8;
+  // Color (non-alpha) samples index the gamma LUT directly by their native 16-bit sample when one
+  // applies, preserving full precision through the correction before any reduction to 8 bits (see
+  // `decodePng`); every other case (including alpha, always linear coverage) uses the plain scale
+  // above.
+  const colorScale = gammaLut16 ? (value: number): number => gammaLut16[value]! : scaleTo8;
 
   // tRNS for color types 0 and 2 is a single native-depth sample (or RGB triple) naming the exact
   // color that's transparent, stored as a 2-byte value per channel regardless of bit depth; compare

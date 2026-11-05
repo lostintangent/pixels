@@ -615,39 +615,39 @@ describe('PNG decode: gAMA gamma correction', () => {
   });
 });
 
-describe('PNG decode: 16-bit gAMA indexes the lookup table by the high byte', () => {
-  // Chrome and WebKit (both built on libpng) apply 16-bit gamma correction by indexing the same
-  // 256-entry display LUT with just the sample's high byte, not the full 16-bit value reduced
-  // with exact rounding: reverse-engineered by comparing real decodes of a 16-bit gAMA 1.0
-  // fixture (Adam7, EXIF orientation 5) against both a naive reduce-then-correct implementation
-  // and a full 65536-entry precision table. A native sample of 489 (high byte 1) must decode to
-  // 13, matching gammaByte(1/255); a 65536-entry table would instead give 21, and reducing first
-  // via round(489*255/65535)=2 then correcting would give a different wrong answer again.
-  test('RGBA: each color channel corrects from its native sample high byte; alpha stays linear', async () => {
+describe('PNG decode: 16-bit gAMA corrects at full native precision before 8-bit reduction', () => {
+  // Measured against real decodes of a 16-bit gAMA 1.0 fixture (Adam7, EXIF orientation 5):
+  // WebKit (ImageIO, the decoder Preview also uses) matches full 16-bit precision byte-for-byte,
+  // while Chrome instead indexes a 256-entry table by each sample's high byte and disagrees with
+  // WebKit by up to 8 in the shadows. This codebase matches WebKit, the same choice already made
+  // for gAMA combined with cHRM. A native sample of 129 out of 65535 decodes to 6
+  // (`gammaByte(129/65535)`), not 0 (a high-byte table would see `129 >> 8 === 0`) and not 13
+  // (reducing first via `round(129*255/65535)=1` then correcting would give a third, still wrong,
+  // answer).
+  test('RGBA: each color channel corrects from its full native 16-bit sample; alpha stays linear', async () => {
     const bytes = await buildTestPng({
       width: 1,
       height: 1,
       bitDepth: 16,
       colorType: 6,
-      // R=489 (hi 1), G=15633 (hi 61), B=5000 (hi 19), A=32896, all big-endian.
-      rows: [[1, 233, 61, 17, 19, 136, 128, 128]],
+      rows: [[0, 129, 0, 10, 19, 136, 128, 128]], // R=129, G=10, B=5000, A=32896 (big-endian)
       gama: 100000, // gamma 1.0: samples are already linear light
     });
     const decoded = await decodePng(bytes);
-    expect([...decoded.pixels]).toEqual([packRgba(13, 134, 77, 128)]);
+    expect([...decoded.pixels]).toEqual([packRgba(6, 1, 78, 128)]);
   });
 
-  test('grayscale: the single channel corrects from its native sample high byte', async () => {
+  test('grayscale: the single channel corrects from its full native 16-bit sample', async () => {
     const bytes = await buildTestPng({
       width: 1,
       height: 1,
       bitDepth: 16,
       colorType: 0,
-      rows: [[1, 233]], // gray=489 (high byte 1) out of 65535
+      rows: [[0, 129]], // gray=129 out of 65535
       gama: 100000,
     });
     const decoded = await decodePng(bytes);
-    expect([...decoded.pixels]).toEqual([packRgba(13, 13, 13, 255)]);
+    expect([...decoded.pixels]).toEqual([packRgba(6, 6, 6, 255)]);
   });
 
   test('a cICP, iCCP, or sRGB chunk still outranks gAMA at 16-bit, leaving samples scaled plainly', async () => {
