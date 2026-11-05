@@ -358,18 +358,11 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   }
 
   const gamma = resolveGamma(gama, cicp, iccp, srgb);
-  // 16-bit samples get gamma-corrected at their full native precision, before their reduction to
-  // 8 bits, via a 65536-entry LUT built once per file: a dark 16-bit sample otherwise reduces to
-  // a small 8-bit number first (via the usual round(value * 255 / 65535)), and running the usual
-  // 256-entry LUT on that already-coarser number loses the precision gamma correction needs most
-  // in the shadows. Full precision is the exact math and matches WebKit (ImageIO, the same
-  // decoder Preview uses) byte-for-byte on a real 16-bit gAMA 1.0 fixture: measured against the
-  // generator's own raw samples, full precision has 0 max diff on WebKit versus 8 for a
-  // high-byte-indexed 256-entry table. Chrome instead indexes a 256-entry table by each sample's
-  // high byte, discarding the other 248 possible low-byte values into the same output and
-  // collapsing its 256 darkest shadow levels into one; it disagrees with WebKit here (max diff 8
-  // against full precision) the same way it disagrees on gAMA combined with cHRM, where this
-  // codebase already favors WebKit's answer.
+  // 16-bit samples are corrected at full native precision, before reduction to 8 bits, so dark
+  // samples keep the shadow detail 16-bit linear files exist for. This matches WebKit (ImageIO,
+  // which Preview also uses) exactly. Chrome indexes a 256-entry table by the high byte, merging
+  // the 256 darkest levels into one, and differs by up to 8. We follow WebKit here, as for gAMA
+  // with cHRM.
   const gammaLut = gamma !== null ? buildGammaLut(gamma, ihdr.bitDepth) : null;
   let pixels = decodeImage(raw, ihdr, palette, trns, ihdr.bitDepth === 16 ? gammaLut : null);
   if (gammaLut && ihdr.bitDepth !== 16) applyGammaLut(pixels, gammaLut);
