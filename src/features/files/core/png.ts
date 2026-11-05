@@ -306,6 +306,8 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   let srgb: Uint8Array | null = null;
   let gama: Uint8Array | null = null;
   let exif: Uint8Array | null = null;
+  let sawIdat = false; // the spec requires eXIf before the first IDAT; Chrome and WebKit both
+  // ignore one that arrives later, so a later eXIf (valid or not) must never overwrite an earlier one.
   let offset = SIGNATURE.length;
 
   while (offset < bytes.length) {
@@ -323,13 +325,16 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     if (type === 'IHDR') ihdr = parseIhdr(data);
     else if (type === 'PLTE') palette = data;
     else if (type === 'tRNS') trns = data;
-    else if (type === 'IDAT') idatChunks.push(data);
-    else if (type === 'cICP') cicp = data;
+    else if (type === 'IDAT') {
+      idatChunks.push(data);
+      sawIdat = true;
+    } else if (type === 'cICP') cicp = data;
     else if (type === 'iCCP') iccp = data;
     else if (type === 'sRGB') srgb = data;
     else if (type === 'gAMA') gama = data;
-    else if (type === 'eXIf') exif = data;
-    else if (type === 'IEND') break;
+    else if (type === 'eXIf') {
+      if (!sawIdat) exif = data;
+    } else if (type === 'IEND') break;
     offset = dataEnd + 4;
   }
 
@@ -352,8 +357,19 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     throw corrupt('The PNG\u2019s compressed pixel data is invalid.');
   }
 
-  let pixels = decodeImage(raw, ihdr, palette, trns);
-  if (gama && !cicp && !iccp && !srgb) applyGammaCorrection(pixels, gama);
+  const gamma = resolveGamma(gama, cicp, iccp, srgb);
+  const gammaLut = gamma !== null ? buildGammaLut(gamma) : null;
+  // 16-bit samples apply the gamma LUT to their high byte during decode, before their reduction
+  // to 8 bits, rather than after: a dark 16-bit sample otherwise reduces to a small 8-bit number
+  // first (via the usual round(value * 255 / 65535)), and running the LUT on that already-coarser
+  // number loses precision gamma correction needs most in the shadows. Indexing by the high byte
+  // alone (rather than that rounded reduction) is what real decoders (Chrome and WebKit, both
+  // backed by libpng) actually do for 16-bit gamma correction, confirmed by reverse-engineering
+  // their output against real 16-bit gAMA 1.0 fixtures: a native sample of 489 out of 65535
+  // decodes to 21 under a full 65536-entry precision LUT, but both engines produce 13, exactly
+  // matching a 256-entry LUT indexed by the sample's high byte (489 >> 8 = 1).
+  let pixels = decodeImage(raw, ihdr, palette, trns, ihdr.bitDepth === 16 ? gammaLut : null);
+  if (gammaLut && ihdr.bitDepth !== 16) applyGammaLut(pixels, gammaLut);
   const colorTag = await classifyColorTag({ cicp, iccp, srgb });
   const oriented = applyExifOrientation(pixels, ihdr.width, ihdr.height, exif);
   pixels = oriented.pixels;
@@ -370,24 +386,42 @@ const ASSUMED_PNG_GAMMA = 1 / 2.2;
 const GAMMA_THRESHOLD = 0.05;
 
 /**
- * Applies a `gAMA` chunk's gamma correction in place to a decoded PNG's color channels (never
- * alpha), converting from the file's declared sample gamma to sRGB's display transfer function.
- * Only called when no `cICP`/`iCCP`/`sRGB` chunk outranks `gAMA` per the PNG spec's color-chunk
- * precedence. The common ~1/2.2 case is left untouched (see `ASSUMED_PNG_GAMMA` above); other
- * values (notably linear `gAMA` 1.0 and the old Mac 1/1.8 gamma) are corrected through a 256-entry
- * per-channel lookup table, verified against real Chrome/WebKit decodes of the same files.
+ * Resolves the `gAMA` chunk (if any) to an effective gamma to correct by, honoring the PNG spec's
+ * color-chunk precedence (`cICP`/`iCCP`/`sRGB` all outrank `gAMA`) and skipping the common
+ * ~1/2.2 case per `ASSUMED_PNG_GAMMA` above. Returns `null` when no correction should happen.
  */
-function applyGammaCorrection(pixels: Uint32Array, gama: Uint8Array): void {
-  if (gama.length < 4) return; // malformed chunk: ignore rather than fail the whole import
+function resolveGamma(
+  gama: Uint8Array | null,
+  cicp: Uint8Array | null,
+  iccp: Uint8Array | null,
+  srgb: Uint8Array | null,
+): number | null {
+  if (!gama || cicp || iccp || srgb) return null;
+  if (gama.length < 4) return null; // malformed chunk: ignore rather than fail the whole import
   const stored = readUint32BE(gama, 0);
-  if (stored <= 0) return;
+  if (stored <= 0) return null;
   const gamma = stored / 100000;
-  if (Math.abs(gamma - ASSUMED_PNG_GAMMA) / ASSUMED_PNG_GAMMA < GAMMA_THRESHOLD) return;
+  if (Math.abs(gamma - ASSUMED_PNG_GAMMA) / ASSUMED_PNG_GAMMA < GAMMA_THRESHOLD) return null;
+  return gamma;
+}
+
+/** Builds the 256-entry per-channel gamma lookup table: index `s` is a normalized 8-bit sample
+ *  (or, for 16-bit sources, a 16-bit sample's high byte), and the output is its gamma-corrected,
+ *  sRGB-encoded display byte. Shared by the post-hoc 8-bit path and the pre-reduction 16-bit
+ *  path, since both ultimately read through the same 256-entry curve. */
+function buildGammaLut(gamma: number): Uint8Array {
   const lut = new Uint8Array(256);
-  for (let s = 0; s < 256; s++) {
-    const linear = Math.pow(s / 255, 1 / gamma);
-    lut[s] = Math.max(0, Math.min(255, Math.round(srgbEncode(linear) * 255)));
-  }
+  for (let s = 0; s < 256; s++) lut[s] = gammaByte(s / 255, gamma);
+  return lut;
+}
+
+/**
+ * Applies a gamma lookup table in place to a decoded PNG's color channels (never alpha). Used for
+ * every bit depth except 16, which instead applies the same table during decode, indexed by each
+ * native sample's high byte (see `buildGammaLut`'s call site in `decodePng`). Verified against
+ * real Chrome/WebKit decodes of the same files.
+ */
+function applyGammaLut(pixels: Uint32Array, lut: Uint8Array): void {
   const bytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
   for (let i = 0; i < bytes.length; i += 4) {
     bytes[i] = lut[bytes[i]!]!;
@@ -395,6 +429,13 @@ function applyGammaCorrection(pixels: Uint32Array, gama: Uint8Array): void {
     bytes[i + 2] = lut[bytes[i + 2]!]!;
     // byte i + 3 is alpha: coverage, not light intensity, so it's left untouched.
   }
+}
+
+/** Converts a normalized (0-1) native sample under the file's declared gamma to an 8-bit,
+ *  sRGB-encoded display byte: `intensity = sample ^ (1/gamma)`, then the sRGB OETF. */
+function gammaByte(normalizedSample: number, gamma: number): number {
+  const linear = Math.pow(normalizedSample, 1 / gamma);
+  return Math.max(0, Math.min(255, Math.round(srgbEncode(linear) * 255)));
 }
 
 /** The standard sRGB transfer function (IEC 61966-2-1), encoding a normalized linear-light
@@ -520,6 +561,7 @@ function decodeImage(
   ihdr: Ihdr,
   palette: Uint8Array | null,
   trns: Uint8Array | null,
+  gammaLut16: Uint8Array | null,
 ): Uint32Array {
   if (ihdr.interlace === 0 && ihdr.bitDepth === 8 && ihdr.colorType === 6) {
     return decodeRgba8(raw, ihdr.width, ihdr.height);
@@ -531,7 +573,20 @@ function decodeImage(
   const outBytes = new Uint8Array(pixels.buffer);
   if (ihdr.interlace === 0) {
     const { scanlines } = unfilterPass(raw, 0, ihdr, ihdr.width, ihdr.height);
-    writePass(scanlines, ihdr, ihdr.width, ihdr.height, 0, 0, 1, 1, palette, trns, outBytes);
+    writePass(
+      scanlines,
+      ihdr,
+      ihdr.width,
+      ihdr.height,
+      0,
+      0,
+      1,
+      1,
+      palette,
+      trns,
+      gammaLut16,
+      outBytes,
+    );
   } else {
     let offset = 0;
     for (const pass of ADAM7_PASSES) {
@@ -552,6 +607,7 @@ function decodeImage(
         pass.yStep,
         palette,
         trns,
+        gammaLut16,
         outBytes,
       );
       offset += consumed;
@@ -787,6 +843,7 @@ function writePass(
   yStep: number,
   palette: Uint8Array | null,
   trns: Uint8Array | null,
+  gammaLut16: Uint8Array | null,
   outBytes: Uint8Array,
 ): void {
   const { bitDepth, colorType } = ihdr;
@@ -819,6 +876,11 @@ function writePass(
         ? value
         : Math.round((value * 255) / maxSample);
 
+  // Color (non-alpha) samples index the gamma LUT by their native sample's high byte when one
+  // applies (matching how real decoders handle 16-bit gamma correction, see `decodePng`); every
+  // other case (including alpha, always linear coverage) uses the plain scale above.
+  const colorScale = gammaLut16 ? (value: number): number => gammaLut16[value >>> 8]! : scaleTo8;
+
   // tRNS for color types 0 and 2 is a single native-depth sample (or RGB triple) naming the exact
   // color that's transparent, stored as a 2-byte value per channel regardless of bit depth; compare
   // against the raw, unscaled sample so a sub-8-bit or 16-bit key still matches precisely.
@@ -837,7 +899,7 @@ function writePass(
       switch (colorType) {
         case 0: {
           const raw = readSample(row, x, 0);
-          const value = scaleTo8(raw);
+          const value = colorScale(raw);
           outBytes[outOffset] = value;
           outBytes[outOffset + 1] = value;
           outBytes[outOffset + 2] = value;
@@ -848,9 +910,9 @@ function writePass(
           const r = readSample(row, x, 0);
           const g = readSample(row, x, 1);
           const b = readSample(row, x, 2);
-          outBytes[outOffset] = scaleTo8(r);
-          outBytes[outOffset + 1] = scaleTo8(g);
-          outBytes[outOffset + 2] = scaleTo8(b);
+          outBytes[outOffset] = colorScale(r);
+          outBytes[outOffset + 1] = colorScale(g);
+          outBytes[outOffset + 2] = colorScale(b);
           outBytes[outOffset + 3] =
             rgbKey && r === rgbKey[0] && g === rgbKey[1] && b === rgbKey[2] ? 0 : 255;
           break;
@@ -870,7 +932,7 @@ function writePass(
         case 4: {
           const gray = readSample(row, x, 0);
           const alpha = readSample(row, x, 1);
-          const value = scaleTo8(gray);
+          const value = colorScale(gray);
           outBytes[outOffset] = value;
           outBytes[outOffset + 1] = value;
           outBytes[outOffset + 2] = value;
@@ -882,9 +944,9 @@ function writePass(
           const g = readSample(row, x, 1);
           const b = readSample(row, x, 2);
           const a = readSample(row, x, 3);
-          outBytes[outOffset] = scaleTo8(r);
-          outBytes[outOffset + 1] = scaleTo8(g);
-          outBytes[outOffset + 2] = scaleTo8(b);
+          outBytes[outOffset] = colorScale(r);
+          outBytes[outOffset + 1] = colorScale(g);
+          outBytes[outOffset + 2] = colorScale(b);
           outBytes[outOffset + 3] = scaleTo8(a);
           break;
         }

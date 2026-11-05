@@ -38,6 +38,10 @@ async function buildTestPng(options: {
   gamaRaw?: number[];
   /** A raw `eXIf` chunk's bytes (a TIFF-structured blob), for orientation decode tests. */
   exif?: number[];
+  /** Places the `eXIf` chunk after IDAT (and before IEND) instead of before PLTE/IDAT, to
+   *  exercise the spec's before-IDAT requirement: Chrome and WebKit both ignore a chunk placed
+   *  this late, no matter how well-formed it is. */
+  exifAfterIdat?: number[];
 }): Promise<Uint8Array> {
   const { width, height, bitDepth, colorType, palette, trns, rows, interlace = 0 } = options;
   let raw: Uint8Array;
@@ -113,7 +117,9 @@ async function buildTestPng(options: {
   const idatChunk = chunk('IDAT', idat);
   if (options.corruptCrc)
     idatChunk[idatChunk.length - 1] = (idatChunk[idatChunk.length - 1] ?? 0) ^ 0xff;
-  parts.push(idatChunk, chunk('IEND', new Uint8Array(0)));
+  parts.push(idatChunk);
+  if (options.exifAfterIdat) parts.push(chunk('eXIf', new Uint8Array(options.exifAfterIdat)));
+  parts.push(chunk('IEND', new Uint8Array(0)));
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
@@ -488,6 +494,29 @@ describe('PNG decode: eXIf orientation', () => {
     expect([...redecoded.pixels]).toEqual([...decoded.pixels]);
   });
 
+  test('an eXIf chunk placed after IDAT is ignored, matching Chrome and WebKit', async () => {
+    // The spec requires eXIf before the first IDAT; a chunk arriving after it is well-formed
+    // (orientation 6) but both engines ignore it rather than apply it, so Pixels must too.
+    const bytes = await buildTestPng({ ...grid, exifAfterIdat: exifOrientationChunk(6) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(A), p(B), p(C), p(D), p(E), p(F)]);
+  });
+
+  test('an earlier valid eXIf chunk is kept even if a later, ignored one follows IDAT', async () => {
+    const bytes = await buildTestPng({
+      ...grid,
+      exif: exifOrientationChunk(2),
+      exifAfterIdat: exifOrientationChunk(6),
+    });
+    const decoded = await decodePng(bytes);
+    // Orientation 2 (mirror horizontal) must win; orientation 6 would have swapped dimensions.
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(C), p(B), p(A), p(F), p(E), p(D)]);
+  });
+
   test('an eXIf chunk with no Orientation tag is ignored', async () => {
     // A valid TIFF header and IFD, but with an unrelated tag (0x0100, ImageWidth) instead.
     const bytes = await buildTestPng({
@@ -583,6 +612,64 @@ describe('PNG decode: gAMA gamma correction', () => {
     });
     const decoded = await decodePng(bytes);
     expect([...decoded.pixels]).toEqual([packRgba(128, 64, 32, 255)]);
+  });
+});
+
+describe('PNG decode: 16-bit gAMA indexes the lookup table by the high byte', () => {
+  // Chrome and WebKit (both built on libpng) apply 16-bit gamma correction by indexing the same
+  // 256-entry display LUT with just the sample's high byte, not the full 16-bit value reduced
+  // with exact rounding: reverse-engineered by comparing real decodes of a 16-bit gAMA 1.0
+  // fixture (Adam7, EXIF orientation 5) against both a naive reduce-then-correct implementation
+  // and a full 65536-entry precision table. A native sample of 489 (high byte 1) must decode to
+  // 13, matching gammaByte(1/255); a 65536-entry table would instead give 21, and reducing first
+  // via round(489*255/65535)=2 then correcting would give a different wrong answer again.
+  test('RGBA: each color channel corrects from its native sample high byte; alpha stays linear', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 16,
+      colorType: 6,
+      // R=489 (hi 1), G=15633 (hi 61), B=5000 (hi 19), A=32896, all big-endian.
+      rows: [[1, 233, 61, 17, 19, 136, 128, 128]],
+      gama: 100000, // gamma 1.0: samples are already linear light
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(13, 134, 77, 128)]);
+  });
+
+  test('grayscale: the single channel corrects from its native sample high byte', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 16,
+      colorType: 0,
+      rows: [[1, 233]], // gray=489 (high byte 1) out of 65535
+      gama: 100000,
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(13, 13, 13, 255)]);
+  });
+
+  test('a cICP, iCCP, or sRGB chunk still outranks gAMA at 16-bit, leaving samples scaled plainly', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 16,
+      colorType: 2,
+      rows: [[0, 129, 0, 10, 19, 136]], // R=129, G=10, B=5000
+      gama: 100000, // would otherwise correct the samples
+      colorChunks: { srgb: [0] },
+    });
+    const decoded = await decodePng(bytes);
+    // Plain linear 16-to-8 scaling, exactly as the existing 16-bit scaling tests expect.
+    expect([...decoded.pixels]).toEqual([
+      packRgba(
+        Math.round((129 * 255) / 65535),
+        Math.round((10 * 255) / 65535),
+        Math.round((5000 * 255) / 65535),
+        255,
+      ),
+    ]);
   });
 });
 
