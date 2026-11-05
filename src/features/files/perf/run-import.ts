@@ -382,10 +382,12 @@ const directory = await mkdtemp(join(tmpdir(), 'pixels-import-fixtures-'));
 try {
   const fixtures = await makeFixtures(directory);
   await withProductionPreview({ manifest: true }, async ({ baseUrl }) => {
-    const browser = await chromium.launch({ headless: !headed });
+    // Real Chrome sandboxes renderers, which denies them WindowServer connections. Playwright's
+    // unsandboxed renderer instead pays a one-time SkyLight handshake on its first hover recompute.
+    const browser = await chromium.launch({ headless: !headed, chromiumSandbox: true });
     try {
       console.log(
-        `Pixels real import: Chrome ${browser.version()}, ${headed ? 'headed' : 'headless'}, ${process.platform}/${process.arch}; target zero main-thread tasks > 50 ms`,
+        `Pixels real import: Chrome ${browser.version()}, ${headed ? 'headed' : 'headless'}, sandboxed renderer, ${process.platform}/${process.arch}; target zero main-thread tasks > 50 ms`,
       );
       let failed = false;
       let injected = false;
