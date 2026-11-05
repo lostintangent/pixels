@@ -304,6 +304,8 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
   let cicp: Uint8Array | null = null;
   let iccp: Uint8Array | null = null;
   let srgb: Uint8Array | null = null;
+  let gama: Uint8Array | null = null;
+  let exif: Uint8Array | null = null;
   let offset = SIGNATURE.length;
 
   while (offset < bytes.length) {
@@ -325,6 +327,8 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     else if (type === 'cICP') cicp = data;
     else if (type === 'iCCP') iccp = data;
     else if (type === 'sRGB') srgb = data;
+    else if (type === 'gAMA') gama = data;
+    else if (type === 'eXIf') exif = data;
     else if (type === 'IEND') break;
     offset = dataEnd + 4;
   }
@@ -348,9 +352,148 @@ export async function decodePng(input: Uint8Array | ArrayBuffer): Promise<Decode
     throw corrupt('The PNG\u2019s compressed pixel data is invalid.');
   }
 
-  const pixels = decodeImage(raw, ihdr, palette, trns);
+  let pixels = decodeImage(raw, ihdr, palette, trns);
+  if (gama && !cicp && !iccp && !srgb) applyGammaCorrection(pixels, gama);
   const colorTag = await classifyColorTag({ cicp, iccp, srgb });
-  return { width: ihdr.width, height: ihdr.height, pixels, colorTag };
+  const oriented = applyExifOrientation(pixels, ihdr.width, ihdr.height, exif);
+  pixels = oriented.pixels;
+  return { width: oriented.width, height: oriented.height, pixels, colorTag };
+}
+
+/** PNG's documented default assumption for a file with no color-tagging chunk at all: roughly
+ *  gamma 1/2.2, the historical CRT/sRGB-ish convention. A declared `gAMA` within libpng's own
+ *  well-established 5% "gamma threshold" of that default is visually indistinguishable from no
+ *  correction at all (confirmed empirically against real Chrome decodes: both the untagged and
+ *  the explicitly-45455-tagged case already match Chrome byte-for-byte), so skip the transform
+ *  there rather than risk introducing drift via an approximate round-trip. */
+const ASSUMED_PNG_GAMMA = 1 / 2.2;
+const GAMMA_THRESHOLD = 0.05;
+
+/**
+ * Applies a `gAMA` chunk's gamma correction in place to a decoded PNG's color channels (never
+ * alpha), converting from the file's declared sample gamma to sRGB's display transfer function.
+ * Only called when no `cICP`/`iCCP`/`sRGB` chunk outranks `gAMA` per the PNG spec's color-chunk
+ * precedence. The common ~1/2.2 case is left untouched (see `ASSUMED_PNG_GAMMA` above); other
+ * values (notably linear `gAMA` 1.0 and the old Mac 1/1.8 gamma) are corrected through a 256-entry
+ * per-channel lookup table, verified against real Chrome/WebKit decodes of the same files.
+ */
+function applyGammaCorrection(pixels: Uint32Array, gama: Uint8Array): void {
+  if (gama.length < 4) return; // malformed chunk: ignore rather than fail the whole import
+  const stored = readUint32BE(gama, 0);
+  if (stored <= 0) return;
+  const gamma = stored / 100000;
+  if (Math.abs(gamma - ASSUMED_PNG_GAMMA) / ASSUMED_PNG_GAMMA < GAMMA_THRESHOLD) return;
+  const lut = new Uint8Array(256);
+  for (let s = 0; s < 256; s++) {
+    const linear = Math.pow(s / 255, 1 / gamma);
+    lut[s] = Math.max(0, Math.min(255, Math.round(srgbEncode(linear) * 255)));
+  }
+  const bytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length * 4);
+  for (let i = 0; i < bytes.length; i += 4) {
+    bytes[i] = lut[bytes[i]!]!;
+    bytes[i + 1] = lut[bytes[i + 1]!]!;
+    bytes[i + 2] = lut[bytes[i + 2]!]!;
+    // byte i + 3 is alpha: coverage, not light intensity, so it's left untouched.
+  }
+}
+
+/** The standard sRGB transfer function (IEC 61966-2-1), encoding a normalized linear-light
+ *  intensity to a normalized display-ready sRGB value. */
+function srgbEncode(linear: number): number {
+  return linear <= 0.0031308 ? linear * 12.92 : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
+}
+
+/** Reads the EXIF `Orientation` tag (0x0112) out of a PNG `eXIf` chunk's embedded TIFF structure.
+ *  Returns 1 (no transform) when the chunk is missing, malformed, or doesn't carry that tag,
+ *  rather than failing the import over an ancillary chunk. */
+function readExifOrientation(exif: Uint8Array | null): number {
+  if (!exif || exif.length < 8) return 1;
+  const byteOrder = readAscii(exif, 0, 2);
+  const little = byteOrder === 'II';
+  if (!little && byteOrder !== 'MM') return 1;
+  const read16 = (offset: number): number =>
+    little ? exif[offset]! | (exif[offset + 1]! << 8) : (exif[offset]! << 8) | exif[offset + 1]!;
+  const read32 = (offset: number): number =>
+    little
+      ? (exif[offset]! |
+          (exif[offset + 1]! << 8) |
+          (exif[offset + 2]! << 16) |
+          (exif[offset + 3]! << 24)) >>>
+        0
+      : readUint32BE(exif, offset);
+  if (read16(2) !== 42) return 1;
+  const ifdOffset = read32(4);
+  if (ifdOffset + 2 > exif.length) return 1;
+  const entryCount = read16(ifdOffset);
+  const entriesStart = ifdOffset + 2;
+  for (let i = 0; i < entryCount; i++) {
+    const entryStart = entriesStart + i * 12;
+    if (entryStart + 12 > exif.length) break;
+    const tag = read16(entryStart);
+    if (tag !== 0x0112) continue;
+    const value = read16(entryStart + 8);
+    return value >= 1 && value <= 8 ? value : 1;
+  }
+  return 1;
+}
+
+/**
+ * Applies an EXIF orientation as a pure, lossless pixel permutation, never through the browser:
+ * orientations 5-8 also rotate 90°/270°, swapping width and height. Orientation 1 (or a
+ * missing/invalid tag) returns the original buffer untouched. See the EXIF/TIFF Orientation tag's
+ * eight standard values; verified pixel-for-pixel against real Chrome decodes of the same files
+ * (which apply this same permutation by default for both JPEG and PNG).
+ */
+function applyExifOrientation(
+  pixels: Uint32Array,
+  width: number,
+  height: number,
+  exif: Uint8Array | null,
+): { pixels: Uint32Array; width: number; height: number } {
+  const orientation = readExifOrientation(exif);
+  if (orientation === 1) return { pixels, width, height };
+  const swapped = orientation >= 5;
+  const outWidth = swapped ? height : width;
+  const outHeight = swapped ? width : height;
+  const out = new Uint32Array(outWidth * outHeight);
+  for (let y = 0; y < outHeight; y++) {
+    for (let x = 0; x < outWidth; x++) {
+      let sx: number;
+      let sy: number;
+      switch (orientation) {
+        case 2:
+          sx = width - 1 - x;
+          sy = y;
+          break;
+        case 3:
+          sx = width - 1 - x;
+          sy = height - 1 - y;
+          break;
+        case 4:
+          sx = x;
+          sy = height - 1 - y;
+          break;
+        case 5:
+          sx = y;
+          sy = x;
+          break;
+        case 6:
+          sx = y;
+          sy = height - 1 - x;
+          break;
+        case 7:
+          sx = width - 1 - y;
+          sy = height - 1 - x;
+          break;
+        default: // 8
+          sx = width - 1 - y;
+          sy = x;
+          break;
+      }
+      out[y * outWidth + x] = pixels[sy * width + sx]!;
+    }
+  }
+  return { pixels: out, width: outWidth, height: outHeight };
 }
 
 /** One of Adam7's seven reduced images, in pass order: starting offset and stride on each axis. */

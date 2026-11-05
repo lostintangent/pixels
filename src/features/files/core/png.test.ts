@@ -32,6 +32,12 @@ async function buildTestPng(options: {
   /** Raw `cICP`/`iCCP`/`sRGB` chunk bytes to embed, for color-tagging decode tests. Written right
    *  after IHDR, matching where a real encoder places them. */
   colorChunks?: { cicp?: number[]; iccp?: Uint8Array; srgb?: number[] };
+  /** A `gAMA` chunk's 4-byte unsigned value (gamma x 100000), for gamma-correction decode tests. */
+  gama?: number;
+  /** Raw `gAMA` chunk bytes, for exercising a malformed (e.g. too-short) chunk directly. */
+  gamaRaw?: number[];
+  /** A raw `eXIf` chunk's bytes (a TIFF-structured blob), for orientation decode tests. */
+  exif?: number[];
 }): Promise<Uint8Array> {
   const { width, height, bitDepth, colorType, palette, trns, rows, interlace = 0 } = options;
   let raw: Uint8Array;
@@ -92,6 +98,13 @@ async function buildTestPng(options: {
   if (options.colorChunks?.iccp) parts.push(chunk('iCCP', options.colorChunks.iccp));
   if (options.colorChunks?.srgb)
     parts.push(chunk('sRGB', new Uint8Array(options.colorChunks.srgb)));
+  if (options.gama !== undefined) {
+    const gamaData = new Uint8Array(4);
+    new DataView(gamaData.buffer).setUint32(0, options.gama);
+    parts.push(chunk('gAMA', gamaData));
+  }
+  if (options.gamaRaw) parts.push(chunk('gAMA', new Uint8Array(options.gamaRaw)));
+  if (options.exif) parts.push(chunk('eXIf', new Uint8Array(options.exif)));
   if (palette) {
     const plteData = new Uint8Array(palette);
     parts.push(chunk('PLTE', plteData));
@@ -325,6 +338,251 @@ describe('PNG color tagging', () => {
       colorChunks: { cicp: [9, 16, 0, 1] }, // Rec. 2020: real color info, just not one we map
     });
     expect((await decodePng(bytes)).colorTag).toBe('unknown-icc');
+  });
+});
+
+/** Builds a big-endian TIFF `eXIf` chunk payload with a single IFD entry for the Orientation tag
+ *  (0x0112, SHORT), mirroring what real cameras and `exiftool` write. `littleEndian` exercises the
+ *  'II' byte-order path instead of 'MM'. */
+function exifOrientationChunk(value: number, littleEndian = false): number[] {
+  const be32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  const le32 = (n: number) => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
+  const w32 = littleEndian ? le32 : be32;
+  const tag = littleEndian ? [0x12, 0x01] : [0x01, 0x12];
+  const type = littleEndian ? [3, 0] : [0, 3];
+  const valueBytes = littleEndian ? [value, 0] : [0, value];
+  const order = littleEndian ? [0x49, 0x49] : [0x4d, 0x4d];
+  return [
+    ...order,
+    ...(littleEndian ? [0x2a, 0] : [0, 0x2a]),
+    ...w32(8), // offset to the first (only) IFD
+    ...(littleEndian ? [1, 0] : [0, 1]), // one entry
+    ...tag,
+    ...type,
+    ...w32(1), // count
+    ...valueBytes,
+    0,
+    0, // padding to fill the 4-byte value field
+    ...w32(0), // next IFD offset: none
+  ];
+}
+
+describe('PNG decode: eXIf orientation', () => {
+  // A 3x2 grid of six distinct colors (row-major A B C / D E F) so every orientation's pixel
+  // permutation is independently checkable by eye against the standard EXIF orientation table.
+  const A = [10, 20, 30];
+  const B = [40, 50, 60];
+  const C = [70, 80, 90];
+  const D = [100, 110, 120];
+  const E = [130, 140, 150];
+  const F = [160, 170, 180];
+  const grid = {
+    width: 3,
+    height: 2,
+    bitDepth: 8,
+    colorType: 2,
+    rows: [
+      [...A, ...B, ...C],
+      [...D, ...E, ...F],
+    ],
+  };
+  const p = (rgb: number[]) => packRgba(rgb[0]!, rgb[1]!, rgb[2]!, 255);
+
+  test('no eXIf chunk leaves pixels and dimensions unchanged', async () => {
+    const bytes = await buildTestPng(grid);
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(A), p(B), p(C), p(D), p(E), p(F)]);
+  });
+
+  test('orientation 1 (normal) leaves pixels and dimensions unchanged', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(1) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(A), p(B), p(C), p(D), p(E), p(F)]);
+  });
+
+  test('orientation 2 (mirror horizontal) reverses each row, keeping dimensions', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(2) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(C), p(B), p(A), p(F), p(E), p(D)]);
+  });
+
+  test('orientation 3 (rotate 180) reverses pixel order entirely, keeping dimensions', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(3) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(F), p(E), p(D), p(C), p(B), p(A)]);
+  });
+
+  test('orientation 4 (mirror vertical) reverses row order, keeping dimensions', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(4) });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([p(D), p(E), p(F), p(A), p(B), p(C)]);
+  });
+
+  test('orientation 5 (transpose) swaps width and height', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(5) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(2);
+    expect(decoded.height).toBe(3);
+    expect([...decoded.pixels]).toEqual([p(A), p(D), p(B), p(E), p(C), p(F)]);
+  });
+
+  test('orientation 6 (rotate 90 CW) swaps width and height', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(6) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(2);
+    expect(decoded.height).toBe(3);
+    expect([...decoded.pixels]).toEqual([p(D), p(A), p(E), p(B), p(F), p(C)]);
+  });
+
+  test('orientation 7 (transverse) swaps width and height', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(7) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(2);
+    expect(decoded.height).toBe(3);
+    expect([...decoded.pixels]).toEqual([p(F), p(C), p(E), p(B), p(D), p(A)]);
+  });
+
+  test('orientation 8 (rotate 270 CW) swaps width and height', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(8) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(2);
+    expect(decoded.height).toBe(3);
+    expect([...decoded.pixels]).toEqual([p(C), p(F), p(B), p(E), p(A), p(D)]);
+  });
+
+  test('little-endian (II) byte order parses the same orientation', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(6, true) });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(2);
+    expect(decoded.height).toBe(3);
+    expect([...decoded.pixels]).toEqual([p(D), p(A), p(E), p(B), p(F), p(C)]);
+  });
+
+  test('a malformed eXIf chunk is ignored rather than failing the import', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: [1, 2, 3] });
+    const decoded = await decodePng(bytes);
+    expect(decoded.width).toBe(3);
+    expect(decoded.height).toBe(2);
+    expect([...decoded.pixels]).toEqual([p(A), p(B), p(C), p(D), p(E), p(F)]);
+  });
+
+  test('re-exporting an orientation-corrected import carries no eXIf chunk and stays upright', async () => {
+    const bytes = await buildTestPng({ ...grid, exif: exifOrientationChunk(6) });
+    const decoded = await decodePng(bytes);
+    const reencoded = await encodePng(decoded.width, decoded.height, decoded.pixels);
+    // encodePng never writes an eXIf chunk, so any viewer re-opening this file sees the already
+    // upright pixels with no orientation tag to (re-)apply.
+    const text = Buffer.from(reencoded).toString('latin1');
+    expect(text.includes('eXIf')).toBe(false);
+    const redecoded = await decodePng(reencoded);
+    expect(redecoded.width).toBe(decoded.width);
+    expect(redecoded.height).toBe(decoded.height);
+    expect([...redecoded.pixels]).toEqual([...decoded.pixels]);
+  });
+
+  test('an eXIf chunk with no Orientation tag is ignored', async () => {
+    // A valid TIFF header and IFD, but with an unrelated tag (0x0100, ImageWidth) instead.
+    const bytes = await buildTestPng({
+      ...grid,
+      exif: [
+        0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x00, 0, 3, 0, 0, 0, 1, 0, 3, 0, 0, 0, 0, 0, 0,
+      ],
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([p(A), p(B), p(C), p(D), p(E), p(F)]);
+  });
+});
+
+describe('PNG decode: gAMA gamma correction', () => {
+  // A single RGB pixel with a mid-range sample on each channel and known expected outputs under
+  // the sRGB-encode(sample ^ (1/gamma)) correction curve, verified against real Chrome/WebKit
+  // decodes of the same gamma values (see AGENTS.md).
+  test('a gAMA within 5% of 1/2.2 leaves samples untouched (matches the PNG default assumption)', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[128, 64, 32]],
+      gama: 45455, // 1/2.2, the common real-world value
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(128, 64, 32, 255)]);
+  });
+
+  test('a linear gAMA of 1.0 brightens samples via the sRGB encode curve', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[128, 64, 32]],
+      gama: 100000, // gamma 1.0: samples are already linear light
+    });
+    const decoded = await decodePng(bytes);
+    // Exact LUT outputs for gamma 1.0, cross-checked against real Chrome and WebKit decodes.
+    expect([...decoded.pixels]).toEqual([packRgba(188, 137, 99, 255)]);
+  });
+
+  test('the old Mac 1/1.8 gAMA (0.55556) corrects with a smaller shift', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[128, 64, 32]],
+      gama: 55556,
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(146, 81, 43, 255)]);
+  });
+
+  test('gAMA is never applied to the alpha channel', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 6,
+      rows: [[128, 64, 32, 128]],
+      gama: 100000,
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(188, 137, 99, 128)]);
+  });
+
+  test('a cICP, iCCP, or sRGB chunk outranks gAMA, leaving samples untouched', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[128, 64, 32]],
+      gama: 100000, // would otherwise brighten the samples
+      colorChunks: { srgb: [0] },
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(128, 64, 32, 255)]);
+  });
+
+  test('a malformed (too-short) gAMA chunk is ignored rather than failing the import', async () => {
+    const bytes = await buildTestPng({
+      width: 1,
+      height: 1,
+      bitDepth: 8,
+      colorType: 2,
+      rows: [[128, 64, 32]],
+      gamaRaw: [0, 1, 2], // only 3 bytes: not a valid 4-byte gAMA value
+    });
+    const decoded = await decodePng(bytes);
+    expect([...decoded.pixels]).toEqual([packRgba(128, 64, 32, 255)]);
   });
 });
 
