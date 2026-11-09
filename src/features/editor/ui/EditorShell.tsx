@@ -119,6 +119,10 @@ export function EditorShell() {
   const [saved] = useState(readToolPreferences);
   const preferences = useRef(saved);
   useEffect(prefetchWhenIdle, []);
+  useEffect(() => {
+    window.addEventListener('contextmenu', blockPageMenu);
+    return () => window.removeEventListener('contextmenu', blockPageMenu);
+  }, []);
   return (
     <ToastHost inset={TOAST_INSETS[layout === 'phone' && sideways ? 'sideways' : layout]}>
       <Editor
@@ -131,6 +135,15 @@ export function EditorShell() {
       />
     </ToastHost>
   );
+}
+
+/**
+ * A right click anywhere in the editor, including its dialogs and menus, would open the browser's
+ * page menu of Back, Reload, and View Source. Fields keep theirs for Cut, Copy, and Paste.
+ */
+function blockPageMenu(event: MouseEvent): void {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.closest('input, textarea, [contenteditable]')) event.preventDefault();
 }
 
 interface EditorProps {

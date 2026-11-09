@@ -37,6 +37,34 @@ export function shortcutReachesEditor(
   return Boolean(target.closest(SURFACE)?.querySelector(PASSES_HISTORY));
 }
 
+/** The modifiers and key of a press, as the browser reports them. */
+export interface BrowserKey {
+  key: string;
+  code: string;
+  meta: boolean;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+}
+
+/**
+ * Browser commands that would carry the artist out of the editor on a stray press: Add Bookmark,
+ * Find, and Back and Forward. They stay blocked even when the editor has no use for the key,
+ * such as Duplicate with nothing selected. Command arrows still move the caret in a field.
+ */
+export function blocksBrowserDefault(press: BrowserKey, apple: boolean, inText: boolean): boolean {
+  const findOrBookmark = /^[df]$/i.test(press.key) || /^Key[DF]$/.test(press.code);
+  const arrow = /^Arrow(Left|Right)$/.test(press.key);
+  if (apple) {
+    if (!press.meta || press.ctrl || press.alt || press.shift) return false;
+    const bracket = /^[[\]]$/.test(press.key) || /^Bracket(Left|Right)$/.test(press.code);
+    return findOrBookmark || bracket || (arrow && !inText);
+  }
+  if (press.meta || press.shift) return false;
+  if (press.ctrl && !press.alt) return findOrBookmark;
+  return press.alt && !press.ctrl && arrow;
+}
+
 /** Composite widgets that move their own focus with arrow keys, even when they don't consume them. */
 const OWNS_ARROWS = '[role="radiogroup"], [role="slider"], [role="tablist"], [role="grid"]';
 
@@ -51,6 +79,16 @@ export function useShortcuts(session: EditorSession, run: (command: EditorComman
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       const target = event.target instanceof Element ? event.target : null;
+      const press = {
+        key: event.key,
+        code: event.code,
+        meta: event.metaKey,
+        ctrl: event.ctrlKey,
+        alt: event.altKey,
+        shift: event.shiftKey,
+      };
+      if (blocksBrowserDefault(press, IS_APPLE, Boolean(target?.closest(TEXT_ENTRY))))
+        event.preventDefault();
 
       const command = resolveShortcut(
         {

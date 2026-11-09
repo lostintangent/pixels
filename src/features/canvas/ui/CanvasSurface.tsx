@@ -400,11 +400,12 @@ export function CanvasSurface({
       if (gesture.mode.kind === 'idle' && event.pointerType !== 'touch') hover(null);
     }
 
-    function onWheel(event: WheelEvent): void {
+    /** `overChrome` is a wheel from an island above the canvas, so the pointer isn't hovering art. */
+    function onWheel(event: WheelEvent, overChrome = false): void {
       event.preventDefault();
       const point = local(event);
       const before = viewport.state;
-      hovered = point;
+      if (!overChrome) hovered = point;
       const read = wheelIntent(wheel, {
         deltaX: event.deltaX,
         deltaY: event.deltaY,
@@ -446,7 +447,17 @@ export function CanvasSurface({
         settleStart = start;
         settleTimer = setTimeout(() => settle(point, start), PINCH_SETTLE_MS);
       }
-      if (viewport.state === before) hover(point);
+      if (viewport.state === before && !overChrome) hover(point);
+    }
+
+    // A trackpad pinch arrives as a Ctrl wheel. Over the chrome it would zoom the whole page, so it
+    // zooms the art instead, except over a dialog or menu, where it does nothing.
+    function onChromeWheel(event: WheelEvent): void {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('dialog, [role="dialog"], [popover]')) return;
+      onWheel(event, true);
     }
 
     // Desktop Safari reports trackpad pinches as gesture events rather than Ctrl wheels.
@@ -545,6 +556,7 @@ export function CanvasSurface({
     host.addEventListener('pointercancel', onPointerUp);
     host.addEventListener('pointerleave', onPointerLeave);
     host.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('wheel', onChromeWheel, { passive: false });
     host.addEventListener('contextmenu', block);
     window.addEventListener('keydown', onEscape, true);
     window.addEventListener('keydown', onKeyDown);
@@ -571,6 +583,7 @@ export function CanvasSurface({
       host.removeEventListener('pointercancel', onPointerUp);
       host.removeEventListener('pointerleave', onPointerLeave);
       host.removeEventListener('wheel', onWheel);
+      window.removeEventListener('wheel', onChromeWheel);
       host.removeEventListener('contextmenu', block);
       window.removeEventListener('keydown', onEscape, true);
       window.removeEventListener('keydown', onKeyDown);

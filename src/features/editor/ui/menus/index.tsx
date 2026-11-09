@@ -267,6 +267,8 @@ const styles = stylex.create({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+    // Matches the rename field, which a coarse pointer sets at 16px so iOS doesn't zoom into it.
+    fontSize: { default: null, '@media (pointer: coarse)': 16 },
   },
   // Short levels like 1× would otherwise fall under a touch target.
   zoom: { minWidth: { default: null, '@media (pointer: coarse)': 44 } },

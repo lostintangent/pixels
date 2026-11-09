@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveShortcut } from '../core/shortcuts';
-import { shortcutReachesEditor } from './useShortcuts';
-import type { KeyTarget } from './useShortcuts';
+import { blocksBrowserDefault, shortcutReachesEditor } from './useShortcuts';
+import type { BrowserKey, KeyTarget } from './useShortcuts';
 
 /** Just enough of an element for the simple tag and attribute selectors key routing uses. */
 class Node implements KeyTarget {
@@ -90,5 +90,52 @@ describe('Undo and Redo from color surfaces', () => {
     const canvas = new Node('body').add(new Node('div', { role: 'application' }));
     expect(shortcutReachesEditor(canvas, command('z', true), false)).toBe(true);
     expect(shortcutReachesEditor(canvas, command('b'), false)).toBe(true);
+  });
+});
+
+describe('Browser commands that would leave the editor', () => {
+  const press = (key: string, modifiers: Partial<BrowserKey> = {}, code = ''): BrowserKey => ({
+    key,
+    code,
+    meta: false,
+    ctrl: false,
+    alt: false,
+    shift: false,
+    ...modifiers,
+  });
+  const meta = { meta: true };
+
+  test('are blocked on a Mac, even with nothing for the editor to do', () => {
+    for (const key of ['d', 'f', '[', ']', 'ArrowLeft', 'ArrowRight'])
+      expect(blocksBrowserDefault(press(key, meta), true, false)).toBe(true);
+    // A layout that types another character on the bracket key still goes Back.
+    expect(blocksBrowserDefault(press('ü', meta, 'BracketLeft'), true, false)).toBe(true);
+  });
+
+  test('leave Command arrows to move the caret in a field', () => {
+    expect(blocksBrowserDefault(press('ArrowLeft', meta), true, true)).toBe(false);
+    expect(blocksBrowserDefault(press('d', meta), true, true)).toBe(true);
+  });
+
+  test('leave tab switching, full screen, and plain typing alone', () => {
+    expect(
+      blocksBrowserDefault(press('{', { meta: true, shift: true }, 'BracketLeft'), true, false),
+    ).toBe(false);
+    expect(blocksBrowserDefault(press('f', { meta: true, ctrl: true }), true, false)).toBe(false);
+    expect(blocksBrowserDefault(press('ArrowRight', { meta: true, alt: true }), true, false)).toBe(
+      false,
+    );
+    expect(blocksBrowserDefault(press('d'), true, false)).toBe(false);
+    expect(blocksBrowserDefault(press('ArrowLeft'), true, false)).toBe(false);
+  });
+
+  test('use Control and Alt elsewhere', () => {
+    expect(blocksBrowserDefault(press('d', { ctrl: true }), false, false)).toBe(true);
+    expect(blocksBrowserDefault(press('f', { ctrl: true }), false, true)).toBe(true);
+    expect(blocksBrowserDefault(press('ArrowLeft', { alt: true }), false, true)).toBe(true);
+    expect(blocksBrowserDefault(press('[', { ctrl: true }), false, false)).toBe(false);
+    expect(blocksBrowserDefault(press('d', meta), false, false)).toBe(false);
+    // AltGr types characters as Control+Alt.
+    expect(blocksBrowserDefault(press('d', { ctrl: true, alt: true }), false, false)).toBe(false);
   });
 });
