@@ -30,6 +30,15 @@ textarea {
 }
 
 /*
+ * A phone menu sheet titles itself with the document name, so a Hebrew or Arabic name reads in its
+ * own direction. A long name wraps to the sheet's edge, so it keeps the rows' inset on that side too.
+ */
+.bottom-sheet .astryx-heading {
+  unicode-bidi: plaintext;
+  margin-inline-end: 12px;
+}
+
+/*
  * Any coarse pointer gets 44px targets, whatever the layout. These Astryx parts expose no style
  * hook, so their theme classes carry the rule: menu rows are 32px, and the slider's 24px control
  * takes presses across a 44px band.

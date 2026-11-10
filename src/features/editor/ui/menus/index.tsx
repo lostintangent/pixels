@@ -73,7 +73,7 @@ export function DocMenu({ layout }: { layout: Layout }) {
           xstyle: styles.docButton,
           // Polite, so "Opening…" and a failed open's restored name reach screen readers.
           children: (
-            <span aria-live="polite" {...stylex.props(styles.name)}>
+            <span aria-live="polite" dir="auto" {...stylex.props(styles.name)}>
               {name}
             </span>
           ),

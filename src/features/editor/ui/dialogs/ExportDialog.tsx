@@ -256,6 +256,7 @@ export function ExportDialog({ layout, onExport }: ExportDialogProps) {
         </Field>
         <TextInput
           label="File name"
+          dir="auto"
           value={name}
           onChange={setName}
           onKeyDown={exportOnReturn}

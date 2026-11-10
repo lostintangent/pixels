@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { DOCUMENT_NAME_MAX_LENGTH } from '../../../files';
 import { displayZoom, formatZoom, GRID_MIN_ZOOM } from '../../core/zoom';
 import { setAppearance, useAppearance } from '../../session/appearance';
 import type { Appearance } from '../../session/appearance';
@@ -93,7 +92,11 @@ export function DocMenu({ layout, isMenuOpen, ...trigger }: MenuSurfaceProps) {
       isDisabled: recents.length === 0,
       items: recents.map((recent) => ({
         id: recent.id,
-        label: recent.name,
+        label: (
+          <span dir="auto" {...stylex.props(styles.recentName, phone && styles.recentNameSheet)}>
+            {recent.name}
+          </span>
+        ),
         description: `${recent.width} × ${recent.height} · ${formatEdited(recent.updatedAt)}`,
         icon: <Thumbnail recent={recent} />,
         onClick: () => files.openRecent(recent.id),
@@ -278,7 +281,7 @@ export function RenameField({ onDone }: { onDone: (restoreFocus: boolean) => voi
         ref={input}
         defaultValue={name}
         aria-label="Document name"
-        maxLength={DOCUMENT_NAME_MAX_LENGTH}
+        dir="auto"
         enterKeyHint="done"
         autoComplete="off"
         autoCapitalize="words"
@@ -346,8 +349,21 @@ const styles = stylex.create({
     overflow: 'hidden',
     borderRadius: 6,
     backgroundColor: pixelVars.canvasBg,
-    boxShadow: `inset 0 0 0 1px ${colorVars['--color-border']}`,
+    // An outline paints over the image, so a white canvas on a white menu still has an edge.
+    outline: `1px solid ${colorVars['--color-border']}`,
+    outlineOffset: -1,
   },
+  // As wide as the title pill's name, so a long imported name can't stretch the menu.
+  recentName: {
+    display: 'inline-block',
+    verticalAlign: 'top',
+    maxWidth: 240,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  // A sheet row is the phone's width, so it sets the limit instead.
+  recentNameSheet: { maxWidth: '100%' },
   thumbImage: {
     display: 'block',
     flexShrink: 0,
