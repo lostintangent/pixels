@@ -22,6 +22,20 @@ describe('normalizeDocumentName', () => {
     expect(name.endsWith('🐙')).toBe(true);
   });
 
+  test('a cap landing inside a flag keeps the whole flag, not a lone regional indicator', () => {
+    // A flag is two regional-indicator code points forming one grapheme cluster; a code-point
+    // cap would split it and leave a single indicator letter behind, as seen with a real import.
+    const long = `${'a'.repeat(DOCUMENT_NAME_MAX_LENGTH - 1)}🇯🇵x`;
+    const name = normalizeDocumentName(long)!;
+    expect(name).toBe(`${'a'.repeat(DOCUMENT_NAME_MAX_LENGTH - 1)}🇯🇵`);
+  });
+
+  test('a cap landing inside a ZWJ family emoji keeps the whole sequence, not a dangling ZWJ', () => {
+    const long = `${'a'.repeat(DOCUMENT_NAME_MAX_LENGTH - 1)}👩‍👩‍👧‍👦x`;
+    const name = normalizeDocumentName(long)!;
+    expect(name).toBe(`${'a'.repeat(DOCUMENT_NAME_MAX_LENGTH - 1)}👩‍👩‍👧‍👦`);
+  });
+
   test('a cut that lands on a space leaves no trailing space', () => {
     expect(normalizeDocumentName(`${'a'.repeat(DOCUMENT_NAME_MAX_LENGTH - 1)} tail`)).toBe(
       'a'.repeat(DOCUMENT_NAME_MAX_LENGTH - 1),

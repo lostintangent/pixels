@@ -219,8 +219,8 @@ export function FileActionsProvider({
 }
 
 function nameOf(file: Blob): string {
-  const name = file instanceof File ? file.name.replace(/\.png$/i, '').trim() : '';
-  return name || 'Untitled';
+  const raw = file instanceof File ? file.name.replace(/\.png$/i, '').trim() : '';
+  return normalizeDocumentName(raw) ?? 'Untitled';
 }
 
 function Problem({ children }: { children: ReactNode }) {
