@@ -309,10 +309,7 @@ async function waitForLeavePrompt(
  * differ. New canvas starts linked (`useSizeFields(lastCreated.size, true)`), so typing an
  * unequal Height after Width would recompute Width back from a stale linked ratio; unlinking
  * first (a no-op for Resize, which already starts unlinked, and harmless for a still-square size)
- * avoids that. Each field needs a brief pause after its click before typing: `SideInput`'s
- * `selectOnceEditable` reselects the field's text one animation frame after focus so the caret
- * lands at the end once "64 px" becomes editable "64", and typing immediately risks that
- * reselect firing mid-keystroke and clobbering a partially typed value.
+ * avoids that.
  */
 async function setCanvasSize(page: Page, width: number, height: number = width): Promise<void> {
   const widthField = page.getByRole('spinbutton', { name: 'Width' });
@@ -320,14 +317,12 @@ async function setCanvasSize(page: Page, width: number, height: number = width):
   const unlink = page.getByRole('button', { name: 'Unlink width and height' });
   if (await unlink.isVisible().catch(() => false)) await unlink.click();
   await widthField.click();
-  await page.waitForTimeout(50);
   await widthField.press('Meta+A');
   await widthField.press('Backspace');
   await widthField.type(String(width));
   await widthField.press('Tab');
   const heightField = page.getByRole('spinbutton', { name: 'Height' });
   await heightField.click();
-  await page.waitForTimeout(50);
   await heightField.press('Meta+A');
   await heightField.press('Backspace');
   await heightField.type(String(height));
