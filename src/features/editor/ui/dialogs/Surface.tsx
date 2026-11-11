@@ -9,7 +9,7 @@ import type { SegmentedControlItemProps } from '@astryxdesign/core/SegmentedCont
 import { colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { Link2, Unlink2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import {
   canStepSide,
   isUsableSize,
@@ -19,6 +19,7 @@ import {
 } from '../../core/dimensions';
 import type { Size } from '../../core/dimensions';
 import type { Layout } from '../../session/session';
+import { selectOnceEditable } from './selectOnceEditable';
 
 interface SurfaceProps {
   layout: Layout;
@@ -387,14 +388,6 @@ function SideInput({
       }}
     />
   );
-}
-
-// Focus swaps "64 px" for "64" on the next render, which drops the caret at the end.
-function selectOnceEditable(event: FocusEvent<HTMLInputElement>): void {
-  const input = event.currentTarget;
-  requestAnimationFrame(() => {
-    if (document.activeElement === input) input.select();
-  });
 }
 
 function keepStepsInRange(event: KeyboardEvent<HTMLInputElement>): void {
