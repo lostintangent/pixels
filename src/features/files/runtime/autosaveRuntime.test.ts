@@ -167,6 +167,52 @@ describe('attachAutosave', () => {
       autosave.dispose();
     });
 
+    test('an initial full resave too big for the crash journal flushes on a zero-delay task, not the full debounce', async () => {
+      // 700x700x4 = 1,960,000 bytes, over CRASH_RECOVERY_MAX_BYTES (1.5 MiB): too big for the
+      // crash journal to ever cover (a Resize or a large import/paste), so it must reach the
+      // store without waiting out the usual 1s debounce. The scheduler's urgent flag fires this
+      // on its own zero-delay task rather than synchronously inside this bootstrap, so a 0ms
+      // advance — not zero timer advancement at all — is what actually fires it.
+      const document = createBitmapDocument('imported', 700, 700);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store, { initialResave: true });
+      await advance(0, store);
+      expect(store.saves).toHaveLength(1);
+      expect(store.saves[0]!.fullResave).toBe(true);
+      autosave.dispose();
+    });
+
+    test('a dirty-tile edit too big for the crash journal flushes on a zero-delay task, not the full debounce', async () => {
+      // A full-canvas invalidate at 700x700 touches 11x11 = 121 tiles, over the journal's 96-tile
+      // cap, so this ordinary (non-initialResave) edit must also skip the debounce. The
+      // scheduler's urgent flag fires this on its own zero-delay task rather than synchronously
+      // inside the dirty-rect listener, so a 0ms advance — not zero timer advancement at all — is
+      // what actually fires it; this is still negligible next to the 1000ms debounce it skips.
+      const document = createBitmapDocument('doc', 700, 700);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      document.events.invalidate({ x: 0, y: 0, width: 700, height: 700 });
+      await advance(0, store);
+      expect(store.saves).toHaveLength(1);
+      expect(store.saves[0]!.fullResave).toBe(false);
+      expect(store.saves[0]!.tiles.length).toBeGreaterThan(96);
+      autosave.dispose();
+    });
+
+    test('an edit under the crash-journal budget still waits out the full debounce', async () => {
+      // 512x512 is 8x8 = 64 tiles, comfortably under the 96-tile cap, so this must behave exactly
+      // as before the fix: no regression for ordinary, journal-covered edits.
+      const document = createBitmapDocument('doc', 512, 512);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      document.events.invalidate({ x: 0, y: 0, width: 512, height: 512 });
+      await advance(999, store);
+      expect(store.saves).toHaveLength(0);
+      await advance(1, store);
+      expect(store.saves).toHaveLength(1);
+      autosave.dispose();
+    });
+
     test('an edit schedules a debounced incremental save', async () => {
       const document = createBitmapDocument('doc', 128, 128);
       const store = createFakeStore();
@@ -445,10 +491,13 @@ describe('attachAutosave', () => {
 });
 
 /** A minimal `EventTarget`-alike: `attachAutosave` only ever calls `addEventListener`,
- *  `removeEventListener`, and (via `globalThis.document`) reads `visibilityState`. */
+ *  `removeEventListener`, and (via `globalThis.document`) reads `visibilityState`. `dispatch`
+ *  optionally hands the callback a fake event object, for `beforeunload`'s `preventDefault`/
+ *  `returnValue` contract; the other listeners this file installs (`pagehide`,
+ *  `visibilitychange`) simply ignore it. */
 class FakeEventTarget {
-  private readonly listeners = new Map<string, Set<() => void>>();
-  addEventListener(type: string, callback: () => void): void {
+  private readonly listeners = new Map<string, Set<(event?: unknown) => void>>();
+  addEventListener(type: string, callback: (event?: unknown) => void): void {
     let set = this.listeners.get(type);
     if (!set) {
       set = new Set();
@@ -456,11 +505,16 @@ class FakeEventTarget {
     }
     set.add(callback);
   }
-  removeEventListener(type: string, callback: () => void): void {
+  removeEventListener(type: string, callback: (event?: unknown) => void): void {
     this.listeners.get(type)?.delete(callback);
   }
-  dispatch(type: string): void {
-    for (const callback of this.listeners.get(type) ?? []) callback();
+  dispatch(type: string, event?: unknown): void {
+    for (const callback of this.listeners.get(type) ?? []) callback(event);
+  }
+  /** Whether any listener is currently attached for `type` — lets a test assert the
+   *  `beforeunload` prompt's attached/detached state directly, without needing to actually fire it. */
+  has(type: string): boolean {
+    return (this.listeners.get(type)?.size ?? 0) > 0;
   }
 }
 
@@ -670,6 +724,81 @@ describe('crash-recovery journal: stashed only at page exit', () => {
     await store.waitForIdle();
     expect(store.saves).toHaveLength(1); // still flushed normally
     expect(store.stashes).toHaveLength(0); // but never through the journal
+  });
+});
+
+describe('beforeunload leave prompt: scoped to edits too big for the crash journal', () => {
+  test('attaches for an initial full resave too big for the journal, and detaches once it commits', async () => {
+    await withFakeWindow(async (fakeWindow) => {
+      const document = createBitmapDocument('imported', 700, 700);
+      const store = createFakeStore();
+      // No blockNextSave gate: the real thumbnail-encode await already keeps this save pending
+      // long enough to observe "still attached," without racing waitForIdle() against a release.
+      const autosave = attachAutosave(document, store, { initialResave: true });
+      expect(fakeWindow.has('beforeunload')).toBe(true);
+      // The urgent flush is scheduled onto its own zero-delay task, not run synchronously here, so
+      // it hasn't started — and `waitForIdle()` would resolve immediately on zero live saves —
+      // until that real task actually gets a turn.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await store.waitForIdle();
+      expect(fakeWindow.has('beforeunload')).toBe(false);
+      autosave.dispose();
+    });
+  });
+
+  test('attaches for a large dirty-tile edit, and detaches once it commits', async () => {
+    await withFakeWindow(async (fakeWindow) => {
+      const document = createBitmapDocument('doc', 700, 700);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      document.events.invalidate({ x: 0, y: 0, width: 700, height: 700 });
+      expect(fakeWindow.has('beforeunload')).toBe(true);
+      // The urgent flush is scheduled onto its own zero-delay task, not run synchronously here, so
+      // it hasn't started — and `waitForIdle()` would resolve immediately on zero live saves —
+      // until that real task actually gets a turn.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await store.waitForIdle();
+      expect(fakeWindow.has('beforeunload')).toBe(false);
+      autosave.dispose();
+    });
+  });
+
+  test('never attaches for a small edit, since the crash journal already covers it', async () => {
+    await withFakeWindow(async (fakeWindow) => {
+      const document = createBitmapDocument('doc', 32, 32);
+      const store = createFakeStore();
+      const autosave = attachAutosave(document, store);
+      document.events.invalidate({ x: 0, y: 0, width: 1, height: 1 });
+      expect(fakeWindow.has('beforeunload')).toBe(false);
+      await store.waitForIdle();
+      expect(fakeWindow.has('beforeunload')).toBe(false);
+      autosave.dispose();
+    });
+  });
+
+  test('the attached listener prevents the default and sets returnValue, with no custom message', async () => {
+    await withFakeWindow(async (fakeWindow) => {
+      const document = createBitmapDocument('doc', 700, 700);
+      const store = createFakeStore();
+      store.blockNextSave(); // left in flight on purpose, to keep the prompt attached
+      attachAutosave(document, store, { initialResave: true });
+      const fakeEvent = { preventDefault: jest.fn(), returnValue: undefined as unknown };
+      fakeWindow.dispatch('beforeunload', fakeEvent);
+      expect(fakeEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(fakeEvent.returnValue).toBe(true);
+    });
+  });
+
+  test('dispose removes the listener even while a large edit is still in flight, protecting bfcache', async () => {
+    await withFakeWindow(async (fakeWindow) => {
+      const document = createBitmapDocument('doc', 700, 700);
+      const store = createFakeStore();
+      store.blockNextSave(); // left in flight on purpose: dispose must not leave this attached
+      const autosave = attachAutosave(document, store, { initialResave: true });
+      expect(fakeWindow.has('beforeunload')).toBe(true);
+      autosave.dispose();
+      expect(fakeWindow.has('beforeunload')).toBe(false);
+    });
   });
 });
 

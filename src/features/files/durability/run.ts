@@ -275,6 +275,215 @@ const reloadDuringInFlightSave: Case = {
 };
 
 /**
+ * Dispatches a synthetic, cancelable `beforeunload` event and reports whether the app's own
+ * listener called `preventDefault()`. A real native dialog proves the same listener is wired to
+ * the same event name, but Playwright's own `dialog` automation around `beforeunload` is a
+ * documented Chromium/WebKit flakiness (microsoft/playwright#14431, #37597) independent of any
+ * application code — closing the last page races the dialog's own appearance over CDP. This
+ * synthetic dispatch instead asserts the one thing durability actually needs: the listener is
+ * attached exactly while an oversized edit's save is still pending, and detached once it lands.
+ */
+async function hasLeavePrompt(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+}
+
+async function waitForLeavePrompt(
+  page: Page,
+  expected: boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if ((await hasLeavePrompt(page)) === expected) return true;
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(20);
+  }
+}
+
+/**
+ * Sets the New canvas or Resize dialog's Width and Height fields, independently when they
+ * differ. New canvas starts linked (`useSizeFields(lastCreated.size, true)`), so typing an
+ * unequal Height after Width would recompute Width back from a stale linked ratio; unlinking
+ * first (a no-op for Resize, which already starts unlinked, and harmless for a still-square size)
+ * avoids that. Each field needs a brief pause after its click before typing: `SideInput`'s
+ * `selectOnceEditable` reselects the field's text one animation frame after focus so the caret
+ * lands at the end once "64 px" becomes editable "64", and typing immediately risks that
+ * reselect firing mid-keystroke and clobbering a partially typed value.
+ */
+async function setCanvasSize(page: Page, width: number, height: number = width): Promise<void> {
+  const widthField = page.getByRole('spinbutton', { name: 'Width' });
+  await widthField.waitFor({ state: 'visible' });
+  const unlink = page.getByRole('button', { name: 'Unlink width and height' });
+  if (await unlink.isVisible().catch(() => false)) await unlink.click();
+  await widthField.click();
+  await page.waitForTimeout(50);
+  await widthField.press('Meta+A');
+  await widthField.press('Backspace');
+  await widthField.type(String(width));
+  await widthField.press('Tab');
+  const heightField = page.getByRole('spinbutton', { name: 'Height' });
+  await heightField.click();
+  await page.waitForTimeout(50);
+  await heightField.press('Meta+A');
+  await heightField.press('Backspace');
+  await heightField.type(String(height));
+  await heightField.press('Tab');
+}
+
+/**
+ * t152, Lead's day-38 dogfood repro: a ground edit past `CRASH_RECOVERY_MAX_BYTES` (1.5 MiB,
+ * about 96 tiles) skips the localStorage crash journal and relies solely on IndexedDB, so a close
+ * or reload within the save's own in-flight window could lose it before this fix. The fix adds a
+ * `beforeunload` listener exactly while that oversized ground is still pending, and schedules its
+ * flush at 0 ms instead of waiting out the normal 1000 ms debounce. CPU-throttling (the same
+ * technique `reloadDuringInFlightSave` already uses) stretches the PNG-encode-and-write that
+ * follows the 0 ms schedule long enough to observe reliably — unthrottled, this real machine's
+ * encode and IndexedDB write for a 2000 × 1400 fill complete in well under 100 ms, which proves
+ * the fix narrowed the at-risk window dramatically but is also too fast for a polling assertion
+ * to catch without slowing it down first.
+ */
+const FILL_WIDTH = 2000;
+const FILL_HEIGHT = 1400;
+
+const largeFillShowsLeavePromptThenSurvivesReload: Case = {
+  name: 'a large fill shows the leave prompt while its save is in flight, then survives a reload',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    let client: CDPSession | undefined;
+    try {
+      const page = await context.newPage();
+      client = await context.newCDPSession(page);
+      const seedId = crypto.randomUUID();
+      await page.goto(`${baseUrl}/d/${seedId}`, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+
+      await page.keyboard.press('Meta+Alt+n');
+      await setCanvasSize(page, FILL_WIDTH, FILL_HEIGHT);
+      await page.getByRole('button', { name: 'Create' }).click();
+      await page.waitForURL((url) => !url.pathname.endsWith(`/${seedId}`));
+      await waitForCanvasReady(page);
+
+      await page.getByRole('radio', { name: 'Fill' }).click();
+      const box = await page.getByRole('application', { name: 'Canvas' }).boundingBox();
+      if (!box) throw new Error('Canvas has no bounding box');
+      // A small clip at the document's own center, not the whole viewport: the "Canvas" role
+      // spans the entire pannable surface, well past the document's own screen footprint at this
+      // zoom, and a full-viewport screenshot would also pick up the color picker's unrelated,
+      // non-deterministic anti-aliasing on its selected-swatch ring across two separate loads.
+      const { clip } = await clipNear(page, 0, 0);
+      const before = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+
+      let shownInFlight: boolean;
+      await client.send('Emulation.setCPUThrottlingRate', { rate: 20 });
+      try {
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        shownInFlight = await waitForLeavePrompt(page, true, 3_000);
+      } finally {
+        await client.send('Emulation.setCPUThrottlingRate', { rate: 1 }).catch(() => {});
+      }
+      const clearedAfter = await waitForLeavePrompt(page, false, 5_000);
+
+      // Off the clipped point: the cursor's own crosshair marker draws exactly where the Fill
+      // click landed, and a fresh reload starts with no pointer over the document at all, so
+      // leaving the mouse there would make an identical repaint read as a pixel mismatch.
+      await page.mouse.move(0, 0);
+      const after = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+      if (after.equals(before)) throw new Error('Fill did not change displayed pixels');
+
+      await page.reload({ waitUntil: 'load' });
+      await waitForCanvasReady(page);
+      const reloaded = await page.screenshot({ clip, animations: 'disabled', scale: 'device' });
+
+      return shownInFlight && clearedAfter && reloaded.equals(after);
+    } finally {
+      await client?.detach().catch(() => {});
+      await context.close();
+    }
+  },
+};
+
+/**
+ * t152's other oversized-ground path: `initialResave`'s own bootstrap call, exercised here by
+ * Resize rather than New canvas, since Resize swaps a document's pixel buffer in place without a
+ * navigation. Same CPU-throttle technique, same synthetic-dispatch assertion, and a check that
+ * the new, larger size itself (not just its pixels) survives the reload.
+ */
+const RESIZE_WIDTH = 2000;
+const RESIZE_HEIGHT = 1400;
+
+const largeResizeShowsLeavePromptThenSurvivesReload: Case = {
+  name: 'a large resize shows the leave prompt while its save is in flight, then survives a reload',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    let client: CDPSession | undefined;
+    try {
+      const page = await context.newPage();
+      client = await context.newCDPSession(page);
+      await page.goto(`${baseUrl}/d/${crypto.randomUUID()}`, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+
+      await page.keyboard.press('Meta+Alt+c');
+      await setCanvasSize(page, RESIZE_WIDTH, RESIZE_HEIGHT);
+
+      let shownInFlight: boolean;
+      await client.send('Emulation.setCPUThrottlingRate', { rate: 20 });
+      try {
+        await page.getByRole('button', { name: 'Resize' }).click();
+        shownInFlight = await waitForLeavePrompt(page, true, 3_000);
+      } finally {
+        await client.send('Emulation.setCPUThrottlingRate', { rate: 1 }).catch(() => {});
+      }
+      const clearedAfter = await waitForLeavePrompt(page, false, 5_000);
+
+      await page.reload({ waitUntil: 'load' });
+      await waitForCanvasReady(page);
+      const sizeSurvived = await page
+        .getByText(`${RESIZE_WIDTH} × ${RESIZE_HEIGHT}`, { exact: false })
+        .first()
+        .isVisible();
+
+      return shownInFlight && clearedAfter && sizeSurvived;
+    } finally {
+      await client?.detach().catch(() => {});
+      await context.close();
+    }
+  },
+};
+
+/** An ordinary stroke, well under the crash-journal byte budget, must never show the leave
+ *  prompt at all — the fix's listener is scoped to oversized ground, not every edit. */
+const smallEditNeverShowsLeavePrompt: Case = {
+  name: 'an ordinary small edit never shows the leave prompt',
+  async run(browser, baseUrl) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      reducedMotion: 'reduce',
+    });
+    try {
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/d/${crypto.randomUUID()}`, { waitUntil: 'load' });
+      await waitForCanvasReady(page);
+      await paintAt(page, 0.5, 0.5);
+      // The debounce hasn't even fired yet; the listener must still be absent well past it.
+      await Bun.sleep(debounceMs + 200);
+      return !(await hasLeavePrompt(page));
+    } finally {
+      await context.close();
+    }
+  },
+};
+
+/**
  * Draw a shape through the real Shapes popover, then reload immediately, well inside the
  * debounce. A committed shape dirties no pixel tile, so this is the one case that only passes if
  * `attachAutosave` treats a shape commit as its own reason to stash and flush — a plain pixel
@@ -442,21 +651,6 @@ async function countRecords(page: Page, storeName: typeof DOCUMENTS_STORE | type
       request.onerror = () => reject(request.error);
     });
   }, storeName);
-}
-
-async function setCanvasSize(page: Page, size: number): Promise<void> {
-  const width = page.getByRole('spinbutton', { name: 'Width' });
-  await width.click();
-  await width.press('Meta+A');
-  await width.press('Backspace');
-  await width.type(String(size));
-  await width.press('Tab');
-  const height = page.getByRole('spinbutton', { name: 'Height' });
-  await height.click();
-  await height.press('Meta+A');
-  await height.press('Backspace');
-  await height.type(String(size));
-  await height.press('Tab');
 }
 
 /**
@@ -647,6 +841,9 @@ const allCases: Case[] = [
   closeAndReopen,
   switchDocumentsAndReturn,
   reloadDuringInFlightSave,
+  largeFillShowsLeavePromptThenSurvivesReload,
+  largeResizeShowsLeavePromptThenSurvivesReload,
+  smallEditNeverShowsLeavePrompt,
   drawShapeThenReload,
   nudgeShapeThenReload,
   storageFullKeepFailsCleanlyThenRecovers,

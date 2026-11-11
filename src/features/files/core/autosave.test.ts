@@ -62,4 +62,37 @@ describe('autosave scheduler', () => {
     jest.advanceTimersByTime(1);
     expect(flushes).toBe(2);
   });
+
+  test('an urgent change flushes at 0ms instead of waiting out the debounce', () => {
+    let flushes = 0;
+    const scheduler = createAutosaveScheduler(() => flushes++);
+    scheduler.noteChange(true);
+    jest.advanceTimersByTime(0);
+    expect(flushes).toBe(1);
+  });
+
+  test('urgency latches: a later non-urgent call never pushes an urgent flush back to the debounce', () => {
+    let flushes = 0;
+    const scheduler = createAutosaveScheduler(() => flushes++);
+    scheduler.noteChange(true);
+    scheduler.noteChange(); // must not demote the already-urgent flush back to 1000ms
+    jest.advanceTimersByTime(0);
+    expect(flushes).toBe(1);
+  });
+
+  test('cancel drops a pending urgent flush too', () => {
+    let flushes = 0;
+    const scheduler = createAutosaveScheduler(() => flushes++);
+    scheduler.noteChange(true);
+    scheduler.cancel();
+    jest.advanceTimersByTime(10_000);
+    expect(flushes).toBe(0);
+    // A later, non-urgent change starts a fresh, ordinary debounce — cancel() must not leave the
+    // scheduler permanently urgent.
+    scheduler.noteChange();
+    jest.advanceTimersByTime(999);
+    expect(flushes).toBe(0);
+    jest.advanceTimersByTime(1);
+    expect(flushes).toBe(1);
+  });
 });

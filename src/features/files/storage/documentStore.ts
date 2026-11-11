@@ -1,6 +1,7 @@
 import { isValidAnnotation, type Annotation } from '../../annotations/model';
 import type { DocumentColorSpace } from '../../document';
 import {
+  CRASH_RECOVERY_MAX_BYTES,
   SaveError,
   type DocumentId,
   type DocumentSnapshot,
@@ -183,8 +184,9 @@ interface CrashRecoveryPayload {
 // close. This is a pure safety net for that one narrow window, not a second primary write path —
 // capped in size so a large simultaneous edit just forgoes it rather than risking `localStorage`'s
 // much smaller quota, and only ever written at the moment the page is actually exiting (see
-// `attachAutosave`'s pagehide/hidden handling), never on every routine debounced save.
-const CRASH_RECOVERY_MAX_BYTES = 1.5 * 1024 * 1024;
+// `attachAutosave`'s pagehide/hidden handling), never on every routine debounced save. The cap
+// itself lives in `core/contracts.ts`: `attachAutosave` needs the same number to decide an edit
+// is too big for this journal to ever cover, so it must reach IndexedDB immediately instead.
 
 function crashRecoveryKey(id: DocumentId): string {
   return `pixels-files-crash-recovery:${id}`;

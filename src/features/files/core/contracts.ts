@@ -41,6 +41,14 @@ export class SaveError extends Error {
 /** 64x64 keeps a full-document 4096x4096 write under 4,096 small puts, and a single-pixel edit at 16 KB. */
 export const TILE_SIZE = 64;
 
+/** The `localStorage`-backed crash journal (`DocumentStore.stashForRecovery`) can't carry ground
+ *  past this many bytes — base64-encoding and storing more would risk blowing `localStorage`'s
+ *  much smaller quota (see `storage/documentStore.ts`'s `stashForCrashRecovery`). `attachAutosave`
+ *  uses the same number to decide an edit is too big for that one narrow safety net to cover and
+ *  must instead reach IndexedDB immediately, bypassing the usual debounce, since waiting would
+ *  leave it with no durability net at all for however long the wait lasts. */
+export const CRASH_RECOVERY_MAX_BYTES = 1.5 * 1024 * 1024;
+
 export interface TileCoord {
   tx: number;
   ty: number;

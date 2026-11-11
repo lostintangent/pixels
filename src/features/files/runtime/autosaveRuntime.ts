@@ -1,9 +1,14 @@
 import { watchAnnotationSet } from '../../annotations/model';
 import type { BitmapDocument } from '../../document';
 import { createAutosaveScheduler } from '../core/autosave';
-import type { AutosaveOptions, DocumentStore, TileCoord } from '../core/contracts';
+import {
+  CRASH_RECOVERY_MAX_BYTES,
+  type AutosaveOptions,
+  type DocumentStore,
+  type TileCoord,
+} from '../core/contracts';
 import { snapshotDocument } from '../core/snapshot';
-import { scaleAnnotationsForThumbnail, tilesForRect } from '../core/tiles';
+import { scaleAnnotationsForThumbnail, tilesForRect, TILE_SIZE } from '../core/tiles';
 import { encodePngOffMainThread } from './pngWorkerClient';
 
 /**
@@ -90,6 +95,38 @@ export function attachAutosave(
   let pendingTiles = new Map<string, TileCoord>();
   let pendingFullResave = options.initialResave ?? false;
   let inFlightFlushes = 0;
+  const hasWindow = typeof window !== 'undefined';
+
+  /** The byte size a save of this ground would actually write: a full resave's cost is the whole
+   *  live buffer, since that's what the next write for it persists, independent of how few (or
+   *  many) individual tiles happen to be tracked as dirty. */
+  function groundBytes(tileCount: number, isFullResave: boolean): number {
+    return isFullResave
+      ? document.width * document.height * 4
+      : tileCount * TILE_SIZE * TILE_SIZE * 4;
+  }
+
+  function handleBeforeUnload(event: BeforeUnloadEvent): void {
+    event.preventDefault();
+    // Legacy requirement for older engines; every browser Pixels supports already ignores
+    // custom text and shows its own generic prompt once `preventDefault` is called.
+    event.returnValue = true;
+  }
+
+  /** Call after any change to `pendingTiles`/`pendingFullResave`: adds or removes the
+   *  `beforeunload` listener to match whether ground too big for the crash journal (the same
+   *  ground `stashForExit` would journal) is currently outstanding. `addEventListener` and
+   *  `removeEventListener` are already no-ops when the listener is already present or already
+   *  gone, so this needs no state of its own to stay idempotent. */
+  function syncLeavePrompt(): void {
+    if (!hasWindow) return;
+    if (groundBytes(pendingTiles.size, pendingFullResave) > CRASH_RECOVERY_MAX_BYTES) {
+      window.addEventListener('beforeunload', handleBeforeUnload);
+    } else {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    }
+  }
+
   // Shapes have no per-tile diff: a 'commit' change (add, edit, delete, or an undo/redo that
   // restores a prior list — all of which route through `AnnotationSet.replace`/`commit`/`remove`,
   // every one of which emits 'commit') means "the current shape list differs from what's
@@ -117,7 +154,14 @@ export function attachAutosave(
       dirtyTiles.set(`${coord.tx}:${coord.ty}`, coord);
       pendingTiles.set(`${coord.tx}:${coord.ty}`, coord);
     }
-    scheduler.noteChange();
+    syncLeavePrompt();
+    // An edit this big has no crash-journal fallback to wait out the debounce behind: reaching
+    // IndexedDB right away is the only durability this ground gets, so it's urgent — the
+    // scheduler fires it at 0ms instead of the usual debounce, as a task of its own rather than
+    // adding its tile-copy-and-thumbnail cost directly to this pointerdown/pointermove task.
+    scheduler.noteChange(
+      groundBytes(dirtyTiles.size, fullResavePending) > CRASH_RECOVERY_MAX_BYTES,
+    );
   });
 
   async function flush(): Promise<void> {
@@ -167,6 +211,7 @@ export function attachAutosave(
         pendingTiles = new Map(dirtyTiles);
         pendingFullResave = fullResavePending;
         pendingShapesDirty = shapesDirty;
+        syncLeavePrompt();
       }
       // A newer flush may have started (and possibly already finished) while this one was
       // writing. Only the newest started flush's outcome should reach the UI: this write did
@@ -204,7 +249,12 @@ export function attachAutosave(
     });
   });
 
-  if (fullResavePending) scheduler.noteChange();
+  syncLeavePrompt();
+  // A fresh document's initial resave (Open, Paste-as-new, Resize) is its own full write, with no
+  // earlier debounce already in flight to piggyback on. The same urgent call used for the
+  // oversized dirty-tile case above also applies here: it keeps a large Resize's full-buffer copy
+  // off the Resize click's own task, instead of running it there via a synchronous `flushNow()`.
+  if (fullResavePending) scheduler.noteChange(groundBytes(0, true) > CRASH_RECOVERY_MAX_BYTES);
 
   function flushNow(): void {
     scheduler.cancel();
@@ -237,7 +287,6 @@ export function attachAutosave(
     if (globalThis.document?.visibilityState === 'hidden') stashForExit();
     flushNow();
   }
-  const hasWindow = typeof window !== 'undefined';
   if (hasWindow) {
     window.addEventListener('pagehide', handlePageHide);
     window.addEventListener('visibilitychange', handleVisibilityChange);
@@ -254,6 +303,10 @@ export function attachAutosave(
       if (hasWindow) {
         window.removeEventListener('pagehide', handlePageHide);
         window.removeEventListener('visibilitychange', handleVisibilityChange);
+        // Unconditional: protects bfcache even for an in-app navigation (New, Open, Back) that
+        // tears this down mid-flush, not just a real unload — those already chain their own
+        // flush first, so there's nothing left for a lingering listener to usefully guard.
+        window.removeEventListener('beforeunload', handleBeforeUnload);
       }
       // Read `disposed` inside flush() is still false at this call, so this final flush runs;
       // only after capturing it do we block any further explicit `.flush()` calls. `store.save`
