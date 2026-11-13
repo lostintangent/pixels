@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin/vite';
 import { astryxIcons } from './src/shared/build/astryxIcons.ts';
 import { astryxMessages } from './src/shared/build/astryxMessages.ts';
+import { astryxTheme } from './src/shared/build/astryxTheme.ts';
 import { modulePreload } from './src/shared/build/modulePreload.ts';
 import { serviceWorker } from './src/shared/build/serviceWorker.ts';
 import { stylexOptions } from './src/shared/build/stylexOptions.ts';
@@ -28,6 +29,7 @@ export default defineConfig({
     preload.plugin,
     astryxMessages(),
     astryxIcons(),
+    astryxTheme(),
     stylex(stylexOptions),
     react(),
     serviceWorker(),
