@@ -227,15 +227,17 @@ const styles = stylex.create({
     transitionDuration: durationVars['--duration-fast'],
     transitionTimingFunction: pixelVars.ease,
   },
+  // A clipped fill rather than a border triangle: forced colors repaint all four border colors
+  // alike, which drew a square. Opting out keeps the tool's own text color, Highlight or not.
   nub: {
     position: 'absolute',
     right: 4,
     bottom: 4,
-    width: 0,
-    height: 0,
-    borderStyle: 'solid',
-    borderWidth: '0 0 4px 4px',
-    borderColor: 'transparent transparent currentColor transparent',
+    width: 4,
+    height: 4,
+    backgroundColor: 'currentColor',
+    clipPath: 'polygon(100% 0, 100% 100%, 0 100%)',
+    forcedColorAdjust: 'none',
     opacity: 0.5,
     pointerEvents: 'none',
   },
