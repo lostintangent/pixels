@@ -20,6 +20,10 @@ function readAppearance(): Appearance {
 
 const appearance = createStore<Appearance>(readAppearance());
 
+// Another tab's choice arrives as a storage event. Rereading on any key is cheap, and an unchanged
+// mode rerenders nothing.
+addEventListener('storage', () => appearance.setState(readAppearance));
+
 export function setAppearance(next: Appearance): void {
   appearance.setState(() => next);
   try {
